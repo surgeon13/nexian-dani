@@ -164,6 +164,9 @@ const settings = {
     String(process.env.BUILDER_MASTER_BUILDER_ENABLED || "false").toLowerCase() === "true",
   raidEvacuationEnabled:
     String(process.env.RAID_EVACUATION_ENABLED || "true").toLowerCase() === "true",
+  raidEvacuationTroopsEnabled:
+    String(process.env.RAID_EVACUATION_TROOPS_ENABLED || "true").toLowerCase() === "true",
+  raidEvacuationTroopRecallSeconds: numberEnv("RAID_EVACUATION_TROOP_RECALL_SECONDS", 60),
   raidEvacuationTriggerMinutes: numberEnv("RAID_EVACUATION_TRIGGER_MINUTES", 30),
   raidEvacuationReservePerResource: numberEnv("RAID_EVACUATION_RESERVE_PER_RESOURCE", 300),
   raidEvacuationMerchantCapacityFallback: numberEnv("RAID_EVACUATION_MERCHANT_CAPACITY_FALLBACK", 1000),
@@ -308,6 +311,8 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_GOLD_COMPLETE_MAX: String(settings.builderGoldCompleteMax),
     BUILDER_MASTER_BUILDER_ENABLED: settings.builderMasterBuilderEnabled ? "true" : "false",
     RAID_EVACUATION_ENABLED: settings.raidEvacuationEnabled ? "true" : "false",
+    RAID_EVACUATION_TROOPS_ENABLED: settings.raidEvacuationTroopsEnabled ? "true" : "false",
+    RAID_EVACUATION_TROOP_RECALL_SECONDS: String(settings.raidEvacuationTroopRecallSeconds || 60),
     RAID_EVACUATION_TRIGGER_MINUTES: String(settings.raidEvacuationTriggerMinutes),
     RAID_EVACUATION_RESERVE_PER_RESOURCE: String(settings.raidEvacuationReservePerResource),
     RAID_EVACUATION_MERCHANT_CAPACITY_FALLBACK: String(settings.raidEvacuationMerchantCapacityFallback),
