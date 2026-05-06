@@ -1,0 +1,25 @@
+{
+  "name": "nexian",
+  "version": "1.1.9",
+  "description": "Menu-driven Playwright automation helper for Nexian",
+  "main": "login.js",
+  "scripts": {
+    "login": "node login.js",
+    "login:headed": "node login.js --headed --keep-open",
+    "login:nexian": "node login.js --env-file=.env.nexian --keep-open",
+    "login:nexian:headed": "node login.js --env-file=.env.nexian --headed --keep-open",
+    "login:nexian:headless": "node login.js --env-file=.env.nexian",
+    "export": "node export.js",
+    "playwright:install": "npx playwright install chromium",
+    "clean:runtime": "node -e \"const fs=require('fs');['storageState.json','log.jsonl','templates/progress.json'].forEach(f=>{if(fs.existsSync(f))fs.rmSync(f,{force:true});});console.log('Removed runtime files: storageState.json, log.jsonl, templates/progress.json');\"",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.4.1",
+    "playwright": "^1.59.1"
+  }
+}

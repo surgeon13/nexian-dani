@@ -1,0 +1,6341 @@
+const readline = require("readline");
+const fs = require("fs");
+const path = require("path");
+const builder = require("./villageBuilder");
+const villageExpansion = require("./villageExpansion");
+const resourceCirculation = require("./resourceCirculation");
+
+const USE_COLORS =
+  process.env.NO_COLOR !== "1" &&
+  process.env.NO_COLOR !== "true" &&
+  Boolean(process.stdout && process.stdout.isTTY);
+
+const ANSI = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  cyan: "\x1b[36m",
+  blue: "\x1b[34m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  gray: "\x1b[90m"
+};
+
+function color(text, ...codes) {
+  if (!USE_COLORS) {
+    return String(text);
+  }
+  return `${codes.join("")}${text}${ANSI.reset}`;
+}
+
+function logInfo(message) {
+  console.log(color(message, ANSI.cyan));
+}
+
+function logSuccess(message) {
+  console.log(color(message, ANSI.green, ANSI.bold));
+}
+
+function logWarn(message) {
+  console.log(color(message, ANSI.yellow));
+}
+
+function logError(message) {
+  console.error(color(message, ANSI.red, ANSI.bold));
+}
+
+class MenuInterruptError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "MenuInterruptError";
+  }
+}
+
+function askQuestion(rl, message) {
+  return new Promise((resolve) => {
+    rl.question(message, (answer) => resolve(answer));
+  });
+}
+
+function parseCoordinateValue(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.trunc(parsed);
+}
+
+function parseCoordinatePair(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return null;
+  }
+  const parts = text.split(/[|,;\s]+/).filter(Boolean);
+  if (parts.length !== 2) {
+    return null;
+  }
+  const x = parseCoordinateValue(parts[0]);
+  const y = parseCoordinateValue(parts[1]);
+  if (x === null || y === null) {
+    return null;
+  }
+  return { x, y };
+}
+
+function parsePlannedSettlementTargets(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return [];
+  }
+  return text
+    .split(/[\n;]+/)
+    .map((part) => parseCoordinatePair(part))
+    .filter((item) => Boolean(item));
+}
+
+function formatPlannedSettlementTargets(targets, separator = "; ") {
+  if (!Array.isArray(targets) || targets.length === 0) {
+    return "";
+  }
+  return targets.map((target) => `${target.x}|${target.y}`).join(separator);
+}
+
+function resolvePlannedTargetsFilePath(filePath) {
+  const raw = String(filePath || "").trim();
+  if (!raw) {
+    return path.resolve(process.cwd(), "templates", "settlement_targets.json");
+  }
+  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+}
+
+function normalizeTargetObject(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const x = parseCoordinateValue(item.x);
+  const y = parseCoordinateValue(item.y);
+  if (x === null || y === null) {
+    return null;
+  }
+  return { x, y };
+}
+
+function loadPlannedSettlementTargetsFromFile(filePath) {
+  const absolutePath = resolvePlannedTargetsFilePath(filePath);
+  if (!fs.existsSync(absolutePath)) {
+    return {
+      ok: false,
+      absolutePath,
+      message: `Target file not found: ${absolutePath}`,
+      targets: []
+    };
+  }
+
+  let content;
+  try {
+    content = fs.readFileSync(absolutePath, "utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      absolutePath,
+      message: `Could not read target file: ${error.message || error}`,
+      targets: []
+    };
+  }
+
+  const ext = path.extname(absolutePath).toLowerCase();
+  let targets = [];
+  if (ext === ".json") {
+    try {
+      const parsed = JSON.parse(String(content || "").trim() || "[]");
+      const rawTargets = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.targets) ? parsed.targets : []);
+      targets = rawTargets
+        .map((item) => normalizeTargetObject(item))
+        .filter((item) => Boolean(item));
+    } catch (error) {
+      return {
+        ok: false,
+        absolutePath,
+        message: `Invalid JSON in target file: ${error.message || error}`,
+        targets: []
+      };
+    }
+  } else {
+    const sanitized = String(content || "")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/#.*/, "").trim())
+      .filter((line) => Boolean(line))
+      .join("\n");
+    targets = parsePlannedSettlementTargets(sanitized);
+  }
+
+  return {
+    ok: true,
+    absolutePath,
+    targets
+  };
+}
+
+function savePlannedSettlementTargetsToFile(filePath, targets) {
+  const absolutePath = resolvePlannedTargetsFilePath(filePath);
+  const parentDir = path.dirname(absolutePath);
+  if (!fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true });
+  }
+  const ext = path.extname(absolutePath).toLowerCase();
+  if (ext === ".json") {
+    const jsonPayload = (Array.isArray(targets) ? targets : [])
+      .map((item) => normalizeTargetObject(item))
+      .filter((item) => Boolean(item));
+    fs.writeFileSync(absolutePath, `${JSON.stringify(jsonPayload, null, 2)}\n`, "utf8");
+  } else {
+    const content = formatPlannedSettlementTargets(targets, "\n");
+    fs.writeFileSync(absolutePath, content ? `${content}\n` : "", "utf8");
+  }
+  return absolutePath;
+}
+
+function normalizeExpansionSettlementSettings(settings) {
+  settings.expansionAutoDispatchEnabled = Boolean(settings.expansionAutoDispatchEnabled);
+  settings.expansionUsePlannedTargets = Boolean(settings.expansionUsePlannedTargets);
+  settings.expansionPlannedTargetsFile = String(settings.expansionPlannedTargetsFile || "").trim()
+    || "templates/settlement_targets.json";
+  settings.resourceCirculationEnabled = Boolean(settings.resourceCirculationEnabled);
+  settings.resourceCirculationExpansionEnabled = Boolean(settings.resourceCirculationExpansionEnabled);
+  let fill = Number(settings.resourceCirculationReceiverMaxFillRatio);
+  if (!(Number.isFinite(fill) && fill > 0 && fill <= 1)) {
+    fill = 0.8;
+  }
+  settings.resourceCirculationReceiverMaxFillRatio = fill;
+}
+
+async function askSettlementTarget(rl) {
+  const pairInput = (
+    await askQuestion(rl, "Target coordinates X|Y (Enter to use separate prompts, C to cancel): ")
+  ).trim();
+  if (pairInput.toUpperCase() === "C") {
+    return null;
+  }
+
+  const pair = parseCoordinatePair(pairInput);
+  if (pair) {
+    return pair;
+  }
+
+  let attempts = 0;
+  while (attempts < 3) {
+    const targetXText = (await askQuestion(rl, "Target X coordinate (or C to cancel): ")).trim();
+    if (targetXText.toUpperCase() === "C") {
+      return null;
+    }
+
+    const targetYText = (await askQuestion(rl, "Target Y coordinate (or C to cancel): ")).trim();
+    if (targetYText.toUpperCase() === "C") {
+      return null;
+    }
+
+    const targetX = parseCoordinateValue(targetXText);
+    const targetY = parseCoordinateValue(targetYText);
+    if (targetX !== null && targetY !== null) {
+      return { x: targetX, y: targetY };
+    }
+
+    attempts += 1;
+    logWarn("Invalid coordinates. Use numbers like -18 and -26, or enter one line as -18|-26.");
+  }
+
+  return null;
+}
+
+function printDivider(title) {
+  const line = "-".repeat(64);
+  console.log("");
+  console.log(color(line, ANSI.gray));
+  console.log(color(`[ ${title} ]`, ANSI.bold, ANSI.blue));
+  console.log(color(line, ANSI.gray));
+}
+
+function printSubDivider(title) {
+  console.log("");
+  console.log(color(`> ${title}`, ANSI.bold, ANSI.cyan));
+}
+
+function printKeyValueRows(rows) {
+  const labelWidth = rows.reduce((max, row) => Math.max(max, row.label.length), 0);
+  rows.forEach((row) => {
+    const paddedLabel = row.label.padEnd(labelWidth, " ");
+    const renderedLabel = row.raw
+      ? paddedLabel
+      : color(paddedLabel, ANSI.gray);
+    const renderedValue = row.raw
+      ? row.value
+      : color(row.value, ANSI.bold);
+    console.log(`  ${renderedLabel}  ${renderedValue}`);
+  });
+}
+
+function resourceColorCode(resourceName) {
+  switch (String(resourceName || "").toLowerCase()) {
+    case "wood":
+      return ANSI.green;
+    case "clay":
+      return ANSI.yellow;
+    case "iron":
+      return ANSI.blue;
+    case "crop":
+      return ANSI.yellow;
+    default:
+      return ANSI.gray;
+  }
+}
+
+function movementColorCode(movement) {
+  const combined = `${movement.type || ""} ${movement.text || ""}`.toLowerCase();
+  if (combined.includes("reinf")) {
+    return ANSI.green;
+  }
+  if (combined.includes("attack")) {
+    return ANSI.red;
+  }
+  return ANSI.yellow;
+}
+
+function parseDurationToSeconds(rawValue) {
+  const text = String(rawValue || "").toLowerCase();
+  const match = text.match(/(\d+)\s*:\s*(\d{1,2})(?:\s*:\s*(\d{1,2}))?/);
+  if (!match) {
+    return null;
+  }
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const third = match[3] != null ? Number(match[3]) : 0;
+  if (!Number.isFinite(first) || !Number.isFinite(second) || !Number.isFinite(third)) {
+    return null;
+  }
+  // If text includes "hour", treat as HH:MM:SS; otherwise MM:SS fallback.
+  if (text.includes("hour") || text.includes("hr")) {
+    return (first * 3600) + (second * 60) + third;
+  }
+  if (match[3] != null) {
+    return (first * 3600) + (second * 60) + third;
+  }
+  return (first * 60) + second;
+}
+
+/**
+ * Incoming vs outgoing troop rows often share the same icon title ("Attack").
+ * RAID GUARD MUST NOT treat outbound marches / returns as hostile incoming —
+ * classify direction from tbody/row/cell cues and wording.
+ */
+function isLikelyHostileIncomingAttackMovement(movement) {
+  const combined = `${movement.type || ""} ${movement.text || ""}`.toLowerCase();
+  const merchantish = /\bmerchant|merchants\b|\btransport(ing)? resources\b|\bmarketplace\b/.test(combined);
+  if (merchantish) {
+    return false;
+  }
+
+  const direction = movement.movementDirection;
+  if (direction === "out") {
+    return false;
+  }
+
+  const outboundPhrases =
+    /\b(attack|raid|scout|cavalry)\s+on\b/.test(combined) ||
+    /\bangriff\s+(auf|op)\b/.test(combined) ||
+    /\büberfall\s+(auf|op)\b/.test(combined) ||
+    /\breturn(s|ing)\b/.test(combined);
+  if (outboundPhrases) {
+    return false;
+  }
+
+  const hostileWord =
+    /\battack\b|\bangriff\b|\braid\b|\battacker\b|\bscout\b|\büberfall\b|\büber\s*fall\b/.test(
+      combined
+    ) || String(movement.type || "").toLowerCase().includes("attack");
+  const incomingEvidence =
+    direction === "in" ||
+    /\b(attack|raid|scout|cavalry)\s+from\b/i.test(combined) ||
+    /\bangriff\s+(von|vom)\b|\büberfall\s+(von|vom)\b/i.test(combined) ||
+    /\bincoming\b|\bbeing\s+attacked\b|\bagainst\s+your\s+village\b/i.test(combined);
+
+  const etaSeconds = parseDurationToSeconds(movement.eta);
+  if (!Number.isFinite(etaSeconds)) {
+    return false;
+  }
+  return Boolean(hostileWord && incomingEvidence);
+}
+
+function getIncomingAttackAlerts(movements) {
+  const alerts = (Array.isArray(movements) ? movements : [])
+    .map((movement) => {
+      if (!isLikelyHostileIncomingAttackMovement(movement)) {
+        return null;
+      }
+      const etaSeconds = parseDurationToSeconds(movement.eta);
+      return {
+        ...movement,
+        etaSeconds
+      };
+    })
+    .filter((item) => Boolean(item))
+    .sort((a, b) => a.etaSeconds - b.etaSeconds);
+
+  return alerts;
+}
+
+function formatIsoClock(date) {
+  return new Date(date).toLocaleTimeString("en-GB", { hour12: false });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeDelayRange(settings) {
+  if (!Number.isFinite(settings.randomDelayMinMs) || settings.randomDelayMinMs < 0) {
+    settings.randomDelayMinMs = 1000;
+  }
+  if (!Number.isFinite(settings.randomDelayMaxMs) || settings.randomDelayMaxMs < 0) {
+    settings.randomDelayMaxMs = 2000;
+  }
+  if (settings.randomDelayMinMs > settings.randomDelayMaxMs) {
+    const temp = settings.randomDelayMinMs;
+    settings.randomDelayMinMs = settings.randomDelayMaxMs;
+    settings.randomDelayMaxMs = temp;
+  }
+}
+
+function getRandomDelayMs(settings) {
+  normalizeDelayRange(settings);
+  const min = Math.floor(settings.randomDelayMinMs);
+  const max = Math.floor(settings.randomDelayMaxMs);
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function waitWithCancellation(ms, shouldCancel) {
+  const stepMs = 200;
+  let remaining = Math.max(0, Math.floor(ms));
+
+  while (remaining > 0) {
+    if (shouldCancel && shouldCancel()) {
+      throw new MenuInterruptError("Interrupted by user");
+    }
+
+    const currentStep = Math.min(stepMs, remaining);
+    await sleep(currentStep);
+    remaining -= currentStep;
+  }
+}
+
+async function runWithRandomDelay(settings, label, operation, shouldCancel) {
+  const delayMs = getRandomDelayMs(settings);
+  logInfo(`Delaying ${label} by ${delayMs}ms...`);
+  await waitWithCancellation(delayMs, shouldCancel);
+  if (shouldCancel && shouldCancel()) {
+    throw new MenuInterruptError("Interrupted by user");
+  }
+  return operation();
+}
+
+/**
+ * Nexian/other servers redirect to shownew.php until the player acknowledges news.
+ * That page has no farmlist controls — navigate out first, then retry farmlist URL.
+ */
+async function escapeShownewsContinueAction(page) {
+  const dismissed = await page.evaluate(() => {
+    const pathname = String(window.location.pathname || "").toLowerCase();
+    const onNewsGate = /shownew|show_news/i.test(pathname);
+    const labelLooksLikeContinue = (element) => {
+      const bits = [];
+      const v = typeof element.value === "string" ? element.value : "";
+      if (element.getAttribute) {
+        bits.push(element.getAttribute("value") || "", element.getAttribute("title") || "");
+      }
+      bits.push(typeof element.alt === "string" ? element.alt : "", element.textContent || "");
+      const t = bits.join(" ").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+      if (!t.length) {
+        return false;
+      }
+      const isSingleWordNo = /\b(no|never|later|abbrev|abbruch|cancel|schließen|close)\b/.test(t);
+      if (isSingleWordNo) {
+        return false;
+      }
+      return /\b(continue|confirm|weiter|ok|next|done|skip|nächste|zurück\s+zum\s+spiel|zurück\s*zur\s+übersicht|to\s+(the\s+)?game|play\s+now)\b/i.test(
+        t
+      );
+    };
+
+    /** @type {(element: HTMLElement) => boolean} */
+    const canActivate = (el) => {
+      if (!el || el.disabled) {
+        return false;
+      }
+      if (el instanceof HTMLAnchorElement) {
+        const href = String(el.getAttribute("href") || "");
+        if (!href || href === "#" || /^javascript:\s*void/i.test(href)) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    /** @type {HTMLElement[]} */
+    const clickable = [];
+
+    Array.from(document.querySelectorAll(
+      "#content a[href*='.php'][href!='#'], #contentOuter a[href*='.php'][href!='#']"
+    ))
+      .forEach((a) => {
+        const tx = labelLooksLikeContinue(a);
+        const h = String(a.getAttribute("href") || "");
+        const gameHref = /village\d*\.php|dorf\d*\.php|spieler\.php|\bbuild\.php|\boverview\.php/i.test(h);
+        if (tx || gameHref) {
+          clickable.push(a);
+        }
+      });
+
+    for (const anchor of clickable) {
+      if (anchor && typeof anchor.click === "function") {
+        anchor.click();
+        return { clicked: true, kind: "link" };
+      }
+    }
+
+    if (onNewsGate) {
+      const submitters = [
+        ...Array.from(document.querySelectorAll("#content input[type='submit'], #contentOuter input[type='submit']")),
+        ...Array.from(
+          document.querySelectorAll("#content button[type='submit'], #contentOuter button[type='submit']")
+        ),
+        ...Array.from(
+          document.querySelectorAll("#content button:not([disabled]), #contentOuter button:not([disabled])")
+        ).slice(0, 8)
+      ];
+      for (const el of submitters) {
+        if (!labelLooksLikeContinue(el)) {
+          continue;
+        }
+        if (!canActivate(el)) {
+          continue;
+        }
+        if (typeof el.click === "function") {
+          el.click();
+          return { clicked: true, kind: "submit" };
+        }
+      }
+
+      const onlyFormSubmit = Array.from(
+        document.querySelectorAll("#content form:last-of-type input[type='submit'], #content form:last-of-type button")
+      ).find((el) => typeof el.click === "function") || document.querySelector(
+        "#content form:last-of-type input[type='submit'], #content form:last-of-type button"
+      );
+      if (onlyFormSubmit && typeof onlyFormSubmit.click === "function") {
+        onlyFormSubmit.click();
+        return { clicked: true, kind: "formFallback" };
+      }
+    }
+
+    return { clicked: false, kind: null };
+  }).catch(() => ({ clicked: false, kind: null }));
+
+  if (dismissed && dismissed.clicked) {
+    await page.waitForTimeout(350);
+    await page.waitForLoadState("domcontentloaded", { timeout: 45000 }).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+async function escapeShownewBlockingPage(page) {
+  const url = String(page.url() || "");
+  if (!/shownew\.php|show_news\.php/i.test(url)) {
+    return false;
+  }
+
+  const nextHref = await page.evaluate(() => {
+    const prefer = (selector) => {
+      const el = document.querySelector(selector);
+      return el && el.getAttribute("href") ? el.getAttribute("href").trim() : null;
+    };
+    const fromSelectors =
+      prefer("a[href*='village1.php']") ||
+      prefer("a[href*='dorf1.php']") ||
+      prefer("a[href*='village2.php']") ||
+      prefer("a[href*='spieler.php'][href*='s=']") ||
+      prefer("a[href*='overview.php']");
+    if (fromSelectors) {
+      return fromSelectors;
+    }
+    for (const anchor of Array.from(document.querySelectorAll("a[href]"))) {
+      const h = anchor.getAttribute("href") || "";
+      if (/village\d*\.php|dorf\d*\.php|spieler\.php|overview\.php|build\.php\?id=\d+/i.test(h)) {
+        const lower = h.toLowerCase();
+        if (lower.includes("logout") || lower.includes("abbruch")) {
+          continue;
+        }
+        return h.trim();
+      }
+    }
+    return null;
+  }).catch(() => null);
+
+  if (nextHref) {
+    await page.goto(new URL(nextHref, page.url()).toString(), {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    }).catch(() => null);
+    return true;
+  }
+
+  await escapeShownewsContinueAction(page);
+  let stillNews = /shownew\.php|show_news\.php/i.test(String(page.url() || ""));
+  if (!stillNews) {
+    return true;
+  }
+
+  try {
+    const origin = new URL(page.url()).origin;
+    await page.goto(`${origin}/dorf1.php`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    }).catch(async () => {
+      await page.goto(`${origin}/village1.php`, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      }).catch(() => null);
+    });
+    stillNews = /shownew\.php|show_news\.php/i.test(String(page.url() || ""));
+    return !stillNews;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function gotoFarmlistWithNewsEscape(page, farmlistUrl) {
+  await page.goto(farmlistUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const escaped = await escapeShownewBlockingPage(page);
+    if (!escaped) {
+      break;
+    }
+    await page.goto(farmlistUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    }).catch(() => null);
+  }
+}
+
+/** Nexian / Travian farmlists usually require “select all” before Send is enabled. */
+async function ensureFarmlistSelectAllBeforeSend(page, settings) {
+  const selectors = [
+    settings && settings.selectAllSelector,
+    'input[id^="farmlist_selectall_"]',
+    'input[id*="farmlist_selectall"]',
+    'input[name="markAll"]'
+  ].filter(Boolean);
+  const seen = new Set();
+  for (const sel of selectors) {
+    if (seen.has(sel)) {
+      continue;
+    }
+    seen.add(sel);
+    const loc = page.locator(sel).first();
+    const n = await loc.count().catch(() => 0);
+    if (!n) {
+      continue;
+    }
+    const role = await loc.evaluate((el) => String(el.getAttribute("type") || "").toLowerCase()).catch(() => "");
+    const checked = await loc.isChecked().catch(() => false);
+    if (role === "checkbox" || role === "radio") {
+      if (!checked) {
+        await loc.check({ force: true }).catch(async () => {
+          await loc.click({ force: true }).catch(() => {});
+        });
+      }
+    } else if (!checked) {
+      await loc.click({ force: true }).catch(() => {});
+    }
+  }
+  await page.waitForTimeout(450);
+}
+
+async function isSendControlDisabled(page, selector) {
+  const loc = page.locator(selector).first();
+  return loc.evaluate((el) => {
+    if (!el || !(el instanceof HTMLElement)) {
+      return true;
+    }
+    if ("disabled" in el && el.disabled) {
+      return true;
+    }
+    if (el.getAttribute("aria-disabled") === "true") {
+      return true;
+    }
+    if (el.classList.contains("disabled") || el.classList.contains("btn_disabled")) {
+      return true;
+    }
+    return false;
+  }).catch(() => true);
+}
+
+async function waitSendControlEnabled(page, selector, timeoutMs = 10000) {
+  const deadline = Date.now() + Math.max(500, Number(timeoutMs) || 0);
+  while (Date.now() < deadline) {
+    if (!(await isSendControlDisabled(page, selector))) {
+      return true;
+    }
+    await page.waitForTimeout(280);
+  }
+  return false;
+}
+
+async function activateFarmlistSendControl(page, chosenSendSelector) {
+  const loc = page.locator(chosenSendSelector).first();
+  await loc.scrollIntoViewIfNeeded().catch(() => {});
+  await loc.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+
+  try {
+    await loc.click({ timeout: 12000 });
+    return true;
+  } catch (_e) {
+    try {
+      await loc.click({ force: true, timeout: 8000 });
+      return true;
+    } catch (_e2) {
+      // DOM click / requestSubmit (covers some Travian AJAX forms)
+    }
+  }
+
+  return page.evaluate((selector) => {
+    const button = document.querySelector(selector);
+    if (!button) {
+      return { ok: false, reason: "missing" };
+    }
+    if (
+      button.hasAttribute("disabled") ||
+      button.getAttribute("aria-disabled") === "true" ||
+      (button.classList &&
+        (button.classList.contains("disabled") || button.classList.contains("btn_disabled")))
+    ) {
+      return { ok: false, reason: "disabled" };
+    }
+
+    const fire = (target) => {
+      try {
+        target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      } catch (_err) {
+        return false;
+      }
+      return true;
+    };
+
+    const form = button.closest("form");
+    if (form && typeof form.requestSubmit === "function") {
+      try {
+        form.requestSubmit(button);
+        return { ok: true, reason: "requestSubmit" };
+      } catch (_err) {
+        /* fall through */
+      }
+    }
+
+    if (typeof button.click === "function") {
+      button.click();
+      return { ok: true, reason: "click" };
+    }
+
+    if (form && typeof form.submit === "function") {
+      form.submit();
+      return { ok: true, reason: "formSubmit" };
+    }
+
+    return { ok: fire(button), reason: "dispatch" };
+  }, chosenSendSelector).then((r) => Boolean(r && r.ok)).catch(() => false);
+}
+
+/** When CSS ids differ (e.g. Nexian), pick the best visible send / start-raids control and return a Playwright-safe selector. */
+async function discoverFarmlistSendSelectorFromDom(page) {
+  return page.evaluate(() => {
+    const visible = (el) => {
+      if (!el || !(el instanceof Element)) {
+        return false;
+      }
+      const st = window.getComputedStyle(el);
+      if (st.display === "none" || st.visibility === "hidden" || Number(st.opacity) === 0) {
+        return false;
+      }
+      const r = el.getBoundingClientRect();
+      return r.width > 2 && r.height > 2;
+    };
+
+    const textOf = (el) => String(el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const score = (el) => {
+      const id = String(el.id || "").toLowerCase();
+      const nm = String(el.getAttribute("name") || "").toLowerCase();
+      const typ = String(el.getAttribute("type") || "").toLowerCase();
+      const val = String(el.getAttribute("value") || "").toLowerCase();
+      const tx = textOf(el);
+      let s = 0;
+      if (id.includes("btn_send") || id.includes("send_all") || id.includes("sendall")) {
+        s += 8;
+      }
+      if (nm.includes("start_all") || nm.includes("raid") || nm.includes("send")) {
+        s += 6;
+      }
+      if (/\bsend\b/.test(tx) || tx.includes("start all") || tx.includes("start raid")) {
+        s += 5;
+      }
+      if (/\bsend\b/.test(val) || val.includes("raid")) {
+        s += 4;
+      }
+      if (el.tagName === "BUTTON" || typ === "submit" || typ === "button") {
+        s += 1;
+      }
+      if (id && /^send|^btn|^start|^raid|^farm/i.test(id)) {
+        s += 2;
+      }
+      const oc = String(el.getAttribute("onclick") || "").toLowerCase();
+      if (oc.includes("send") || oc.includes("raid") || oc.includes("start")) {
+        s += 5;
+      }
+      return s;
+    };
+
+    const nodes = Array.from(
+      document.querySelectorAll(
+        "button, input[type='submit'], input[type='button'], a.button, a.green, a[class*='btn'], a[href*='start']"
+      )
+    ).filter(visible);
+
+    const ranked = nodes
+      .map((el) => ({ el, s: score(el) }))
+      .filter((x) => x.s >= 3)
+      .sort((a, b) => b.s - a.s);
+    const best = ranked[0] && ranked[0].el;
+    if (!best) {
+      return null;
+    }
+
+    if (best.id) {
+      const raw = String(best.id);
+      try {
+        if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+          return `#${CSS.escape(raw)}`;
+        }
+      } catch (_e) {
+        /* fall through */
+      }
+      return `[id="${raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    }
+    const nm = best.getAttribute("name");
+    if (nm && document.querySelectorAll(`[name="${nm.replace(/"/g, '\\"')}"]`).length === 1) {
+      return `[name="${nm.replace(/"/g, '\\"')}"]`;
+    }
+    return null;
+  });
+}
+
+async function sendFarmlists(getPage, settings) {
+  const page = getPage();
+  if (!page || page.isClosed()) {
+    throw new Error("Session page is currently unavailable. Retry after re-login completes.");
+  }
+
+  await gotoFarmlistWithNewsEscape(page, settings.farmlistUrl);
+
+  await page.waitForLoadState("domcontentloaded").catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+  await page.waitForTimeout(600);
+
+  const sendSelectors = [
+    "#btn_send_all",
+    settings.sendButtonSelector,
+    'button[id^="btn_send"]',
+    '[id*="btn_send"]',
+    '[id*="send_all"]',
+    '[id*="sendall"]',
+    'input[name="start_all_raids"]',
+    'input[type="submit"][name*="raid"]',
+    'button[name="start_all_raids"]',
+    'input[id*="send_all"]',
+    'input[type="submit"][value*="Send"]',
+    'input[type="submit"][value*="send"]',
+    'input[type="button"][value*="Send"]',
+    "button:has-text(\"Send\")",
+    "button:has-text(\"send\")",
+    "a:has-text(\"Send\")"
+  ].filter(Boolean);
+
+  const findSendSelector = async () => {
+    for (const selector of sendSelectors) {
+      const exists = await page
+        .locator(selector)
+        .first()
+        .count()
+        .then((count) => count > 0)
+        .catch(() => false);
+      if (exists) {
+        return selector;
+      }
+    }
+    const discovered = await discoverFarmlistSendSelectorFromDom(page).catch(() => null);
+    if (discovered && typeof discovered === "string" && discovered.trim()) {
+      const ok = await page
+        .locator(discovered.trim())
+        .first()
+        .count()
+        .then((c) => c > 0)
+        .catch(() => false);
+      if (ok) {
+        return discovered.trim();
+      }
+    }
+    return null;
+  };
+
+  const waitForSendSelector = async (timeoutMs = 12000) => {
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+    while (Date.now() < deadline) {
+      const found = await findSendSelector();
+      if (found) {
+        return found;
+      }
+      await page.waitForTimeout(400);
+    }
+    return null;
+  };
+
+  let chosenSendSelector = await waitForSendSelector(12000);
+
+  // Fallback 1: discover farmlist URL from the current page and navigate there.
+  if (!chosenSendSelector) {
+    const discoveredFarmlistHref = await page.evaluate(() => {
+      const candidates = [
+        "a[href*='build.php'][href*='t=99'][href*='gid=16']",
+        "a[href*='t=99'][href*='gid=16']",
+        "a[href*='farmlist']"
+      ];
+      for (const selector of candidates) {
+        const link = document.querySelector(selector);
+        if (link && typeof link.getAttribute === "function") {
+          const href = link.getAttribute("href") || "";
+          if (href) {
+            return href;
+          }
+        }
+      }
+      return null;
+    });
+
+    if (discoveredFarmlistHref) {
+      const resolved = new URL(discoveredFarmlistHref, page.url()).toString();
+      await page.goto(resolved, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      });
+      if (await escapeShownewBlockingPage(page)) {
+        await page.goto(resolved, {
+          waitUntil: "domcontentloaded",
+          timeout: 60000
+        }).catch(() => null);
+      }
+    } else {
+      await gotoFarmlistWithNewsEscape(page, settings.farmlistUrl);
+    }
+
+    chosenSendSelector = await waitForSendSelector(12000);
+  }
+
+  // Fallback 2: Village center -> Rally Point -> Farm Lists.
+  if (!chosenSendSelector) {
+    const villageCenterHref = await page.evaluate(() => {
+      const link = document.querySelector("a#n2[href], a[href*='village2.php']");
+      return link && typeof link.getAttribute === "function"
+        ? (link.getAttribute("href") || null)
+        : null;
+    });
+    const targetVillageCenter = villageCenterHref
+      ? new URL(villageCenterHref, page.url()).toString()
+      : new URL("/village2.php", page.url()).toString();
+
+    await page.goto(targetVillageCenter, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    });
+
+    const rallyPointHref = await page.evaluate(() => {
+      const link = document.querySelector(
+        "area[href*='build.php?id=39'], a[href*='build.php?id=39']"
+      );
+      return link && typeof link.getAttribute === "function"
+        ? (link.getAttribute("href") || null)
+        : null;
+    });
+
+    if (rallyPointHref) {
+      await page.goto(new URL(rallyPointHref, page.url()).toString(), {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      });
+
+      const farmListsHref = await page.evaluate(() => {
+        const link = document.querySelector(
+          "a[href*='build.php?id=39'][href*='t=99'], a[href*='?t=99'], a[href*='&t=99']"
+        );
+        return link && typeof link.getAttribute === "function"
+          ? (link.getAttribute("href") || null)
+          : null;
+      });
+
+      if (farmListsHref) {
+        await page.goto(new URL(farmListsHref, page.url()).toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: 60000
+        });
+      }
+    }
+
+    chosenSendSelector = await waitForSendSelector(12000);
+  }
+
+  // Legacy path: if send button still not found, try old select-all flow.
+  if (!chosenSendSelector) {
+    const selectAll = page.locator(settings.selectAllSelector);
+    const hasSelectAll = await selectAll.count().then((count) => count > 0).catch(() => false);
+    if (hasSelectAll) {
+      const alreadyChecked = await selectAll.isChecked().catch(() => false);
+      if (!alreadyChecked) {
+        await selectAll.check({ force: true });
+      }
+    }
+
+    chosenSendSelector = await waitForSendSelector(8000);
+  }
+
+  if (!chosenSendSelector && /shownew\.php|show_news\.php/i.test(String(page.url() || ""))) {
+    await gotoFarmlistWithNewsEscape(page, settings.farmlistUrl);
+    chosenSendSelector = await waitForSendSelector(12000);
+  }
+
+  if (!chosenSendSelector) {
+    await ensureFarmlistSelectAllBeforeSend(page, settings);
+    await page.waitForTimeout(500);
+
+    const trySendByRoleOrLabel = async () => {
+      const candidates = [
+        () => page.getByRole("button", { name: /send\s*all/i }),
+        () => page.getByRole("button", { name: /^send$/i }),
+        () => page.getByRole("button", { name: /start.*raid/i }),
+        () => page.getByRole("button", { name: /farm.*list/i }),
+        () => page.getByRole("link", { name: /send/i })
+      ];
+      for (const pick of candidates) {
+        const loc = pick();
+        const count = await loc.count().catch(() => 0);
+        if (!count) {
+          continue;
+        }
+        const first = loc.first();
+        if (!(await first.isVisible().catch(() => false))) {
+          continue;
+        }
+        const preMs = Math.max(600, getRandomDelayMs(settings));
+        await page.waitForTimeout(preMs);
+        await first.scrollIntoViewIfNeeded().catch(() => {});
+        await first.click({ timeout: 15000 }).catch(async () => {
+          await first.click({ force: true, timeout: 10000 }).catch(() => {});
+        });
+        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+        return true;
+      }
+      return false;
+    };
+
+    if (await trySendByRoleOrLabel()) {
+      return;
+    }
+
+    const authState = await page.evaluate(() => {
+      const hasLoginForm = Boolean(document.querySelector("form[name='login'], input[name='name'], input[name='password']"));
+      const onIndex = /\/index\.php/i.test(window.location.pathname);
+      return { hasLoginForm, onIndex, href: window.location.href };
+    }).catch(() => ({ hasLoginForm: false, onIndex: false, href: page.url() }));
+
+    if (authState.hasLoginForm || authState.onIndex) {
+      throw new Error(`Farmlist page unavailable (likely redirected/out of session): ${authState.href}`);
+    }
+    if (/shownew\.php|show_news\.php/i.test(String(page.url() || ""))) {
+      throw new Error(
+        `Farmlist blocked on news/shownew page (no escape link matched). Try opening the game in browser once, then retry. URL: ${page.url()}`
+      );
+    }
+    throw new Error(
+      `Could not find a farmlist send button on page: ${page.url()} ` +
+        `(set SEND_BUTTON_SELECTOR in .env if your UI uses a non-standard control).`
+    );
+  }
+
+  await ensureFarmlistSelectAllBeforeSend(page, settings);
+  let sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 12000);
+  if (!sendEnabled) {
+    await ensureFarmlistSelectAllBeforeSend(page, settings);
+    sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 6000);
+  }
+
+  // Safety delay before submitting farmlists:
+  // use configured random delay range, but never below 1000ms.
+  const preSendDelayMs = Math.max(1000, getRandomDelayMs(settings));
+  await page.waitForTimeout(preSendDelayMs);
+
+  const clicked = await activateFarmlistSendControl(page, chosenSendSelector);
+  if (!clicked) {
+    const stillDisabled = await isSendControlDisabled(page, chosenSendSelector);
+    throw new Error(
+      stillDisabled
+        ? `Found farmlist send control '${chosenSendSelector}' but it stayed disabled after select-all (no active farmlists, wrong village, or UI changed).`
+        : `Found farmlist send control '${chosenSendSelector}' but could not activate it (blocked click — try adjusting SEND_BUTTON_SELECTOR or run headed once).`
+    );
+  }
+
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+}
+
+function withVillageId(url, villageId) {
+  if (!villageId) {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("vid", String(villageId));
+    return parsed.toString();
+  } catch (_error) {
+    return url;
+  }
+}
+
+function villageDisplayName(village) {
+  if (!village) {
+    return "N/A";
+  }
+  const coords = village.coordsText || "(?|?)";
+  const capitalTag = village.isCapital ? " [Capital]" : "";
+  return `${village.name || "?"} ${coords}${capitalTag} (vid=${village.id})`;
+}
+
+function printVillageContextStatus(villageState) {
+  const total = villageState.villages.length;
+  const selected = villageState.villages.find((v) => v.id === villageState.selectedVillageId) || null;
+  const active = villageState.villages.find((v) => v.id === villageState.activeVillageId) || null;
+
+  console.log("");
+  console.log(`  ${color("Villages:", ANSI.gray)} ${color(String(total), ANSI.bold, ANSI.cyan)}`);
+  console.log(
+    `  ${color("Selected:", ANSI.gray)} ${color(villageDisplayName(selected), ANSI.bold, ANSI.yellow)}`
+  );
+  console.log(
+    `  ${color("Currently Active:", ANSI.gray)} ${color(villageDisplayName(active), ANSI.bold, ANSI.green)}`
+  );
+}
+
+function printVillageSelectionMenu(villageState) {
+  printSubDivider("VILLAGE SELECTOR");
+  if (!villageState.villages.length) {
+    console.log(`  ${color("No villages detected yet.", ANSI.yellow)}`);
+    return;
+  }
+
+  villageState.villages.forEach((village, index) => {
+    const selectedMark = village.id === villageState.selectedVillageId ? "*" : " ";
+    const activeMark = village.id === villageState.activeVillageId ? "A" : " ";
+    const marker = `[${selectedMark}${activeMark}]`;
+    console.log(
+      `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(marker, ANSI.gray)} ${villageDisplayName(village)}`
+    );
+  });
+
+  console.log("");
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+/** Same row layout as village selector; `[pivot]` marks saved raid pivot IDs. */
+function printRaidPivotVillageSheet(snapshot, pivotIdSet) {
+  const set = pivotIdSet instanceof Set ? pivotIdSet : parsePivotVillageIdSet("");
+  printSubDivider("SET PIVOT VILLAGES");
+  if (!snapshot || !Array.isArray(snapshot.villages) || !snapshot.villages.length) {
+    console.log(`  ${color("No villages detected yet.", ANSI.yellow)}`);
+    return;
+  }
+
+  snapshot.villages.forEach((village, index) => {
+    const selectedMark = village.id === snapshot.selectedVillageId ? "*" : " ";
+    const activeMark = village.id === snapshot.activeVillageId ? "A" : " ";
+    const marker = `[${selectedMark}${activeMark}]`;
+    const pivotTag = set.has(Number(village.id))
+      ? color(" [pivot]", ANSI.bold, ANSI.green)
+      : "";
+    console.log(
+      `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(marker, ANSI.gray)} ${villageDisplayName(village)}${pivotTag}`
+    );
+  });
+
+  console.log("");
+  console.log(`  ${color("A", ANSI.bold, ANSI.cyan)}  Clear pivot (auto / capital)`);
+  console.log(`  ${color("M", ANSI.bold, ANSI.cyan)}  Set multiple pivots (CSV)`);
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+function printMainMenu() {
+  printDivider("NEXIAN");
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, "0");
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(now.getFullYear());
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  console.log(`  ${color("Date:", ANSI.gray)} ${color(`${dd} ${mm} ${yyyy}`, ANSI.bold, ANSI.cyan)}`);
+  console.log(`  ${color("Time:", ANSI.gray)} ${color(`${hh}:${min}:${ss}`, ANSI.bold, ANSI.cyan)}`);
+  console.log("");
+  console.log(`  ${color("0", ANSI.bold, ANSI.cyan)}  Village Status`);
+  console.log(`  ${color("1", ANSI.bold, ANSI.cyan)}  Send Farmlists`);
+  console.log(`  ${color("2", ANSI.bold, ANSI.cyan)}  Village Stage Builder`);
+  console.log(`  ${color("3", ANSI.bold, ANSI.cyan)}  Resource Fields Builder`);
+  console.log(`  ${color("4", ANSI.bold, ANSI.cyan)}  Troop Trainer`);
+  console.log(`  ${color("C", ANSI.bold, ANSI.cyan)}  Cranny defense (selected village)`);
+  console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Templates`);
+  console.log(`  ${color("5", ANSI.bold, ANSI.cyan)}  Expansion / Residence Check`);
+  console.log(`  ${color("X", ANSI.bold, ANSI.cyan)}  Stop Builder Process`);
+  console.log(`  ${color("r", ANSI.bold, ANSI.cyan)}  Relogin Now`);
+  console.log(`  ${color("R", ANSI.bold, ANSI.cyan)}  Relogin + Village Status`);
+  console.log(`  ${color("V", ANSI.bold, ANSI.cyan)}  Select Village Context`);
+  console.log(`  ${color("L", ANSI.bold, ANSI.cyan)}  Logs (Summary)`);
+  console.log(`  ${color("S", ANSI.bold, ANSI.cyan)}  Settings`);
+  console.log(`  ${color("Q", ANSI.bold, ANSI.cyan)}  Quit`);
+}
+
+function normalizeTroopTemplateMode(value) {
+  return String(value || "offensive").toLowerCase() === "defensive"
+    ? "defensive"
+    : "offensive";
+}
+
+/** Stored setting and env TROOP_TRAINING_BATCH_SIZE; invalid → 5, else clamp 1..999999 */
+function clampTroopTrainingBatchSizeStored(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) {
+    return 5;
+  }
+  return Math.max(1, Math.min(n, 999999));
+}
+
+/** Per train action: min(batch setting, Nexian row max) */
+function normalizeTroopTrainingBatchGoal(settings) {
+  return clampTroopTrainingBatchSizeStored(settings && settings.troopTrainingBatchSize);
+}
+
+/** Travian Legends–style defaults; infantry = Barracks / Great Barracks, cavalry = Stable (see TROOP_TRIBE). */
+const TRIBE_DEFAULT_TEMPLATES = {
+  teuton: {
+    offensive: {
+      infantry: ["Clubswinger", "Axesman"],
+      cavalry: ["Teutonic Knight"]
+    },
+    defensive: {
+      infantry: ["Spearman"],
+      cavalry: ["Paladin", "Scout"]
+    }
+  },
+  roman: {
+    offensive: {
+      infantry: ["Legionnaire", "Imperian"],
+      cavalry: ["Equites Imperatoris"]
+    },
+    defensive: {
+      infantry: ["Legionnaire", "Praetorian"],
+      cavalry: ["Equites Legati"]
+    }
+  },
+  gaul: {
+    offensive: {
+      infantry: ["Phalanx", "Swordsman"],
+      cavalry: ["Theutates Thunder", "Haeduan"]
+    },
+    defensive: {
+      infantry: ["Phalanx"],
+      cavalry: ["Druidrider", "Pathfinder"]
+    }
+  }
+};
+
+function getDefaultBranchList(tribe, strategyMode, branch) {
+  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
+  const b = branch === "cavalry" ? "cavalry" : "infantry";
+  const pack = (TRIBE_DEFAULT_TEMPLATES[tribe] || TRIBE_DEFAULT_TEMPLATES.teuton)[sm];
+  const list = pack && pack[b];
+  return Array.isArray(list) ? list.slice() : [];
+}
+
+/** When legacy TROOP_TEMPLATE_OFFENSIVE/DEFENSIVE is set but branch-specific envs are empty, pick units that belong on that branch. */
+function legacySplitToBranch(settings, strategyMode, branch, tribeResolved) {
+  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
+  const legacyRaw =
+    sm === "offensive" ? settings.troopTemplateOffensive : settings.troopTemplateDefensive;
+  const full = parseTroopTemplateList(String(legacyRaw || ""), null);
+  if (!full.length) {
+    return null;
+  }
+  const defInf = getDefaultBranchList(tribeResolved, sm, "infantry").map((x) => String(x || "").trim().toLowerCase());
+  const defCav = getDefaultBranchList(tribeResolved, sm, "cavalry").map((x) => String(x || "").trim().toLowerCase());
+  const want = branch === "cavalry" ? defCav : defInf;
+  const picked = [];
+  for (const name of full) {
+    const lc = String(name || "").trim().toLowerCase();
+    if (want.includes(lc)) {
+      picked.push(String(name).trim());
+    }
+  }
+  return picked.length ? picked : null;
+}
+
+function branchSettingsKey(strategyMode, branch) {
+  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
+  const b = branch === "cavalry" ? "cavalry" : "infantry";
+  if (b === "infantry" && sm === "offensive") {
+    return "troopTemplateInfantryOffensive";
+  }
+  if (b === "infantry" && sm === "defensive") {
+    return "troopTemplateInfantryDefensive";
+  }
+  if (b === "cavalry" && sm === "offensive") {
+    return "troopTemplateCavalryOffensive";
+  }
+  return "troopTemplateCavalryDefensive";
+}
+
+function getTroopBranchTemplate(settings, strategyMode, branch, barracksTroopNames = []) {
+  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
+  const b = branch === "cavalry" ? "cavalry" : "infantry";
+  const tribe = resolveTribeForTraining(settings, barracksTroopNames);
+  const key = branchSettingsKey(sm, b);
+  const rawEnv = String((settings && settings[key]) || "").trim();
+  let envList = parseTroopTemplateList(rawEnv, null);
+  if (!envList.length) {
+    const legacy = legacySplitToBranch(settings, sm, b, tribe);
+    if (legacy && legacy.length) {
+      envList = legacy;
+    }
+  }
+  const defaults = getDefaultBranchList(tribe, sm, b);
+  const candidates = envList.length > 0 ? envList : defaults;
+  return { mode: sm, branch: b, candidates, tribe };
+}
+
+function normalizeTroopTrainingManualFocus(value) {
+  const f = String(value || "infantry").trim().toLowerCase();
+  if (f === "cavalry" || f === "cav") {
+    return "cavalry";
+  }
+  if (f === "both" || f === "all") {
+    return "both";
+  }
+  return "infantry";
+}
+
+function parseTroopTemplateList(raw, fallback) {
+  const list = String(raw || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (list.length) {
+    return list;
+  }
+  if (fallback === undefined || fallback === null) {
+    return [];
+  }
+  return Array.isArray(fallback) ? fallback : [];
+}
+
+function normalizeTroopTribeSetting(value) {
+  const t = String(value || "auto").trim().toLowerCase();
+  if (t === "teuton" || t === "teutons" || t === "t") {
+    return "teuton";
+  }
+  if (t === "roman" || t === "romans" || t === "r") {
+    return "roman";
+  }
+  if (t === "gaul" || t === "gauls" || t === "g") {
+    return "gaul";
+  }
+  return "auto";
+}
+
+/** Infer tribe from unit names shown on the barracks / great barracks train form. */
+function inferTribeFromBarracksTroopNames(names) {
+  const lc = (Array.isArray(names) ? names : [])
+    .map((n) => String(n || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!lc.length) {
+    return null;
+  }
+  const has = (re) => lc.some((n) => re.test(n));
+  let teuton = 0;
+  let roman = 0;
+  let gaul = 0;
+  if (has(/\bclubswinger\b/) || has(/\baxesman\b/) || has(/\bteutonic\b/)) {
+    teuton += 4;
+  }
+  if (has(/\bpaladin\b/) && !has(/\blegionnaire\b/)) {
+    teuton += 2;
+  }
+  if (has(/\bspearman\b/) && !has(/\blegionnaire\b/) && !has(/\bphalanx\b/) && !has(/\bswordsman\b/)) {
+    teuton += 2;
+  }
+  if (has(/\blegionnaire\b/) || has(/\bpraetorian\b/) || has(/\bimperian\b/) || has(/\bimperator/)) {
+    roman += 4;
+  }
+  if (
+    has(/\bphalanx\b/) ||
+    has(/\bswordsman\b/) ||
+    has(/\bpathfinder\b/) ||
+    has(/\bhaeduan\b/) ||
+    has(/\bdruid/) ||
+    has(/\btheutates\b/)
+  ) {
+    gaul += 4;
+  }
+  const maxScore = Math.max(teuton, roman, gaul);
+  if (maxScore < 2) {
+    return null;
+  }
+  if (teuton === maxScore) {
+    return "teuton";
+  }
+  if (roman === maxScore) {
+    return "roman";
+  }
+  return "gaul";
+}
+
+function resolveTribeForTraining(settings, barracksTroopNames) {
+  const cfg = normalizeTroopTribeSetting(settings && settings.troopTribe);
+  if (cfg === "teuton" || cfg === "roman" || cfg === "gaul") {
+    return cfg;
+  }
+  return inferTribeFromBarracksTroopNames(barracksTroopNames) || "teuton";
+}
+
+/** Merged infantry + cavalry order (legacy helpers / logging only). */
+function getTroopTemplateCandidatesForMode(settings, mode, barracksTroopNames = []) {
+  const m = mode === "defensive" ? "defensive" : "offensive";
+  const inf = getTroopBranchTemplate(settings, m, "infantry", barracksTroopNames);
+  const cav = getTroopBranchTemplate(settings, m, "cavalry", barracksTroopNames);
+  return {
+    mode: m,
+    candidates: [...inf.candidates, ...cav.candidates],
+    tribe: inf.tribe
+  };
+}
+
+function getTroopTemplateCandidates(settings, options = {}) {
+  const mode = normalizeTroopTemplateMode(settings.troopTemplateMode);
+  const names = options && Array.isArray(options.barracksTroopNames) ? options.barracksTroopNames : [];
+  return getTroopTemplateCandidatesForMode(settings, mode, names);
+}
+
+function describeBranchTroopList(settings, strategyMode, branch) {
+  const m = strategyMode === "defensive" ? "defensive" : "offensive";
+  const b = branch === "cavalry" ? "cavalry" : "infantry";
+  const key = branchSettingsKey(m, b);
+  const envList = parseTroopTemplateList(String((settings && settings[key]) || ""), null);
+  if (envList.length > 0) {
+    return envList.join(", ");
+  }
+  const cfg = normalizeTroopTribeSetting(settings.troopTribe);
+  const previewTribe = cfg === "auto" ? "auto (infer on train)" : cfg;
+  const tribe = cfg === "auto" ? "teuton" : cfg;
+  const list = getDefaultBranchList(tribe, m, b);
+  return `${list.join(", ")}  ${color(`[${previewTribe}]`, ANSI.gray)}`;
+}
+
+const TROOP_TRIBE_MENU_CYCLE = ["auto", "teuton", "roman", "gaul"];
+
+function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "village") {
+  const sessionStatus = runtimeStatus && runtimeStatus.sessionLoop
+    ? runtimeStatus.sessionLoop
+    : { enabled: settings.sessionLoopEnabled, nextInMinutes: null };
+  const farmlistStatus = runtimeStatus && runtimeStatus.farmlistLoop
+    ? runtimeStatus.farmlistLoop
+    : { enabled: settings.farmlistLoopEnabled, nextInMinutes: null };
+
+  const modeLabel = settings.sessionLoopEnabled ? "Repeating Session" : "One-Time Login";
+  const modeColor = settings.sessionLoopEnabled ? ANSI.green : ANSI.yellow;
+  console.log("");
+  console.log(
+    `  ${color("Session Mode:", ANSI.gray)} ${color(modeLabel, ANSI.bold, modeColor)}`
+  );
+
+  if (settings.sessionLoopEnabled) {
+    console.log(
+      `  ${color("Play Window:", ANSI.gray)} ${color(`${settings.playMinMinutes}-${settings.playMaxMinutes} min`, ANSI.bold)}`
+    );
+    console.log(
+      `  ${color("Rest Window:", ANSI.gray)} ${color(`${settings.restMinMinutes}-${settings.restMaxMinutes} min`, ANSI.bold)}`
+    );
+    const nextSessionText = Number.isFinite(sessionStatus.nextInMinutes)
+      ? `${sessionStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Session Cycle:", ANSI.gray)} ${color(nextSessionText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
+
+  const farmModeLabel = settings.farmlistLoopEnabled ? "ON" : "OFF";
+  const farmModeColor = settings.farmlistLoopEnabled ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Farmlist Loop:", ANSI.gray)} ${color(farmModeLabel, ANSI.bold, farmModeColor)} ${color(`(${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes} min)`, ANSI.bold)}`
+  );
+  if (settings.farmlistLoopEnabled) {
+    const nextFarmlistText = Number.isFinite(farmlistStatus.nextInMinutes)
+      ? `${farmlistStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Farmlist Send:", ANSI.gray)} ${color(nextFarmlistText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
+
+  const builderStatus = runtimeStatus && runtimeStatus.builderLoop
+    ? runtimeStatus.builderLoop
+    : { enabled: settings.builderLoopEnabled, nextInMinutes: null };
+  const troopStatus = runtimeStatus && runtimeStatus.troopLoop
+    ? runtimeStatus.troopLoop
+    : { enabled: settings.troopTrainingRoundRobinEnabled, nextInMinutes: null };
+  const builderModeLabel = settings.builderLoopEnabled ? "ON" : "OFF";
+  const builderModeColor = settings.builderLoopEnabled ? ANSI.green : ANSI.yellow;
+  const builderPlanLabel = String(builderPlanMode || "village").toLowerCase() === "resource"
+    ? "resource"
+    : "village";
+  console.log(
+    `  ${color("Builder Loop:", ANSI.gray)} ${color(builderModeLabel, ANSI.bold, builderModeColor)} ${color(`(${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes} min)`, ANSI.bold)} ${color(`[plan: ${builderPlanLabel}]`, ANSI.gray)}`
+  );
+  if (settings.builderLoopEnabled) {
+    const nextBuilderText = Number.isFinite(builderStatus.nextInMinutes)
+      ? `${builderStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Builder Run:", ANSI.gray)} ${color(nextBuilderText, ANSI.bold, ANSI.cyan)}`
+    );
+    if (builderStatus.roundRobinProgress) {
+      console.log(
+        `  ${color("Round-Robin Progress:", ANSI.gray)} ${color(builderStatus.roundRobinProgress, ANSI.bold, ANSI.cyan)}`
+      );
+    }
+  }
+
+  const troopModeLabel = settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF";
+  const troopModeColor = settings.troopTrainingRoundRobinEnabled ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Troop RR Loop:", ANSI.gray)} ${color(troopModeLabel, ANSI.bold, troopModeColor)} ${color(`(${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes} min)`, ANSI.bold)}`
+  );
+  if (settings.troopTrainingRoundRobinEnabled) {
+    const nextTroopText = Number.isFinite(troopStatus.nextInMinutes)
+      ? `${troopStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Troop Run:", ANSI.gray)} ${color(nextTroopText, ANSI.bold, ANSI.cyan)}`
+    );
+    if (settings.troopTrainingAlternateGreatBarracks) {
+      const tplMode = normalizeTroopTemplateMode(settings.troopTemplateMode);
+      const note =
+        tplMode === "offensive"
+          ? "RR cycles: Barracks (off. inf.) → Great Barracks (def. inf.) → Stable (cavalry, same mode)"
+          : "alternate Great Barracks only runs when template mode is offensive";
+      console.log(
+        `  ${color("Troop alternate:", ANSI.gray)} ${color(note, ANSI.bold, ANSI.cyan)}`
+      );
+    } else if (settings.troopTrainingRoundRobinEnabled) {
+      console.log(
+        `  ${color("Troop RR:", ANSI.gray)} ${color("Barracks (inf.) ↔ Stable (cav.) per tick", ANSI.bold, ANSI.cyan)}`
+      );
+    }
+  }
+
+  const crannyStatus = runtimeStatus && runtimeStatus.crannyLoop
+    ? runtimeStatus.crannyLoop
+    : { enabled: settings.crannyDefenseRoundRobinEnabled, nextInMinutes: null };
+  const crannyModeLabel = settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF";
+  const crannyModeColor = settings.crannyDefenseRoundRobinEnabled ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Cranny defense RR:", ANSI.gray)} ${color(crannyModeLabel, ANSI.bold, crannyModeColor)} ${color(`(${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes} min)`, ANSI.bold)}`
+  );
+  if (settings.crannyDefenseRoundRobinEnabled) {
+    const nextCrannyText = Number.isFinite(crannyStatus.nextInMinutes)
+      ? `${crannyStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Cranny Run:", ANSI.gray)} ${color(nextCrannyText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
+}
+
+function printSettings(settings) {
+  normalizeDelayRange(settings);
+  normalizeExpansionSettlementSettings(settings);
+
+  printSubDivider("SETTINGS");
+  printKeyValueRows([
+    { label: "browserMode", value: settings.headless ? "Headless" : "Full Browser" },
+    { label: "randomDelayMs", value: `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}` },
+    { label: "farmlistUrl", value: settings.farmlistUrl },
+    { label: "villageBuilderUrl", value: settings.villageBuilderUrl },
+    { label: "troopTrainerUrl", value: settings.troopTrainerUrl },
+    { label: "troopGreatTrainerUrl", value: settings.troopGreatTrainerUrl },
+    { label: "troopStableTrainerUrl", value: settings.troopStableTrainerUrl },
+    {
+      label: "troopAlternateGreatBarracks",
+      value: settings.troopTrainingAlternateGreatBarracks ? "ON" : "OFF"
+    },
+    {
+      label: "troopTribe",
+      value: normalizeTroopTribeSetting(settings.troopTribe)
+    },
+    {
+      label: "troopTrainingBatchSize",
+      value: String(normalizeTroopTrainingBatchGoal(settings))
+    },
+    { label: "troopTrainingPreset", value: settings.troopTrainingPreset },
+    { label: "troopTemplateMode", value: normalizeTroopTemplateMode(settings.troopTemplateMode) },
+    {
+      label: "troopManualFocus",
+      value: normalizeTroopTrainingManualFocus(settings.troopTrainingManualFocus)
+    },
+    { label: "tplInfantryOff", value: String(settings.troopTemplateInfantryOffensive || "").trim() || "(defaults)" },
+    { label: "tplInfantryDef", value: String(settings.troopTemplateInfantryDefensive || "").trim() || "(defaults)" },
+    { label: "tplCavalryOff", value: String(settings.troopTemplateCavalryOffensive || "").trim() || "(defaults)" },
+    { label: "tplCavalryDef", value: String(settings.troopTemplateCavalryDefensive || "").trim() || "(defaults)" },
+    { label: "farmlistLoop", value: `${settings.farmlistLoopEnabled ? "ON" : "OFF"} (${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes} min)` },
+    { label: "builderLoop", value: `${settings.builderLoopEnabled ? "ON" : "OFF"} (${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes} min)` },
+    { label: "villageStatusUrl", value: settings.villageStatusUrl },
+    { label: "selectAllSelector", value: settings.selectAllSelector },
+    { label: "sendButtonSelector", value: settings.sendButtonSelector },
+    { label: "builderGoldComplete", value: `${settings.builderGoldCompleteEnabled ? "ON" : "OFF"} (max ${settings.builderGoldCompleteMax}/run)` },
+    { label: "builderMasterBuilder", value: settings.builderMasterBuilderEnabled ? "ON" : "OFF" },
+    {
+      label: "raidEvacuation",
+      value:
+        `${settings.raidEvacuationEnabled !== false ? "ON" : "OFF"} ` +
+        `(trigger ${settings.raidEvacuationTriggerMinutes || 30}m, reserve ${settings.raidEvacuationReservePerResource || 300})`
+    },
+    {
+      label: "raidPivotVillageIds",
+      value: String(settings.raidEvacuationPivotVillageIds || "auto (capital)")
+    },
+    {
+      label: "statusAfterFarmlists",
+      value: `${settings.statusAfterFarmlistsEnabled ? "ON" : "OFF"} (${settings.statusAfterFarmlistsCooldownMinutes} min cooldown)`
+    },
+    {
+      label: "roundRobinBuilder",
+      value: settings.builderRoundRobinEnabled ? "ON" : "OFF"
+    },
+    {
+      label: "troopRoundRobinLoop",
+      value: `${settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF"} (${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes} min)`
+    },
+    {
+      label: "crannyDefenseRoundRobin",
+      value: `${settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF"} (${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes} min)`
+    },
+    {
+      label: "expansionPlannedTargets",
+      value: `${settings.expansionUsePlannedTargets ? "ON" : "OFF"} (${settings.expansionPlannedTargetsFile})`
+    },
+    {
+      label: "expansionAutoDispatch",
+      value: settings.expansionAutoDispatchEnabled ? "ON" : "OFF"
+    },
+    {
+      label: "resourceCirculation",
+      value: `${settings.resourceCirculationEnabled ? "ON" : "OFF"} (≤${Math.round(
+        (settings.resourceCirculationReceiverMaxFillRatio || 0.8) * 100
+      )}% store fill)`
+    },
+    {
+      label: "resourceCirculationExpansion",
+      value: settings.resourceCirculationExpansionEnabled ? "ON" : "OFF"
+    }
+  ]);
+}
+
+function printSettingsMenu(settings) {
+  printSubDivider("SETTINGS MENU");
+  const onOff = (v) => v ? color("ON", ANSI.bold, ANSI.green) : color("OFF", ANSI.bold, ANSI.yellow);
+  const val = (v) => color(v, ANSI.bold, ANSI.white);
+  const dim = (v) => color(v, ANSI.gray);
+  const section = (title) => console.log(`  ${color(title, ANSI.bold, ANSI.magenta)}`);
+  const tag = (label, value) => label
+    ? `${dim("[")}${dim(label)} ${val(value)}${dim("]")}`
+    : `${dim("[")}${val(value)}${dim("]")}`;
+
+  const opt = (n) => color(`[${n}]`, ANSI.bold, ANSI.cyan);
+
+  section("General");
+  console.log(
+    `  ${opt("1")}  Browser Mode       ${tag("", settings.headless ? "Headless" : "Full")}`
+  );
+  console.log(
+    `  ${opt("2")}  Random Delay       ${tag("", `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}ms`)}`
+  );
+  console.log();
+
+  section("Session and Farm");
+  console.log(
+    `  ${opt("3")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("4")}  Farmlist Loop      ${dim("[")}${onOff(settings.farmlistLoopEnabled)}${dim("]")}  ${tag("every", `${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("9")}  Post-Farm Status   ${dim("[")}${onOff(settings.statusAfterFarmlistsEnabled)}${dim("]")}  ${tag("cd", `${settings.statusAfterFarmlistsCooldownMinutes}m`)}`
+  );
+  console.log();
+
+  section("Builder");
+  console.log(
+    `  ${opt("5")}  Gold Complete      ${dim("[")}${onOff(settings.builderGoldCompleteEnabled)}${dim("]")}  ${tag("max", `${settings.builderGoldCompleteMax}/run`)}`
+  );
+  console.log(
+  `  ${opt("6")}  Builder Loop        ${dim("[")}${onOff(settings.builderLoopEnabled)}${dim("]")}  ${tag("every", `${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("0")}  Builder RR          ${dim("[")}${onOff(settings.builderRoundRobinEnabled)}${dim("]")}`
+  );
+  console.log(
+    `  ${opt("7")}  Master Builder      ${dim("[")}${onOff(settings.builderMasterBuilderEnabled)}${dim("]")}`
+  );
+  console.log(
+    `  ${opt("U")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
+  );
+  console.log();
+
+  section("Troops and Defense");
+  console.log(
+    `  ${opt("T")}  Troop RR Loop      ${dim("[")}${onOff(settings.troopTrainingRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("8")}  Troop RR Interval  ${tag("every", `${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("J")}  Cranny Interval    ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
+  );
+  console.log();
+
+  section("Raid Evac");
+  console.log(
+    `  ${opt("E")}  Raid Evacuation    ${dim("[")}${onOff(settings.raidEvacuationEnabled !== false)}${dim("]")}  ${tag("trigger", `${settings.raidEvacuationTriggerMinutes || 30}m`)}`
+  );
+  console.log(
+    `  ${opt("H")}  Pivot Villages     ${tag("ids", settings.raidEvacuationPivotVillageIds || "auto")}`
+  );
+  console.log();
+
+  section("Expansion");
+  console.log(
+    `  ${opt("A")}  Planned Targets    ${dim("[")}${onOff(settings.expansionUsePlannedTargets)}${dim("]")}`
+  );
+  console.log(
+  `  ${opt("D")}  Auto Dispatch       ${dim("[")}${onOff(settings.expansionAutoDispatchEnabled)}${dim("]")}`
+  );
+  console.log(
+    `  ${opt("P")}  Targets File       ${tag("file", settings.expansionPlannedTargetsFile)}`
+  );
+  console.log(
+    `  ${opt("V")}  Settler Circulation ${dim("[")}${onOff(settings.resourceCirculationExpansionEnabled)}${dim(
+      "]"
+    )}`
+  );
+  console.log();
+  section("Navigation");
+  console.log(`  ${opt("B")}  Back`);
+}
+
+function parsePivotVillageIdSet(csv) {
+  const s = new Set();
+  String(csv || "")
+    .split(/[,;\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const n = Number(part);
+      if (Number.isFinite(n)) {
+        s.add(n);
+      }
+    });
+  return s;
+}
+
+function formatPivotCsvFromSet(selected) {
+  return Array.from(selected)
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b)
+    .join(",");
+}
+
+function resolvePivotCsvTokensToVillageIds(csv, villages) {
+  const villageList = Array.isArray(villages) ? villages : [];
+  const villageIds = new Set(
+    villageList
+      .map((village) => Number(village && village.id))
+      .filter((id) => Number.isFinite(id))
+  );
+
+  const resolvedIds = new Set();
+  const invalidTokens = [];
+
+  String(csv || "")
+    .split(/[,;\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const value = Number(part);
+      if (!Number.isFinite(value)) {
+        invalidTokens.push(part);
+        return;
+      }
+
+      const integerValue = Math.trunc(value);
+      if (villageIds.has(integerValue)) {
+        resolvedIds.add(integerValue);
+        return;
+      }
+
+      if (integerValue >= 1 && integerValue <= villageList.length) {
+        const villageAtIndex = villageList[integerValue - 1];
+        const mappedId = Number(villageAtIndex && villageAtIndex.id);
+        if (Number.isFinite(mappedId)) {
+          resolvedIds.add(mappedId);
+          return;
+        }
+      }
+
+      invalidTokens.push(part);
+    });
+
+  return { resolvedIds, invalidTokens };
+}
+
+/**
+ * Same UX as main-menu village selector (V): numbered list, `[*` / `A]` markers,
+ * `Select village number or B:`. A number sets that village as the sole pivot and saves;
+ * A clears; M enters a CSV for multiple pivots.
+ */
+async function runRaidPivotVillageMenu(rl, settings, runtimeControls) {
+  const refresh =
+    runtimeControls && typeof runtimeControls.refreshSideInfoVillages === "function"
+      ? runtimeControls.refreshSideInfoVillages
+      : null;
+  const getSnapshot =
+    runtimeControls && typeof runtimeControls.getRaidPivotVillageUiState === "function"
+      ? runtimeControls.getRaidPivotVillageUiState
+      : null;
+
+  const persistPivot = async (pivotSet) => {
+    settings.raidEvacuationPivotVillageIds = pivotSet.size ? formatPivotCsvFromSet(pivotSet) : "";
+    if (runtimeControls.persistSettings) {
+      await runtimeControls.persistSettings(["RAID_EVACUATION_PIVOT_VILLAGE_IDS"]);
+    }
+  };
+
+  if (refresh) {
+    try {
+      await refresh();
+    } catch (_error) {
+      logWarn("Could not refresh village list from game (session busy?).");
+    }
+  }
+
+  let pivotSet = parsePivotVillageIdSet(settings.raidEvacuationPivotVillageIds);
+
+  let pivotMenuDone = false;
+  while (!pivotMenuDone) {
+    const snapshot =
+      typeof getSnapshot === "function"
+        ? getSnapshot()
+        : { villages: [], selectedVillageId: null, activeVillageId: null };
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+
+    printRaidPivotVillageSheet(snapshot, pivotSet);
+
+    if (!villages.length) {
+      logWarn("No villages detected.");
+    }
+
+    const answer = (await askQuestion(rl, "Select village number or B: ")).trim().toUpperCase();
+
+    if (answer === "B") {
+      pivotMenuDone = true;
+      continue;
+    }
+
+    if (answer === "A") {
+      pivotSet = new Set();
+      await persistPivot(pivotSet);
+      logSuccess(`Pivot villages: ${settings.raidEvacuationPivotVillageIds || "auto (capital)"}`);
+      continue;
+    }
+
+    if (answer === "M") {
+      const typed = (await askQuestion(rl, "Pivot village IDs (CSV), or empty for auto: ")).trim();
+      if (!typed) {
+        pivotSet = new Set();
+      } else {
+        const { resolvedIds, invalidTokens } = resolvePivotCsvTokensToVillageIds(typed, villages);
+        const nextSet = new Set(pivotSet);
+
+        resolvedIds.forEach((id) => {
+          if (nextSet.has(id)) {
+            nextSet.delete(id);
+          } else {
+            nextSet.add(id);
+          }
+        });
+        pivotSet = nextSet;
+
+        if (invalidTokens.length) {
+          logWarn(
+            `Ignored unknown entries: ${invalidTokens.join(", ")}. Use village row numbers or existing village IDs.`
+          );
+        }
+      }
+      await persistPivot(pivotSet);
+      logSuccess(`Pivot villages: ${settings.raidEvacuationPivotVillageIds || "auto (capital)"}`);
+      continue;
+    }
+
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a listed number, A, M, or B.");
+      continue;
+    }
+
+    const nextVillage = villages[index - 1];
+    pivotSet = new Set([Number(nextVillage.id)]);
+    await persistPivot(pivotSet);
+    logSuccess(`Pivot village: ${villageDisplayName(nextVillage)}`);
+  }
+}
+
+async function runSettingsMenu(rl, settings, runtimeControls) {
+  normalizeExpansionSettlementSettings(settings);
+  let done = false;
+  while (!done) {
+    printSettings(settings);
+    printSettingsMenu(settings);
+
+    const input = (await askQuestion(rl, "Settings option: ")).trim().toUpperCase();
+
+    if (input === "1") {
+      try {
+        const isHeadless = await runtimeControls.toggleHeadlessMode();
+        settings.headless = isHeadless;
+        logSuccess(
+          `Browser mode changed to: ${isHeadless ? "Headless" : "Full Browser"}`
+        );
+      } catch (error) {
+        logError(`Failed to toggle browser mode: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (input === "2") {
+      const maybeMin = (
+        await askQuestion(rl, "New random delay MIN in ms (Enter to keep): ")
+      ).trim();
+      if (maybeMin) {
+        const parsed = Number(maybeMin);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          settings.randomDelayMinMs = parsed;
+        } else {
+          logWarn("Invalid min value. Keeping previous value.");
+        }
+      }
+
+      const maybeMax = (
+        await askQuestion(rl, "New random delay MAX in ms (Enter to keep): ")
+      ).trim();
+      if (maybeMax) {
+        const parsed = Number(maybeMax);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          settings.randomDelayMaxMs = parsed;
+        } else {
+          logWarn("Invalid max value. Keeping previous value.");
+        }
+      }
+
+      normalizeDelayRange(settings);
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "RANDOM_DELAY_MIN_MS",
+          "RANDOM_DELAY_MAX_MS"
+        ]);
+      }
+      logSuccess(
+        `Random delay updated to ${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}ms.`
+      );
+      continue;
+    }
+
+    if (input === "3") {
+      const enabledText = (
+        await askQuestion(rl, "Enable repeating session loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.sessionLoopEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextPlayMinText = (
+        await askQuestion(rl, "Play MIN minutes (Enter keep): ")
+      ).trim();
+      const nextPlayMaxText = (
+        await askQuestion(rl, "Play MAX minutes (Enter keep): ")
+      ).trim();
+      const nextRestMinText = (
+        await askQuestion(rl, "Rest MIN minutes (Enter keep): ")
+      ).trim();
+      const nextRestMaxText = (
+        await askQuestion(rl, "Rest MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        playMinMinutes: nextPlayMinText ? Number(nextPlayMinText) : settings.playMinMinutes,
+        playMaxMinutes: nextPlayMaxText ? Number(nextPlayMaxText) : settings.playMaxMinutes,
+        restMinMinutes: nextRestMinText ? Number(nextRestMinText) : settings.restMinMinutes,
+        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes
+      };
+
+      try {
+        const applied = await runtimeControls.updateSessionLoopConfig(nextConfig);
+        settings.sessionLoopEnabled = applied.enabled;
+        settings.playMinMinutes = applied.playMinMinutes;
+        settings.playMaxMinutes = applied.playMaxMinutes;
+        settings.restMinMinutes = applied.restMinMinutes;
+        settings.restMaxMinutes = applied.restMaxMinutes;
+
+        logSuccess(
+          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m.`
+        );
+      } catch (error) {
+        logError(`Failed to update session loop: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "4") {
+      const enabledText = (
+        await askQuestion(rl, "Enable farmlist loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.farmlistLoopEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Farmlist loop MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Farmlist loop MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        minMinutes: nextMinText ? Number(nextMinText) : settings.farmlistLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.farmlistLoopMaxMinutes
+      };
+
+      try {
+        const applied = await runtimeControls.updateFarmlistLoopConfig(nextConfig);
+        settings.farmlistLoopEnabled = applied.enabled;
+        settings.farmlistLoopMinMinutes = applied.minMinutes;
+        settings.farmlistLoopMaxMinutes = applied.maxMinutes;
+
+        logSuccess(
+          `Farmlist loop updated: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m.`
+        );
+      } catch (error) {
+        logError(`Failed to update farmlist loop: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "B") {
+      done = true;
+      continue;
+    }
+
+    if (input === "5") {
+      settings.builderGoldCompleteEnabled = !settings.builderGoldCompleteEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "BUILDER_GOLD_COMPLETE_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Builder gold complete: ${settings.builderGoldCompleteEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "6") {
+      const enabledText = (
+        await askQuestion(rl, "Enable builder loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.builderLoopEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Builder loop MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Builder loop MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        minMinutes: nextMinText ? Number(nextMinText) : settings.builderLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.builderLoopMaxMinutes
+      };
+
+      try {
+        const applied = await runtimeControls.updateBuilderLoopConfig(nextConfig);
+        settings.builderLoopEnabled = applied.enabled;
+        settings.builderLoopMinMinutes = applied.minMinutes;
+        settings.builderLoopMaxMinutes = applied.maxMinutes;
+
+        logSuccess(
+          `Builder loop updated: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m.`
+        );
+      } catch (error) {
+        logError(`Failed to update builder loop: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "7") {
+      settings.builderMasterBuilderEnabled = !settings.builderMasterBuilderEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "BUILDER_MASTER_BUILDER_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Builder master builder usage: ${settings.builderMasterBuilderEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "8") {
+      const nextMinText = (
+        await askQuestion(rl, "Troop RR loop MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Troop RR loop MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        minMinutes: nextMinText ? Number(nextMinText) : settings.troopTrainingLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.troopTrainingLoopMaxMinutes
+      };
+
+      if (!runtimeControls.updateTroopTrainingLoopConfig) {
+        logWarn("Troop RR interval update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateTroopTrainingLoopConfig(nextConfig);
+        settings.troopTrainingLoopMinMinutes = applied.minMinutes;
+        settings.troopTrainingLoopMaxMinutes = applied.maxMinutes;
+
+        logSuccess(
+          `Troop RR loop interval updated: every ${applied.minMinutes}-${applied.maxMinutes} minute(s).`
+        );
+      } catch (error) {
+        logError(`Failed to update troop RR loop interval: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "9") {
+      const enabledText = (
+        await askQuestion(rl, "Enable status print after farmlists? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      if (enabledText === "Y") {
+        settings.statusAfterFarmlistsEnabled = true;
+      } else if (enabledText === "N") {
+        settings.statusAfterFarmlistsEnabled = false;
+      }
+
+      const cooldownText = (
+        await askQuestion(rl, "Status print cooldown MINUTES (Enter keep): ")
+      ).trim();
+      if (cooldownText) {
+        const parsed = Number(cooldownText);
+        if (Number.isFinite(parsed) && parsed >= 1) {
+          settings.statusAfterFarmlistsCooldownMinutes = Math.floor(parsed);
+        } else {
+          logWarn("Invalid cooldown value. Keeping previous value.");
+        }
+      }
+
+      if (!Number.isFinite(settings.statusAfterFarmlistsCooldownMinutes) || settings.statusAfterFarmlistsCooldownMinutes < 1) {
+        settings.statusAfterFarmlistsCooldownMinutes = 15;
+      }
+
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "STATUS_AFTER_FARMLISTS_ENABLED",
+          "STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES"
+        ]);
+      }
+
+      logSuccess(
+        `Status after farmlists: ${settings.statusAfterFarmlistsEnabled ? "ON" : "OFF"}, cooldown ${settings.statusAfterFarmlistsCooldownMinutes} minute(s).`
+      );
+      continue;
+    }
+
+    if (input === "E") {
+      settings.raidEvacuationEnabled = !(settings.raidEvacuationEnabled !== false);
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "RAID_EVACUATION_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Raid resource evacuation: ${settings.raidEvacuationEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "H") {
+      await runRaidPivotVillageMenu(rl, settings, runtimeControls);
+      continue;
+    }
+
+    if (input === "0") {
+      settings.builderRoundRobinEnabled = !settings.builderRoundRobinEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "BUILDER_ROUND_ROBIN_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Builder round-robin: ${settings.builderRoundRobinEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "T") {
+      settings.troopTrainingRoundRobinEnabled = !settings.troopTrainingRoundRobinEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "TROOP_TRAINING_ROUND_ROBIN_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Troop training round-robin loop: ${settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "I") {
+      settings.crannyDefenseRoundRobinEnabled = !settings.crannyDefenseRoundRobinEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "CRANNY_DEFENSE_ROUND_ROBIN_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Cranny defense round-robin: ${settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "J") {
+      const nextMinText = (
+        await askQuestion(rl, "Cranny defense RR MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Cranny defense RR MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        minMinutes: nextMinText ? Number(nextMinText) : settings.crannyDefenseLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.crannyDefenseLoopMaxMinutes
+      };
+
+      if (!runtimeControls.updateCrannyDefenseLoopConfig) {
+        logWarn("Cranny defense interval update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateCrannyDefenseLoopConfig(nextConfig);
+        settings.crannyDefenseLoopMinMinutes = applied.minMinutes;
+        settings.crannyDefenseLoopMaxMinutes = applied.maxMinutes;
+
+        logSuccess(
+          `Cranny defense RR interval updated: every ${applied.minMinutes}-${applied.maxMinutes} minute(s).`
+        );
+      } catch (error) {
+        logError(`Failed to update Cranny defense RR interval: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "A") {
+      settings.expansionUsePlannedTargets = !settings.expansionUsePlannedTargets;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "EXPANSION_USE_PLANNED_TARGETS"
+        ]);
+      }
+      logSuccess(
+        `Expansion planned-target mode: ${settings.expansionUsePlannedTargets ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "P") {
+      const current = settings.expansionPlannedTargetsFile || "templates/settlement_targets.json";
+      const typed = (await askQuestion(
+        rl,
+        `Targets file path (Enter keep): ${current}\nNew file path: `
+      )).trim();
+      if (typed) {
+        settings.expansionPlannedTargetsFile = typed;
+      }
+
+      const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
+      if (!loaded.ok) {
+        logWarn(`${loaded.message}`);
+      } else {
+        logSuccess(
+          `Loaded ${loaded.targets.length} planned target(s) from ${loaded.absolutePath}`
+        );
+      }
+
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "EXPANSION_PLANNED_TARGETS_FILE"
+        ]);
+      }
+      continue;
+    }
+
+    if (input === "D") {
+      settings.expansionAutoDispatchEnabled = !settings.expansionAutoDispatchEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "EXPANSION_AUTO_DISPATCH_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Expansion auto-dispatch: ${settings.expansionAutoDispatchEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "U") {
+      settings.resourceCirculationEnabled = !settings.resourceCirculationEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings(["RESOURCE_CIRCULATION_ENABLED"]);
+      }
+      logSuccess(
+        `Builder resource circulation: ${settings.resourceCirculationEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "V") {
+      settings.resourceCirculationExpansionEnabled = !settings.resourceCirculationExpansionEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings(["RESOURCE_CIRCULATION_EXPANSION_ENABLED"]);
+      }
+      logSuccess(
+        `Settlement-prep circulation: ${settings.resourceCirculationExpansionEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    logWarn("Unknown option. Use 0-9, T, I, J, A, D, U, V, E, H, P, or B.");
+  }
+}
+
+function printTroopTemplateMenu(settings) {
+  const mode = normalizeTroopTemplateMode(settings.troopTemplateMode);
+  const tribeLabel = normalizeTroopTribeSetting(settings.troopTribe);
+  const manualFocus = normalizeTroopTrainingManualFocus(settings.troopTrainingManualFocus);
+
+  printSubDivider("TROOP TEMPLATES");
+  printKeyValueRows([
+    { label: "mode", value: mode },
+    { label: "tribe", value: tribeLabel },
+    {
+      label: "trainBatch",
+      value: String(normalizeTroopTrainingBatchGoal(settings))
+    },
+    {
+      label: "manualTrainer",
+      value: `${manualFocus}  ${color("(menu 4)", ANSI.gray)}`
+    },
+    {
+      label: "infantry OFF",
+      value: describeBranchTroopList(settings, "offensive", "infantry")
+    },
+    {
+      label: "infantry DEF",
+      value: describeBranchTroopList(settings, "defensive", "infantry")
+    },
+    {
+      label: "cavalry OFF",
+      value: describeBranchTroopList(settings, "offensive", "cavalry")
+    },
+    {
+      label: "cavalry DEF",
+      value: describeBranchTroopList(settings, "defensive", "cavalry")
+    }
+  ]);
+  console.log(`  ${color("[1]", ANSI.bold, ANSI.cyan)}  Set mode OFFENSIVE`);
+  console.log(`  ${color("[2]", ANSI.bold, ANSI.cyan)}  Set mode DEFENSIVE`);
+  console.log(`  ${color("[3]", ANSI.bold, ANSI.cyan)}  Edit infantry OFFENSIVE list (CSV)`);
+  console.log(`  ${color("[4]", ANSI.bold, ANSI.cyan)}  Edit infantry DEFENSIVE list (CSV)`);
+  console.log(`  ${color("[5]", ANSI.bold, ANSI.cyan)}  Edit cavalry OFFENSIVE list (CSV)`);
+  console.log(`  ${color("[6]", ANSI.bold, ANSI.cyan)}  Edit cavalry DEFENSIVE list (CSV)`);
+  console.log(`  ${color("[7]", ANSI.bold, ANSI.cyan)}  Set batch size (number)`);
+  console.log(`  ${color("[8]", ANSI.bold, ANSI.cyan)}  Cycle tribe: auto → teuton → roman → gaul`);
+  console.log(
+    `  ${color("[9]", ANSI.bold, ANSI.cyan)}  Menu 4 target: infantry → cavalry → both`
+  );
+  console.log(`  ${color("[+]", ANSI.bold, ANSI.cyan)}  Increase batch +5`);
+  console.log(`  ${color("[-]", ANSI.bold, ANSI.cyan)}  Decrease batch -5`);
+  console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+async function openVillageBuilder(page, settings, selectedVillageId) {
+  await page.goto(withVillageId(settings.villageBuilderUrl, selectedVillageId), {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  });
+}
+
+async function navigateToVillageCenterMap(page, settings, selectedVillageId) {
+  const villageMapUrl = withVillageId(settings.villageBuilderUrl, selectedVillageId);
+
+  await page.goto(villageMapUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  });
+
+  const villageCenterUrl = await page.evaluate(() => {
+    const topBar = document.querySelector("#mtop a#n2[href]");
+    if (topBar) {
+      return topBar.getAttribute("href");
+    }
+
+    const centerImg =
+      document.querySelector("img[alt='Village center'][title='Village center']") ||
+      document.querySelector("img[title='Village center'][alt='Village center']") ||
+      document.querySelector("img[title='Village center']");
+
+    if (centerImg) {
+      const parentLink = centerImg.closest("a[href]");
+      return parentLink ? parentLink.getAttribute("href") : null;
+    }
+
+    return null;
+  });
+
+  if (villageCenterUrl) {
+    const absoluteCenter = withVillageId(new URL(villageCenterUrl, page.url()).toString(), selectedVillageId);
+    await page.goto(absoluteCenter, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    });
+  } else {
+    const fallbackCenter = withVillageId(new URL("village2.php", page.url()).toString(), selectedVillageId);
+    await page.goto(fallbackCenter, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    });
+  }
+}
+
+async function resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, kind) {
+  const page = getPage();
+  await navigateToVillageCenterMap(page, settings, selectedVillageId);
+
+    const buildHref = await page.evaluate((k) => {
+    const areas = Array.from(document.querySelectorAll("map#map2 area[href*='build.php?id=']"));
+
+    const labelOf = (area) => {
+      const title = (area.getAttribute("title") || "").trim();
+      const alt = (area.getAttribute("alt") || "").trim();
+      return `${title} ${alt}`.replace(/\s+/g, " ").trim();
+    };
+
+    let chosen = null;
+    for (const area of areas) {
+      const label = labelOf(area);
+      const isGreatBarracks = /great\s+barracks/i.test(label);
+      const looksBarracks = /\bbarracks\b/i.test(label);
+      const isGreatStable = /great\s+stable/i.test(label);
+      const looksStable = /\bstable\b/i.test(label);
+
+      if (k === "great_barracks" && isGreatBarracks) {
+        chosen = area;
+        break;
+      }
+      if (k === "barracks" && looksBarracks && !isGreatBarracks) {
+        chosen = area;
+        break;
+      }
+      if (k === "stable" && looksStable && !isGreatStable) {
+        chosen = area;
+        break;
+      }
+    }
+
+    return chosen ? chosen.getAttribute("href") : null;
+  }, kind);
+
+  if (!buildHref) {
+    return null;
+  }
+
+  const absolute = new URL(buildHref, page.url()).toString();
+  return withVillageId(absolute, selectedVillageId);
+}
+
+async function resolveBarracksUrlFromVillageMap(getPage, settings, selectedVillageId) {
+  return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "barracks");
+}
+
+async function resolveGreatBarracksUrlFromVillageMap(getPage, settings, selectedVillageId) {
+  return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "great_barracks");
+}
+
+async function resolveStableUrlFromVillageMap(getPage, settings, selectedVillageId) {
+  return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "stable");
+}
+
+async function trainTroopsInBarracks(getPage, settings, selectedVillageId, options = {}) {
+  const page = getPage();
+  const mapVariantRaw = options.mapVariant;
+  const mapVariant =
+    mapVariantRaw === "great_barracks"
+      ? "great_barracks"
+      : mapVariantRaw === "stable"
+        ? "stable"
+        : "barracks";
+  const fallbackTrainerSetting =
+    mapVariant === "great_barracks"
+      ? settings.troopGreatTrainerUrl
+      : mapVariant === "stable"
+        ? settings.troopStableTrainerUrl
+        : settings.troopTrainerUrl;
+  const configuredTrainer =
+    typeof options.trainerUrl === "string" && options.trainerUrl.trim()
+      ? options.trainerUrl.trim()
+      : fallbackTrainerSetting;
+
+  const targetTrainerUrl = withVillageId(configuredTrainer, selectedVillageId);
+  await page.goto(targetTrainerUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  });
+
+  const rowSelector = "form[name='snd'] table.build_details tbody tr";
+  let hasRows = await page.locator(rowSelector).first().isVisible().catch(() => false);
+  if (!hasRows) {
+    await page.waitForSelector(rowSelector, { timeout: 15000 }).catch(() => null);
+    hasRows = await page.locator(rowSelector).first().isVisible().catch(() => false);
+  }
+
+  if (!hasRows) {
+    const buildingLabel =
+      mapVariant === "great_barracks" ? "Great Barracks" : mapVariant === "stable" ? "Stable" : "Barracks";
+    logWarn(
+      `No troop rows found on configured trainer URL. Trying to locate ${buildingLabel} from village map...`
+    );
+    const discover =
+      mapVariant === "great_barracks"
+        ? resolveGreatBarracksUrlFromVillageMap
+        : mapVariant === "stable"
+          ? resolveStableUrlFromVillageMap
+          : resolveBarracksUrlFromVillageMap;
+
+    const discoveredBarracksUrl = await discover(getPage, settings, selectedVillageId);
+
+    if (discoveredBarracksUrl) {
+      await page.goto(discoveredBarracksUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      });
+      await page.waitForSelector(rowSelector, { timeout: 15000 }).catch(() => null);
+      hasRows = await page.locator(rowSelector).first().isVisible().catch(() => false);
+    }
+  }
+
+  if (!hasRows) {
+    const vidText = selectedVillageId ? ` (vid=${selectedVillageId})` : "";
+    const buildingLabel =
+      mapVariant === "great_barracks" ? "Great Barracks" : mapVariant === "stable" ? "Stable" : "Barracks";
+    throw new Error(
+      `No ${buildingLabel} training rows found${vidText}. This village may not have that building yet.`
+    );
+  }
+
+  const troopOptions = await page.evaluate(() => {
+    const rows = Array.from(
+      document.querySelectorAll("form[name='snd'] table.build_details tbody tr")
+    );
+
+    return rows
+      .map((row) => {
+        const tit = row.querySelector("td.desc .tit");
+        const nameEl = tit ? tit.querySelector("a") : null;
+        const unitImg = tit ? tit.querySelector("img.unit[title], img.unit[alt]") : null;
+
+        let troopName = nameEl ? nameEl.textContent.replace(/\u00a0/g, " ").trim() : "";
+        if (!troopName && unitImg) {
+          troopName =
+            String(unitImg.getAttribute("title") || unitImg.getAttribute("alt") || "").trim();
+        }
+
+        const inputEl = row.querySelector("td.val input.text[type='text'], td.val input.text");
+        const maxLink = row.querySelector("td.max a");
+
+        const inputName = inputEl ? inputEl.getAttribute("name") : "";
+
+        const maxText = maxLink ? maxLink.textContent : "";
+        const onclickText = maxLink ? maxLink.getAttribute("onclick") || "" : "";
+
+        const maxFromText = (() => {
+          const match = String(maxText).match(/(\d+)/);
+          return match ? Number(match[1]) : NaN;
+        })();
+
+        const maxFromOnclick = (() => {
+          const m =
+            String(onclickText).match(/\.value\s*=\s*(\d+)/i) ||
+            String(onclickText).match(/\bvalue\s*=\s*(\d+)/i);
+          return m ? Number(m[1]) : NaN;
+        })();
+
+        let maxTrainable = Number.isFinite(maxFromText)
+          ? maxFromText
+          : (Number.isFinite(maxFromOnclick) ? maxFromOnclick : 0);
+
+        const availEl = row.querySelector(".tit span.info span[id^='availCount_']");
+        const availDigits = availEl ? String(availEl.textContent || "").replace(/\D/g, "").trim() : "";
+        const availableNow = availDigits !== "" ? Number(availDigits) : NaN;
+        // Only positive "Available:" values cap concurrent train headroom (e.g. merge limits).
+        // "Available: 0" appears on barracks rows that still have a finite resource "(max)" —
+        // using it wiped Spearman/etc. off the roster and broke defensive/alternate modes.
+        if (Number.isFinite(availableNow) && availableNow > 0) {
+          maxTrainable = Math.min(maxTrainable, availableNow);
+        }
+
+        return {
+          troopName,
+          inputName,
+          maxTrainable
+        };
+      })
+      .filter((item) => item.inputName && item.maxTrainable > 0);
+  });
+
+  if (!troopOptions.length) {
+    const buildingLabel =
+      mapVariant === "great_barracks" ? "Great Barracks" : mapVariant === "stable" ? "Stable" : "Barracks";
+    throw new Error(
+      `${buildingLabel} opened but no trainable troop rows on ${page.url()}. Check resources/preset.`
+    );
+  }
+
+  const barracksTroopNames = troopOptions
+    .map((o) => String(o.troopName || "").trim())
+    .filter(Boolean);
+
+  const fromAlternate =
+    Array.isArray(options.templateCandidates) && options.templateCandidates.length > 0
+      ? options.templateCandidates.map((name) => String(name || "").trim()).filter(Boolean)
+      : [];
+
+  const forcedListMode =
+    options.templateCandidatesMode === "offensive" || options.templateCandidatesMode === "defensive"
+      ? options.templateCandidatesMode
+      : null;
+
+  const strategyForTemplate =
+    options.templateStrategyMode === "offensive" || options.templateStrategyMode === "defensive"
+      ? options.templateStrategyMode
+      : forcedListMode ||
+        normalizeTroopTemplateMode(settings.troopTemplateMode);
+
+  const templateBranch =
+    options.templateBranch === "cavalry" || options.templateBranch === "infantry"
+      ? options.templateBranch
+      : mapVariant === "stable"
+        ? "cavalry"
+        : "infantry";
+
+  let template;
+  if (fromAlternate.length > 0) {
+    template = {
+      mode: forcedListMode || normalizeTroopTemplateMode(settings.troopTemplateMode),
+      branch: templateBranch,
+      candidates: fromAlternate,
+      tribe: resolveTribeForTraining(settings, barracksTroopNames)
+    };
+  } else if (forcedListMode) {
+    template = getTroopBranchTemplate(settings, forcedListMode, templateBranch, barracksTroopNames);
+  } else {
+    template = getTroopBranchTemplate(settings, strategyForTemplate, templateBranch, barracksTroopNames);
+  }
+  const batchGoal = normalizeTroopTrainingBatchGoal(settings);
+  const normalizedOptions = troopOptions.map((option) => ({
+    troopName: option.troopName || option.inputName,
+    inputName: option.inputName,
+    maxTrainable: option.maxTrainable,
+    trainQty: Math.min(batchGoal, option.maxTrainable),
+    normalizedName: String(option.troopName || option.inputName || "").trim().toLowerCase()
+  }));
+
+  let chosen = null;
+  for (const candidate of template.candidates) {
+    const needle = String(candidate || "").trim().toLowerCase();
+    if (!needle) {
+      continue;
+    }
+    const match = normalizedOptions.find((option) => option.normalizedName === needle && option.trainQty > 0);
+    if (match) {
+      chosen = match;
+      break;
+    }
+  }
+
+  if (!chosen) {
+    const candidateText = template.candidates.join(", ");
+    const availableText = normalizedOptions.map((option) => option.troopName).join(", ");
+    const tribeHint = template.tribe ? ` (${template.tribe})` : "";
+    const branchHint = template.branch ? ` ${template.branch}` : "";
+    throw new Error(
+      `No trainable troop found for ${template.mode}${branchHint} template${tribeHint} (${candidateText}). Available now: ${availableText || "none"}.`
+    );
+  }
+
+  const input = page.locator(`input[name='${chosen.inputName}']`).first();
+  await input.waitFor({ state: "visible", timeout: 10000 });
+  await input.fill(String(chosen.trainQty));
+
+  const trainButton = page.locator("#btn_train").first();
+  await trainButton.click({ force: true });
+
+  // The page uses AJAX form interception; a brief wait helps ensure request dispatch.
+  await page.waitForTimeout(1500);
+
+  if (chosen.trainQty === chosen.maxTrainable && chosen.maxTrainable < batchGoal) {
+    logSuccess(
+      `Queued ${chosen.trainQty} ${chosen.troopName} ` +
+        `(batch goal ${batchGoal}; Nexian row max is ${chosen.maxTrainable}).`
+    );
+  } else {
+    logSuccess(`Queued ${chosen.trainQty} ${chosen.troopName}.`);
+  }
+
+  const queueSummary = await page.evaluate(() => {
+    const queueTable = document.querySelector("#troopQueueContainer table.under_progress");
+    if (!queueTable) {
+      return null;
+    }
+
+    const queueRows = Array.from(queueTable.querySelectorAll("tbody tr"));
+    let totalQueuedUnits = 0;
+
+    queueRows.forEach((row) => {
+      if (row.classList.contains("next") || row.classList.contains("total")) {
+        return;
+      }
+
+      const desc = row.querySelector("td.desc");
+      if (!desc) {
+        return;
+      }
+
+      const raw = desc.textContent.replace(/\u00a0/g, " ").trim();
+      const match = raw.match(/^(\d+)/);
+      if (match) {
+        totalQueuedUnits += Number(match[1]);
+      }
+    });
+
+    const nextUnitText = (() => {
+      const el = queueTable.querySelector("tbody tr.next span[id^='timer']");
+      return el ? el.textContent.replace(/\u00a0/g, " ").trim() : "N/A";
+    })();
+
+    const totalDurationText = (() => {
+      const el = queueTable.querySelector("tbody tr.total span[id^='timer']");
+      if (el) {
+        return el.textContent.replace(/\u00a0/g, " ").trim();
+      }
+
+      const firstTimer = queueTable.querySelector("tbody tr td.dur span[id^='timer']");
+      return firstTimer ? firstTimer.textContent.replace(/\u00a0/g, " ").trim() : "N/A";
+    })();
+
+    return {
+      totalQueuedUnits,
+      nextUnitText,
+      totalDurationText
+    };
+  });
+
+  if (queueSummary) {
+    printSubDivider("QUEUE SUMMARY");
+    printKeyValueRows([
+      { label: "Total queued units", value: String(queueSummary.totalQueuedUnits) },
+      { label: "Next unit in", value: queueSummary.nextUnitText },
+      { label: "Total queue duration", value: queueSummary.totalDurationText }
+    ]);
+  }
+
+  return {
+    preset: chosen.troopName,
+    templateMode: template.mode,
+    templateBranch: template.branch || templateBranch,
+    trainerBuilding: mapVariant,
+    queued: chosen.trainQty,
+    maxTrainable: chosen.maxTrainable,
+    queueSummary
+  };
+}
+
+async function showVillageStatus(getPage, settings, selectedVillageId, selectedVillage) {
+  const page = getPage();
+  await page.goto(withVillageId(settings.villageStatusUrl, selectedVillageId), {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  });
+
+  const status = await page.evaluate(() => {
+    const getText = (selector) => {
+      const el = document.querySelector(selector);
+      return el ? el.textContent.replace(/\u00a0/g, " ").trim() : "N/A";
+    };
+
+    const resources = [
+      { name: "Wood", value: getText("#l4") },
+      { name: "Clay", value: getText("#l3") },
+      { name: "Iron", value: getText("#l2") },
+      { name: "Crop", value: getText("#l1") }
+    ];
+
+    const classifyMovementRowDirection = (row) => {
+      const tbody = row.closest("tbody");
+      const tbClass = tbody ? String(tbody.className || "").toLowerCase() : "";
+      if (/\bincomings?\b/.test(tbClass) || /\bincoming troop/.test(tbClass)) {
+        return "in";
+      }
+      if (
+        /\boutgoings?\b/.test(tbClass) ||
+        /\boutgoing troop/.test(tbClass) ||
+        /\bcommands\b/.test(tbClass) ||
+        /\bbefehl/.test(tbClass)
+      ) {
+        return "out";
+      }
+      const rc = String(row.className || "").toLowerCase();
+      if (/\boutgoing\b|\boutgo\b|\bmov(?:ement)?_?out\b|\btroopout\b|\bcommand_out\b/.test(rc)) {
+        return "out";
+      }
+      if (/\bincoming\b|\bmov(?:ement)?_?in\b|\btroopin\b|\bcommand_in\b/.test(rc)) {
+        return "in";
+      }
+      const typ = row.querySelector("td.typ");
+      if (typ) {
+        const gc = `${typ.className || ""}`.toLowerCase();
+        if (/\bd2\b|^d2 |\sd2\b/.test(gc) || /dir_?out|direction_?2|movement_?out/.test(gc)) {
+          return "out";
+        }
+        if (/\bd1\b|^d1 |\sd1\b/.test(gc) || /dir_?in|direction_?1|movement_?in/.test(gc)) {
+          return "in";
+        }
+        const img = typ.querySelector("img[src]");
+        if (img) {
+          const src = String(img.getAttribute("src") || "").toLowerCase();
+          if (/uhr\b|ruck|rück|backward|befehle_back|\bret\b|return(?:ing)?\b/i.test(src)) {
+            return "out";
+          }
+        }
+      }
+      return "unknown";
+    };
+
+    const movementRows = Array.from(document.querySelectorAll("#movements tbody tr"));
+    const movements = movementRows
+      .map((row) => {
+        const movementDirection = classifyMovementRowDirection(row);
+        const icon = row.querySelector("td.typ img");
+        const label = row.querySelector(".mov span");
+        const eta = row.querySelector(".dur_r");
+
+        const type =
+          (icon && (icon.getAttribute("title") || icon.getAttribute("alt"))) ||
+          "Movement";
+        const text = label ? label.textContent.replace(/\u00a0/g, " ").trim() : "";
+        const etaText = eta
+          ? eta.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim()
+          : "";
+
+        return { movementDirection, type, text, eta: etaText };
+      })
+      .filter((item) => item.text || item.eta);
+
+    const unitRows = Array.from(document.querySelectorAll("#troops tbody tr"));
+    const units = unitRows
+      .map((row) => {
+        const nameEl = row.querySelector("td.un");
+        const countEl = row.querySelector("td.num");
+        const name = nameEl ? nameEl.textContent.replace(/\u00a0/g, " ").trim() : "";
+        const count = countEl ? countEl.textContent.replace(/\u00a0/g, " ").trim() : "";
+        return { name, count };
+      })
+      .filter((item) => item.name && item.count);
+
+    const productionRows = Array.from(document.querySelectorAll("#production tbody tr"));
+    const production = productionRows
+      .map((row) => {
+        const resourceNameEl = row.querySelector("td.res");
+        const valueEl = row.querySelector("td.num");
+        const perEl = row.querySelector("td.per");
+
+        const resource = resourceNameEl
+          ? resourceNameEl.textContent.replace(/\u00a0/g, " ").replace(":", "").trim()
+          : "";
+        const value = valueEl ? valueEl.textContent.replace(/\u00a0/g, " ").trim() : "";
+        const per = perEl ? perEl.textContent.replace(/\u00a0/g, " ").trim() : "";
+
+        return { resource, value, per };
+      })
+      .filter((item) => item.resource && item.value);
+
+    const parseContractTable = (selector) => {
+      const table = document.querySelector(selector);
+      if (!table) {
+        return {
+          queueCount: 0,
+          goldFinishAvailable: false,
+          items: []
+        };
+      }
+
+      const rows = Array.from(table.querySelectorAll("tbody tr"));
+      const items = rows
+        .map((row) => {
+          const buildingCell = row.querySelector("td:nth-child(2)");
+          const remainingCell = row.querySelector("td:nth-child(3)");
+          const buildLink = buildingCell
+            ? buildingCell.querySelector("a[href*='build.php?id=']")
+            : null;
+
+          const href = buildLink ? buildLink.getAttribute("href") || "" : "";
+          const slotMatch = href.match(/[?&]id=(\d+)/i);
+          const slot = slotMatch ? Number(slotMatch[1]) : null;
+
+          const building = buildingCell
+            ? buildingCell.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim()
+            : "";
+          const timerEl = row.querySelector("span[id^='timer']");
+          const remaining = timerEl
+            ? timerEl.textContent.replace(/\u00a0/g, " ").trim()
+            : (remainingCell
+              ? remainingCell.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim()
+              : "");
+
+          return {
+            slot,
+            building,
+            remaining,
+            waitingLoop: /waiting\s+loop/i.test(building)
+          };
+        })
+        .filter((item) => item.building || item.remaining);
+
+      const goldFinishLink = table.querySelector("thead a[href*='bfs']");
+      return {
+        queueCount: items.length,
+        goldFinishAvailable: Boolean(goldFinishLink),
+        items
+      };
+    };
+
+    const buildingContract = parseContractTable("#building_contract");
+    const masterBuilderContract = parseContractTable("#building_contract_mb");
+
+    return {
+      resources,
+      movements,
+      units,
+      production,
+      buildingContract,
+      masterBuilderContract
+    };
+  });
+  const incomingAttacks = getIncomingAttackAlerts(status.movements);
+
+  printDivider("VILLAGE STATUS");
+
+  if (selectedVillage) {
+    const planModes = [
+      { key: "village", title: "VILLAGE STAGE BUILDER" },
+      { key: "resource", title: "RESOURCE FIELDS BUILDER" }
+    ];
+
+    for (const plan of planModes) {
+      let syncMessage = null;
+      try {
+        const syncResult = await builder.syncProgressToWorldState(
+          getPage,
+          settings,
+          selectedVillage,
+          { planMode: plan.key }
+        );
+        if (syncResult && (syncResult.status === "realigned" || syncResult.status === "error")) {
+          syncMessage = syncResult.message;
+        }
+      } catch (error) {
+        syncMessage = `Progress sync failed: ${error.message || error}`;
+      }
+
+      const villageProgress = builder.getVillageProgress(selectedVillage, { planMode: plan.key });
+      const templatePreview = builder.previewPlan(selectedVillage, { planMode: plan.key });
+
+      let templateValue = "N/A";
+      let progressValue = "N/A";
+      let nextStepValue = "N/A";
+
+      if (templatePreview && templatePreview.activeTemplate) {
+        const templateName = templatePreview.templateName || templatePreview.activeTemplate;
+        templateValue = `${templateName} (${templatePreview.activeTemplate})`;
+      } else if (villageProgress && villageProgress.active_template) {
+        templateValue = villageProgress.active_template;
+      }
+
+      if (villageProgress) {
+        const stageNum = Number(villageProgress.stage_index || 0) + 1;
+        const stepNum = Number(villageProgress.step_index || 0) + 1;
+        progressValue = `stage ${stageNum}, step ${stepNum}`;
+      }
+
+      if (templatePreview) {
+        if (templatePreview.status === "pending") {
+          const next = templatePreview.next;
+          nextStepValue = `${next.step.building} slot ${next.step.slot} -> lvl ${next.step.target_level}`;
+        } else if (templatePreview.status === "template_complete" || templatePreview.status === "all_complete") {
+          nextStepValue = templatePreview.message;
+        } else if (templatePreview.status === "error") {
+          nextStepValue = `Template error: ${templatePreview.message}`;
+        }
+      }
+
+      printSubDivider(plan.title);
+      printKeyValueRows([
+        { label: "Village", value: villageDisplayName(selectedVillage) },
+        { label: "Template", value: templateValue },
+        { label: "Progress", value: progressValue },
+        { label: "Next step", value: nextStepValue }
+      ]);
+
+      if (syncMessage) {
+        logWarn(`[${plan.title}] ${syncMessage}`);
+      }
+    }
+  }
+
+  printSubDivider("BUILDING CONTRACT");
+  if (!status.buildingContract || !status.buildingContract.items.length) {
+    console.log(`  ${color("none", ANSI.dim)}`);
+  } else {
+    const goldFinishValue = status.buildingContract.goldFinishAvailable
+      ? color("Available", ANSI.bold, ANSI.green)
+      : color("Unavailable", ANSI.bold, ANSI.yellow);
+
+    printKeyValueRows([
+      { label: "Queue items", value: String(status.buildingContract.queueCount) },
+      { label: "Gold finish", value: goldFinishValue, raw: true }
+    ]);
+
+    status.buildingContract.items.forEach((item, index) => {
+      const slotText = Number.isFinite(item.slot) ? `slot ${item.slot}` : "slot ?";
+      const waitingText = item.waitingLoop
+        ? ` ${color("[waiting loop]", ANSI.yellow)}`
+        : "";
+      console.log(
+        `  ${color(`${index + 1}.`, ANSI.bold, ANSI.cyan)} ` +
+        `${color(slotText, ANSI.gray)} ${color("|", ANSI.dim)} ` +
+        `${color(item.building || "?", ANSI.bold)} ${color("|", ANSI.dim)} ` +
+        `${color(item.remaining || "N/A", ANSI.cyan)}${waitingText}`
+      );
+    });
+  }
+
+  printSubDivider("MASTER BUILDER CONTRACT");
+  if (!status.masterBuilderContract || !status.masterBuilderContract.items.length) {
+    console.log(`  ${color("none", ANSI.dim)}`);
+  } else {
+    const mbGoldFinishValue = status.masterBuilderContract.goldFinishAvailable
+      ? color("Available", ANSI.bold, ANSI.green)
+      : color("Unavailable", ANSI.bold, ANSI.yellow);
+
+    printKeyValueRows([
+      { label: "Queue items", value: String(status.masterBuilderContract.queueCount) },
+      { label: "Gold finish", value: mbGoldFinishValue, raw: true }
+    ]);
+
+    status.masterBuilderContract.items.forEach((item, index) => {
+      const slotText = Number.isFinite(item.slot) ? `slot ${item.slot}` : "slot ?";
+      const waitingText = item.waitingLoop
+        ? ` ${color("[waiting loop]", ANSI.yellow)}`
+        : "";
+      console.log(
+        `  ${color(`${index + 1}.`, ANSI.bold, ANSI.cyan)} ` +
+        `${color(slotText, ANSI.gray)} ${color("|", ANSI.dim)} ` +
+        `${color(item.building || "?", ANSI.bold)} ${color("|", ANSI.dim)} ` +
+        `${color(item.remaining || "N/A", ANSI.cyan)}${waitingText}`
+      );
+    });
+  }
+
+  printSubDivider("WAREHOUSE + PRODUCTION");
+  const productionByName = Object.fromEntries(
+    status.production.map((item) => [item.resource.toLowerCase(), item])
+  );
+  const combinedRows = status.resources.map((resource) => {
+    const production = productionByName[resource.name.toLowerCase()];
+    const productionText = production
+      ? `${production.value}${production.per ? ` ${production.per}` : ""}`
+      : "N/A";
+
+    const label = color(resource.name, ANSI.bold, resourceColorCode(resource.name));
+    const stock = color(resource.value, ANSI.bold, ANSI.gray);
+    const productionPart = color(productionText, ANSI.bold, ANSI.green);
+
+    return {
+      label,
+      value: `${stock} ${color("|", ANSI.dim)} ${productionPart}`,
+      raw: true
+    };
+  });
+  printKeyValueRows(combinedRows);
+
+  if (!status.movements.length) {
+    printSubDivider("TROOP MOVEMENTS");
+    console.log(`  ${color("none", ANSI.dim)}`);
+  } else {
+    printSubDivider("TROOP MOVEMENTS");
+    status.movements.forEach((movement, index) => {
+      const indexPart = color(`${index + 1}.`, ANSI.bold, ANSI.cyan);
+      const movementColor = movementColorCode(movement);
+      const typePart = color(movement.type, ANSI.bold, ANSI.yellow);
+      const textPart = color(movement.text, ANSI.bold, movementColor);
+      const etaPart = movement.eta
+        ? `${color("|", ANSI.dim)} ${color(movement.eta, ANSI.cyan)}`
+        : "";
+      console.log(
+        `  ${indexPart} ${typePart} ${color("|", ANSI.dim)} ${textPart} ${etaPart}`.trimEnd()
+      );
+    });
+  }
+
+  printSubDivider("ATTACK ALERT");
+  if (!incomingAttacks.length) {
+    console.log(`  ${color("none", ANSI.dim)}`);
+  } else {
+    const earliest = incomingAttacks[0];
+    const earliestMinutes = Math.max(1, Math.ceil((Number(earliest.etaSeconds) || 0) / 60));
+    printKeyValueRows([
+      { label: "Incoming attacks", value: String(incomingAttacks.length) },
+      { label: "Earliest impact", value: `${earliestMinutes} min (${earliest.eta || "N/A"})` }
+    ]);
+  }
+
+  if (!status.units.length) {
+    printSubDivider("UNITS");
+    console.log(`  ${color("none", ANSI.dim)}`);
+  } else {
+    printSubDivider("UNITS");
+    printKeyValueRows(
+      status.units.map((unit) => ({
+        label: color(unit.name, ANSI.bold, ANSI.yellow),
+        value: color(unit.count, ANSI.bold, ANSI.cyan),
+        raw: true
+      }))
+    );
+  }
+
+}
+
+async function readIncomingAttackAlerts(getPage, settings, villageId) {
+  const page = getPage();
+  const statusUrl = withVillageId(settings.villageStatusUrl, villageId);
+  let navigated = false;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await page.goto(statusUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      });
+      navigated = true;
+      break;
+    } catch (error) {
+      lastError = error;
+      const msg = String(error && error.message ? error.message : error);
+      if (!/ERR_ABORTED|Navigation failed because page was closed|Execution context was destroyed/i.test(msg)) {
+        throw error;
+      }
+      await page.waitForTimeout(150 + attempt * 150).catch(() => {});
+    }
+  }
+  if (!navigated) {
+    const msg = String(lastError && lastError.message ? lastError.message : lastError || "");
+    if (msg) {
+      throw new Error(msg);
+    }
+    return [];
+  }
+  const movements = await page.evaluate(() => {
+    const classifyMovementRowDirection = (row) => {
+      const tbody = row.closest("tbody");
+      const tbClass = tbody ? String(tbody.className || "").toLowerCase() : "";
+      if (/\bincomings?\b/.test(tbClass) || /\bincoming troop/.test(tbClass)) {
+        return "in";
+      }
+      if (
+        /\boutgoings?\b/.test(tbClass) ||
+        /\boutgoing troop/.test(tbClass) ||
+        /\bcommands\b/.test(tbClass) ||
+        /\bbefehl/.test(tbClass)
+      ) {
+        return "out";
+      }
+      const rc = String(row.className || "").toLowerCase();
+      if (
+        /\boutgoing\b|\boutgo\b|\bmov(?:ement)?_?out\b|\btroopout\b|\bcommand_out\b/.test(rc)
+      ) {
+        return "out";
+      }
+      if (
+        /\bincoming\b|\bmov(?:ement)?_?in\b|\btroopin\b|\bcommand_in\b/.test(rc)
+      ) {
+        return "in";
+      }
+
+      const typ = row.querySelector("td.typ");
+      if (typ) {
+        const gc = `${typ.className || ""}`.toLowerCase();
+        if (/\bd2\b|^d2 |\sd2\b/.test(gc) || /dir_?out|direction_?2|movement_?out/.test(gc)) {
+          return "out";
+        }
+        if (/\bd1\b|^d1 |\sd1\b/.test(gc) || /dir_?in|direction_?1|movement_?in/.test(gc)) {
+          return "in";
+        }
+
+        const img = typ.querySelector("img[src]");
+        if (img) {
+          const src = String(img.getAttribute("src") || "").toLowerCase();
+          if (/uhr\b|ruck|rück|backward|befehle_back|\bret\b|return(?:ing)?\b/i.test(src)) {
+            return "out";
+          }
+        }
+      }
+      return "unknown";
+    };
+
+    const rows = Array.from(document.querySelectorAll("#movements tbody tr"));
+    return rows.map((row) => {
+      const movementDirection = classifyMovementRowDirection(row);
+      const icon = row.querySelector("td.typ img");
+      const label = row.querySelector(".mov span");
+      const eta = row.querySelector(".dur_r");
+      const timer = row.querySelector(".dur_r span[id^='timer']");
+      const type =
+        (icon && (icon.getAttribute("title") || icon.getAttribute("alt"))) ||
+        "Movement";
+      const text = label ? label.textContent.replace(/\u00a0/g, " ").trim() : "";
+      const etaText = timer
+        ? timer.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim()
+        : (eta
+          ? eta.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim()
+          : "");
+      const etaRaw = eta
+        ? eta.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim()
+        : "";
+      return {
+        movementDirection,
+        type,
+        text,
+        eta: etaText,
+        etaRaw
+      };
+    }).filter((item) => item.text || item.eta);
+  });
+  return getIncomingAttackAlerts(movements);
+}
+
+async function readUnderAttackVillageIds(getPage, settings) {
+  const page = getPage();
+  const collect = async () => page.evaluate(() => {
+    const ids = new Set();
+
+    Array.from(document.querySelectorAll("#vlist tr.under-attack[data-vid]"))
+      .forEach((row) => {
+        const id = Number(row.getAttribute("data-vid"));
+        if (Number.isFinite(id)) {
+          ids.add(id);
+        }
+      });
+
+    // Fallback signal for templates where row class may not be present:
+    // attack icon/link title, e.g. <a title="Under Attack!"><img class="att1"></a>
+    Array.from(document.querySelectorAll(
+      "#vlist tr[data-vid] a[title*='Under Attack'], #vlist tr[data-vid] img.att1"
+    ))
+      .forEach((node) => {
+        const row = node.closest("tr[data-vid]");
+        if (!row) {
+          return;
+        }
+        const id = Number(row.getAttribute("data-vid"));
+        if (Number.isFinite(id)) {
+          ids.add(id);
+        }
+      });
+
+    return Array.from(ids);
+  });
+
+  let ids = await collect().catch(() => []);
+  if (ids.length > 0) {
+    return ids;
+  }
+
+  await page.goto(settings.villageStatusUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  }).catch(() => null);
+  ids = await collect().catch(() => []);
+  return ids;
+}
+
+async function runTerminalMenu(getPage, settings, runtimeControls) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  let farmlistLoopTimer = null;
+  let builderLoopTimer = null;
+  let troopTrainingLoopTimer = null;
+  let crannyDefenseLoopTimer = null;
+  let raidEvacuationLoopTimer = null;
+  let sigintHandler = null;
+  const raidEvacuationByVillage = new Map();
+  const raidEvacuationSkipLogAtByVillage = new Map();
+
+  try {
+    let done = false;
+    let actionInProgress = false;
+    let currentActionLabel = "";
+    let cancelRequested = false;
+    let nextFarmlistRunAt = null;
+    let lastFarmlistDelayMinutes = null;
+    let farmlistResumeWaitLogged = false;
+    let nextBuilderRunAt = null;
+    let lastBuilderDelayMinutes = null;
+    let nextTroopTrainingRunAt = null;
+    let lastTroopDelayMinutes = null;
+    let nextCrannyDefenseRunAt = null;
+    let lastCrannyDefenseDelayMinutes = null;
+    let builderResumeWaitLogged = false;
+    let builderTemplateDeferredForCrannyLogged = false;
+    let builderVillageWaitLastLogAt = null;
+    let lastAutoFarmlistStatusPrintedAt = null;
+    let activeBuilderPlanMode = "village";
+    let roundRobinIndex = 0;
+    const realignStreakByKey = new Map();
+    let troopRoundRobinIndex = 0;
+    let crannyRoundRobinIndex = 0;
+    let troopTrainingBuildingPhase = 0;
+    const sessionId = runtimeControls.getSessionId
+      ? runtimeControls.getSessionId()
+      : `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const logFilePath = runtimeControls.getLogFilePath
+      ? runtimeControls.getLogFilePath()
+      : path.resolve(process.cwd(), "log.jsonl");
+    let sessionActionCounter = 0;
+    const villageState = {
+      villages: [],
+      activeVillageId: null,
+      selectedVillageId: null,
+      lastRefreshIso: null
+    };
+
+    const pendingMerchantArrivalByVillage = new Map();
+    const builderVillageCooldownUntilByVillage = new Map();
+    const builderEfficiencyWindow = {
+      startedAt: Date.now(),
+      attempts: 0,
+      success: 0,
+      blocked: 0,
+      skippedCooldown: 0
+    };
+
+    const getBuilderCooldownMsForStatus = (status) => {
+      switch (status) {
+        case "blocked_queue":
+        case "idle_saturated":
+          return 2 * 60 * 1000;
+        case "blocked_resources":
+        case "blocked_master_builder_only":
+          return 5 * 60 * 1000;
+        case "blocked_storage":
+          return 10 * 60 * 1000;
+        case "all_complete":
+          return 30 * 60 * 1000;
+        default:
+          return 0;
+      }
+    };
+
+    const maybeLogBuilderEfficiencyWindow = () => {
+      const elapsedMs = Date.now() - builderEfficiencyWindow.startedAt;
+      if (elapsedMs < 30 * 60 * 1000) {
+        return;
+      }
+      const attempts = builderEfficiencyWindow.attempts;
+      const successRate = attempts > 0
+        ? ((builderEfficiencyWindow.success / attempts) * 100).toFixed(1)
+        : "0.0";
+      logInfo(
+        `[Builder Loop] 30m efficiency: attempts=${attempts}, success=${builderEfficiencyWindow.success}, blocked=${builderEfficiencyWindow.blocked}, cooldown_skips=${builderEfficiencyWindow.skippedCooldown}, success_rate=${successRate}%`
+      );
+      builderEfficiencyWindow.startedAt = Date.now();
+      builderEfficiencyWindow.attempts = 0;
+      builderEfficiencyWindow.success = 0;
+      builderEfficiencyWindow.blocked = 0;
+      builderEfficiencyWindow.skippedCooldown = 0;
+    };
+
+    const fetchVillageSnapshotFromPage = async () => {
+      const page = getPage();
+      if (!page || page.isClosed()) {
+        throw new Error("Session page is currently unavailable. Retry after re-login completes.");
+      }
+
+      return page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll("#vlist tr[data-vid]"));
+        let villages = rows.map((row) => {
+          const villageId = Number(row.getAttribute("data-vid"));
+          const link = row.querySelector("td.link a");
+          const name = link ? link.textContent.replace(/\u00a0/g, " ").trim() : `Village ${villageId}`;
+          const href = link ? link.getAttribute("href") || "" : "";
+
+          const cox = row.querySelector("td.aligned_coords .cox");
+          const coy = row.querySelector("td.aligned_coords .coy");
+          const x = cox
+            ? Number((cox.textContent || "").replace(/[^\d-]/g, ""))
+            : null;
+          const y = coy
+            ? Number((coy.textContent || "").replace(/[^\d-]/g, ""))
+            : null;
+
+          const section = row.closest("tbody.vg-section");
+          const groupNameEl = section ? section.querySelector("tr.vg-group-header .vg-group-name") : null;
+          const groupName = groupNameEl
+            ? groupNameEl.textContent.replace(/\u00a0/g, " ").trim()
+            : "Ungrouped";
+          const isCapital = Boolean(
+            section && section.getAttribute("data-group-id") === "_capital"
+          );
+
+          const dotCell = row.querySelector("td.dot, td.dothl");
+          const isActive = Boolean(
+            dotCell &&
+            (dotCell.classList.contains("dothl") ||
+              row.classList.contains("active") ||
+              row.classList.contains("current"))
+          );
+
+          const underAttack = Boolean(
+            row.classList.contains("under-attack") ||
+              row.querySelector(".attack-glow") ||
+              row.querySelector("img.att1")
+          );
+
+          return {
+            id: Number.isFinite(villageId) ? villageId : null,
+            name,
+            groupName,
+            isCapital,
+            x: Number.isFinite(x) ? x : null,
+            y: Number.isFinite(y) ? y : null,
+            coordsText:
+              Number.isFinite(x) && Number.isFinite(y)
+                ? `(${x}|${y})`
+                : "(?|?)",
+            switchHref: href,
+            isActive,
+            underAttack
+          };
+        }).filter((village) => Number.isFinite(village.id));
+
+        // Fallback layout: some worlds/themes render villages in sidebar/dropdown links
+        // without #vlist rows. Parse anchors with newdid/vid and infer basic meta.
+        if (!villages.length) {
+          const linkNodes = Array.from(
+            document.querySelectorAll(
+              [
+                "#sidebarBoxVillagelist a[href*='newdid=']",
+                "#sidebarBoxVillagelist a[href*='vid=']",
+                ".villageList a[href*='newdid=']",
+                ".villageList a[href*='vid=']",
+                "#villageList a[href*='newdid=']",
+                "#villageList a[href*='vid=']",
+                "a[href*='newdid='][class*='village']",
+                "a[href*='vid='][class*='village']"
+              ].join(", ")
+            )
+          );
+          villages = linkNodes
+            .map((link) => {
+              const href = link.getAttribute("href") || "";
+              const absoluteHref = (() => {
+                try {
+                  return new URL(href, window.location.href);
+                } catch (_error) {
+                  return null;
+                }
+              })();
+              const idRaw =
+                (absoluteHref && (absoluteHref.searchParams.get("newdid") || absoluteHref.searchParams.get("vid"))) ||
+                null;
+              const villageId = Number(idRaw);
+              if (!Number.isFinite(villageId)) {
+                return null;
+              }
+
+              const rawText = (link.textContent || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+              const coordMatch = rawText.match(/\((-?\d+)\|(-?\d+)\)/);
+              const x = coordMatch ? Number(coordMatch[1]) : null;
+              const y = coordMatch ? Number(coordMatch[2]) : null;
+              const name = coordMatch ? rawText.replace(coordMatch[0], "").trim() : rawText;
+
+              const linkClass = String(link.className || "").toLowerCase();
+              const rowClass = String((link.closest("li, tr, div") || {}).className || "").toLowerCase();
+              const isActive =
+                /\bactive\b|\bcurrent\b|\bselected\b/.test(linkClass) ||
+                /\bactive\b|\bcurrent\b|\bselected\b/.test(rowClass) ||
+                (absoluteHref &&
+                  (absoluteHref.searchParams.get("newdid") ===
+                    new URL(window.location.href).searchParams.get("newdid") ||
+                    absoluteHref.searchParams.get("vid") ===
+                      new URL(window.location.href).searchParams.get("vid")));
+
+              return {
+                id: villageId,
+                name: name || `Village ${villageId}`,
+                groupName: "Ungrouped",
+                isCapital: false,
+                x: Number.isFinite(x) ? x : null,
+                y: Number.isFinite(y) ? y : null,
+                coordsText:
+                  Number.isFinite(x) && Number.isFinite(y)
+                    ? `(${x}|${y})`
+                    : "(?|?)",
+                switchHref: href,
+                isActive,
+                underAttack: false
+              };
+            })
+            .filter((village) => village && Number.isFinite(village.id));
+        }
+
+        // Last fallback: if no village list is rendered at all, infer current village from URL.
+        if (!villages.length) {
+          let inferredId = null;
+          try {
+            const url = new URL(window.location.href);
+            const raw = url.searchParams.get("vid") || url.searchParams.get("newdid");
+            const parsed = Number(raw);
+            if (Number.isFinite(parsed)) {
+              inferredId = parsed;
+            }
+          } catch (_error) {
+            inferredId = null;
+          }
+          if (Number.isFinite(inferredId)) {
+            villages = [
+              {
+                id: inferredId,
+                name: `Village ${inferredId}`,
+                groupName: "Ungrouped",
+                isCapital: false,
+                x: null,
+                y: null,
+                coordsText: "(?|?)",
+                switchHref: "",
+                isActive: true,
+                underAttack: false
+              }
+            ];
+          }
+        }
+
+        // Some UI layouts can render duplicate village rows (e.g. mirrored sections).
+        // Keep first occurrence by village id so round-robin doesn't hit same village repeatedly.
+        const uniqueVillages = [];
+        const seenVillageIds = new Set();
+        villages.forEach((village) => {
+          if (seenVillageIds.has(village.id)) {
+            return;
+          }
+          seenVillageIds.add(village.id);
+          uniqueVillages.push(village);
+        });
+
+        const active = uniqueVillages.find((village) => village.isActive) || null;
+        return {
+          villages: uniqueVillages,
+          activeVillageId: active ? active.id : null
+        };
+      });
+    };
+
+    const refreshVillageState = async ({ navigateToStatusPage = true, silent = false } = {}) => {
+      const page = getPage();
+      if (!page || page.isClosed()) {
+        throw new Error("Session page is currently unavailable. Retry after re-login completes.");
+      }
+
+      if (navigateToStatusPage) {
+        await page.goto(settings.villageStatusUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 60000
+        });
+      }
+
+      const snapshot = await fetchVillageSnapshotFromPage();
+      villageState.villages = snapshot.villages;
+      villageState.activeVillageId = snapshot.activeVillageId;
+      villageState.lastRefreshIso = new Date().toISOString();
+
+      const selectedStillExists = villageState.villages.some(
+        (village) => village.id === villageState.selectedVillageId
+      );
+      if (!selectedStillExists) {
+        villageState.selectedVillageId =
+          snapshot.activeVillageId || (villageState.villages[0] ? villageState.villages[0].id : null);
+      }
+
+      if (!silent) {
+        logInfo(`[Village] ${villageState.villages.length} village(s) loaded`);
+      }
+
+      return villageState;
+    };
+
+    const getSelectedVillage = () =>
+      villageState.villages.find((village) => village.id === villageState.selectedVillageId) || null;
+
+    /** When builder RR is off, match troop trainer behavior: use explicit selection, else game-active village, else first row. */
+    const resolveBuilderFallbackVillage = () =>
+      getSelectedVillage() ||
+      villageState.villages.find((village) => village.id === villageState.activeVillageId) ||
+      (villageState.villages.length ? villageState.villages[0] : null);
+
+    const restoreSelectedVillageContext = async (sourceLabel = "Context Restore") => {
+      const selectedVillage = getSelectedVillage();
+      if (!selectedVillage) {
+        return;
+      }
+      const page = getPage();
+      if (!page || page.isClosed()) {
+        return;
+      }
+      await page.goto(withVillageId(settings.villageStatusUrl, selectedVillage.id), {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      }).catch(() => null);
+      await refreshVillageState({ navigateToStatusPage: false, silent: true }).catch(() => null);
+      logInfo(`[${sourceLabel}] Restored selected village context: ${villageDisplayName(selectedVillage)}.`);
+    };
+
+    /** Open status/overview for `village` in the browser (does not change menu selection). Round-robin builder needs this before slot reads. */
+    const ensureVillageBrowserContext = async (village, sourceLabel = "Context") => {
+      if (!village || !Number.isFinite(Number(village.id))) {
+        return;
+      }
+      const page = getPage();
+      if (!page || page.isClosed()) {
+        return;
+      }
+      await page.goto(withVillageId(settings.villageStatusUrl, village.id), {
+        waitUntil: "domcontentloaded",
+        timeout: 60000
+      }).catch(() => null);
+      await refreshVillageState({ navigateToStatusPage: false, silent: true }).catch(() => null);
+      logInfo(`[${sourceLabel}] Village browser context: ${villageDisplayName(village)}`);
+    };
+
+    const getVillageMeta = (scope) => {
+      const selected = getSelectedVillage();
+      if (scope === "all") {
+        return {
+          villageScope: "all",
+          villageCount: villageState.villages.length || null
+        };
+      }
+      return {
+        villageScope: "single",
+        villageId: selected ? selected.id : null,
+        villageName: selected ? selected.name : null,
+        villageGroup: selected ? selected.groupName : null,
+        villageCoords: selected ? selected.coordsText : null,
+        villageIsCapital: selected ? Boolean(selected.isCapital) : null
+      };
+    };
+
+    const printSelectedVillageStatus = async (sourceLabel = "Status") => {
+      const targetVillage = resolveBuilderFallbackVillage();
+      if (!targetVillage) {
+        logWarn(`[${sourceLabel}] No villages loaded; skipping village status print.`);
+        return;
+      }
+
+      const explicit = getSelectedVillage();
+      if (explicit) {
+        logInfo(`[${sourceLabel}] Printing selected village status...`);
+      } else {
+        logInfo(
+          `[${sourceLabel}] Village status (fallback): ${villageDisplayName(targetVillage)} — use V to pin a village.`
+        );
+      }
+      await showVillageStatus(
+        getPage,
+        settings,
+        targetVillage.id,
+        targetVillage
+      );
+    };
+
+    const maybePrintAutoFarmlistStatus = async (sourceLabel = "Farmlist Loop") => {
+      const enabled = settings.statusAfterFarmlistsEnabled !== false;
+      const cooldownMinutes = Number.isFinite(Number(settings.statusAfterFarmlistsCooldownMinutes))
+        ? Math.max(1, Math.floor(Number(settings.statusAfterFarmlistsCooldownMinutes)))
+        : 15;
+
+      if (!enabled) {
+        logInfo(`[${sourceLabel}] Auto status print disabled in settings.`);
+        return;
+      }
+
+      const now = Date.now();
+      if (Number.isFinite(lastAutoFarmlistStatusPrintedAt)) {
+        const elapsedMs = now - lastAutoFarmlistStatusPrintedAt;
+        const cooldownMs = cooldownMinutes * 60 * 1000;
+        if (elapsedMs < cooldownMs) {
+          const remainingMinutes = Math.max(1, Math.ceil((cooldownMs - elapsedMs) / 60000));
+          logInfo(
+            `[${sourceLabel}] Auto status print cooldown active (${remainingMinutes} minute(s) remaining).`
+          );
+          return;
+        }
+      }
+
+      await printSelectedVillageStatus(sourceLabel);
+      lastAutoFarmlistStatusPrintedAt = now;
+    };
+
+
+    const getBuilderVillagePlanKey = (villageId, planMode) =>
+      `${Number(villageId) || 0}:${String(planMode || "village").toLowerCase() === "resource" ? "resource" : "village"}`;
+
+    const resetRealignStreak = (villageId, planMode) => {
+      realignStreakByKey.delete(getBuilderVillagePlanKey(villageId, planMode));
+    };
+
+    const incrementRealignStreak = (villageId, planMode) => {
+      const key = getBuilderVillagePlanKey(villageId, planMode);
+      const nextValue = (realignStreakByKey.get(key) || 0) + 1;
+      realignStreakByKey.set(key, nextValue);
+      return nextValue;
+    };
+
+    const normalizeBuilderPlanMode = (planMode) =>
+      String(planMode || "village").toLowerCase() === "resource" ? "resource" : "village";
+
+    const isBuilderPlanFullyComplete = (village, planMode) => {
+      try {
+        const preview = builder.previewPlan(village, { planMode: normalizeBuilderPlanMode(planMode) });
+        return preview && preview.status === "all_complete";
+      } catch (_error) {
+        return false;
+      }
+    };
+
+    const getRoundRobinProgress = (villages, planMode) => {
+      const list = Array.isArray(villages) ? villages : [];
+      if (!list.length) {
+        return null;
+      }
+      let completedCount = 0;
+      for (const village of list) {
+        if (isBuilderPlanFullyComplete(village, planMode)) {
+          completedCount += 1;
+        }
+      }
+      return `${completedCount}/${list.length} complete`;
+    };
+
+    const getBuilderPlanMeta = (planMode) => {
+      const normalized = normalizeBuilderPlanMode(planMode);
+      if (normalized === "resource") {
+        return {
+          key: "resource",
+          name: "Resource Fields Builder",
+          short: "resource"
+        };
+      }
+
+      return {
+        key: "village",
+        name: "Village Stage Builder",
+        short: "village"
+      };
+    };
+
+    const runVillageSelectorMenu = async () => {
+      await refreshVillageState({ navigateToStatusPage: true, silent: true });
+
+      if (!villageState.villages.length) {
+        logWarn("No villages detected.");
+        return;
+      }
+
+      let selectorDone = false;
+      while (!selectorDone) {
+        printVillageSelectionMenu(villageState);
+        const answer = (await askQuestion(rl, "Select village number or B: ")).trim().toUpperCase();
+
+        if (answer === "B") {
+          selectorDone = true;
+          continue;
+        }
+
+        const index = Number(answer);
+        if (!Number.isFinite(index) || index < 1 || index > villageState.villages.length) {
+          logWarn("Invalid selection. Enter a listed number or B.");
+          continue;
+        }
+
+        const nextVillage = villageState.villages[index - 1];
+        villageState.selectedVillageId = nextVillage.id;
+        const page = getPage();
+        if (page && !page.isClosed()) {
+          await page.goto(withVillageId(settings.villageStatusUrl, nextVillage.id), {
+            waitUntil: "domcontentloaded",
+            timeout: 60000
+          });
+          await refreshVillageState({ navigateToStatusPage: false, silent: true });
+        }
+        logSuccess(`Selected village context: ${villageDisplayName(nextVillage)}`);
+      }
+    };
+
+    const runTroopTemplateCategoryMenu = async () => {
+      let submenuDone = false;
+      while (!submenuDone) {
+        printTroopTemplateMenu(settings);
+        const input = (await askQuestion(rl, "Troop template option: ")).trim().toUpperCase();
+
+        if (input === "B") {
+          submenuDone = true;
+          continue;
+        }
+
+        if (input === "1" || input === "2") {
+          settings.troopTemplateMode = input === "1" ? "offensive" : "defensive";
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings([
+              "TROOP_TEMPLATE_MODE"
+            ]);
+          }
+          logSuccess(`Troop template mode: ${settings.troopTemplateMode}`);
+          continue;
+        }
+
+        if (input === "+") {
+          settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(
+            normalizeTroopTrainingBatchGoal(settings) + 5
+          );
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings(["TROOP_TRAINING_BATCH_SIZE"]);
+          }
+          logSuccess(`Troop training batch: ${normalizeTroopTrainingBatchGoal(settings)} (capped per row by Nexian max)`);
+          continue;
+        }
+
+        if (input === "-") {
+          settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(
+            normalizeTroopTrainingBatchGoal(settings) - 5
+          );
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings(["TROOP_TRAINING_BATCH_SIZE"]);
+          }
+          logSuccess(`Troop training batch: ${normalizeTroopTrainingBatchGoal(settings)} (capped per row by Nexian max)`);
+          continue;
+        }
+
+        const editBranchCsv = async (label, settingKey, envKey) => {
+          const cur = String(settings[settingKey] || "").trim();
+          const hint = cur ? `current: ${cur}` : "empty = tribal defaults for this branch";
+          const typed = (
+            await askQuestion(rl, `${label} — comma-separated unit names (${hint})\nNew list (Enter keep): `)
+          ).trim();
+          if (typed === "") {
+            return;
+          }
+          settings[settingKey] = typed;
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings([envKey]);
+          }
+          logSuccess(`${label} updated.`);
+        };
+
+        if (input === "3") {
+          await editBranchCsv(
+            "Infantry OFFENSIVE",
+            "troopTemplateInfantryOffensive",
+            "TROOP_TEMPLATE_INFANTRY_OFFENSIVE"
+          );
+          continue;
+        }
+
+        if (input === "4") {
+          await editBranchCsv(
+            "Infantry DEFENSIVE",
+            "troopTemplateInfantryDefensive",
+            "TROOP_TEMPLATE_INFANTRY_DEFENSIVE"
+          );
+          continue;
+        }
+
+        if (input === "5") {
+          await editBranchCsv(
+            "Cavalry OFFENSIVE",
+            "troopTemplateCavalryOffensive",
+            "TROOP_TEMPLATE_CAVALRY_OFFENSIVE"
+          );
+          continue;
+        }
+
+        if (input === "6") {
+          await editBranchCsv(
+            "Cavalry DEFENSIVE",
+            "troopTemplateCavalryDefensive",
+            "TROOP_TEMPLATE_CAVALRY_DEFENSIVE"
+          );
+          continue;
+        }
+
+        if (input === "7") {
+          const typed = (await askQuestion(rl, "Batch size (1–999999, Enter to cancel): ")).trim();
+          if (!typed) {
+            continue;
+          }
+          const n = Number(typed);
+          if (!Number.isFinite(n)) {
+            logWarn("Invalid number.");
+            continue;
+          }
+          settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(n);
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings(["TROOP_TRAINING_BATCH_SIZE"]);
+          }
+          logSuccess(`Troop training batch: ${normalizeTroopTrainingBatchGoal(settings)} (capped per row by Nexian max)`);
+          continue;
+        }
+
+        if (input === "8") {
+          const cur = normalizeTroopTribeSetting(settings.troopTribe);
+          const ix = TROOP_TRIBE_MENU_CYCLE.indexOf(cur);
+          const i0 = ix >= 0 ? ix : 0;
+          const next = TROOP_TRIBE_MENU_CYCLE[(i0 + 1) % TROOP_TRIBE_MENU_CYCLE.length];
+          settings.troopTribe = next;
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings(["TROOP_TRIBE"]);
+          }
+          logSuccess(
+            `Troop tribe: ${next}. Empty branch template lines use this tribe’s built-in defaults.`
+          );
+          continue;
+        }
+
+        if (input === "9") {
+          const cycle = ["infantry", "cavalry", "both"];
+          const cur = normalizeTroopTrainingManualFocus(settings.troopTrainingManualFocus);
+          const ix = cycle.indexOf(cur);
+          const i0 = ix >= 0 ? ix : 0;
+          const next = cycle[(i0 + 1) % cycle.length];
+          settings.troopTrainingManualFocus = next;
+          if (runtimeControls.persistSettings) {
+            await runtimeControls.persistSettings(["TROOP_TRAINING_MANUAL_FOCUS"]);
+          }
+          logSuccess(`Menu 4 Troop Trainer will train: ${next}.`);
+          continue;
+        }
+
+        logWarn("Unknown option. Use 1–9, +, -, or B.");
+      }
+    };
+
+    const normalizeMinuteRange = (minValue, maxValue, fallbackMin, fallbackMax) => {
+      let min = Number.isFinite(minValue) ? minValue : fallbackMin;
+      let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
+      min = Math.max(1, Math.floor(min));
+      max = Math.max(1, Math.floor(max));
+      if (min > max) {
+        const t = min;
+        min = max;
+        max = t;
+      }
+      return { min, max };
+    };
+
+    const randomIntBetween = (min, max) =>
+      Math.floor(Math.random() * (max - min + 1)) + min;
+
+    const pickNextFarmlistDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (lastFarmlistDelayMinutes !== null && max > min && next === lastFarmlistDelayMinutes) {
+        // Keep the timing dynamic by avoiding the same delay twice in a row when possible.
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastFarmlistDelayMinutes = next;
+      return next;
+    };
+
+    let runRaidGuardPriorityCheck = async () => false;
+
+    const runAction = async (label, fn, options = {}) => {
+      const allowWhilePaused = Boolean(options && options.allowWhilePaused);
+      const raidGuardPriority = Boolean(options && options.raidGuardPriority);
+      const preemptAutoBuilder = Boolean(options && options.preemptAutoBuilder);
+      const automationStatus = runtimeControls.getAutomationStatus
+        ? runtimeControls.getAutomationStatus()
+        : { paused: false, reason: "online" };
+      if (automationStatus.paused && !allowWhilePaused) {
+        logInfo(
+          `Skipped ${label}: automation is paused (${automationStatus.reason}).`
+        );
+        return false;
+      }
+
+      const canPreemptTemplateBuilder =
+        preemptAutoBuilder && actionInProgress && currentActionLabel === "auto-builder";
+
+      if (canPreemptTemplateBuilder) {
+        logInfo(
+          `[Cranny defense] Pre-empting template builder (${currentActionLabel}) for ${label}…`
+        );
+        cancelRequested = true;
+        const maxWaitMs = 90000;
+        const stepMs = 400;
+        let waited = 0;
+        while (actionInProgress && waited < maxWaitMs) {
+          await sleep(stepMs);
+          waited += stepMs;
+        }
+        if (actionInProgress) {
+          logWarn(
+            `[Cranny defense] ${label}: template builder did not release within ${maxWaitMs / 1000}s — skipping this tick.`
+          );
+          return false;
+        }
+      } else if (actionInProgress) {
+        logWarn(
+          `Skipped ${label}: another action is currently running (${currentActionLabel || "unknown"}).`
+        );
+        return false;
+      }
+
+      if (raidGuardPriority) {
+        const raidHandled = await runRaidGuardPriorityCheck();
+        if (raidHandled) {
+          return false;
+        }
+      }
+
+      actionInProgress = true;
+      currentActionLabel = label;
+      cancelRequested = false;
+      try {
+        await fn();
+        if (cancelRequested) {
+          throw new MenuInterruptError("Interrupted by user");
+        }
+        return true;
+      } catch (error) {
+        if (error instanceof MenuInterruptError) {
+          logWarn(`${label} canceled. Back to main menu.`);
+          return false;
+        }
+        throw error;
+      } finally {
+        actionInProgress = false;
+        currentActionLabel = "";
+        cancelRequested = false;
+      }
+    };
+
+    sigintHandler = () => {
+      if (rl.closed) {
+        return;
+      }
+
+      if (!actionInProgress) {
+        console.log("");
+        logInfo("Ctrl+C pressed. Returning to main menu...");
+        try {
+          rl.write("\n");
+        } catch (_error) {
+          // Ignore race where readline closes between check and write.
+        }
+        return;
+      }
+
+      cancelRequested = true;
+      const currentPage = getPage();
+      if (currentPage && !currentPage.isClosed()) {
+        currentPage.evaluate(() => {
+          if (typeof window.stop === "function") {
+            window.stop();
+          }
+        }).catch(() => {});
+      }
+
+      logWarn("Ctrl+C received. Cancel requested for current activity...");
+    };
+    process.on("SIGINT", sigintHandler);
+
+    const writeAuditEvent = (event) => {
+      try {
+        const dir = path.dirname(logFilePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        // Append-only audit log so historical events remain across runs.
+        fs.appendFileSync(logFilePath, `${JSON.stringify(event)}\n`, "utf8");
+      } catch (error) {
+        logWarn(`Failed to write action log: ${error.message || error}`);
+      }
+    };
+
+    const recordAction = ({ actionType, status, details, durationMs, errorMessage }) => {
+      sessionActionCounter += 1;
+      writeAuditEvent({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        actionIndex: sessionActionCounter,
+        actionType,
+        status,
+        durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0,
+        details: details || {},
+        error: errorMessage || null
+      });
+    };
+
+    const attemptResourceCirculation = async ({
+      kind,
+      buildResult,
+      expansionResult,
+      source,
+      targetVillage,
+      planMode
+    }) => {
+      const settlement = kind === "settlement";
+      const blocker = settlement ? expansionResult : buildResult;
+
+      const okStatus =
+        settlement
+          ? !!(blocker && blocker.status === "need_settlement_resources")
+          : !!(blocker && blocker.status === "blocked_resources");
+
+      if (!okStatus) {
+        return { status: "circulation_not_needed" };
+      }
+
+      const enabled = settlement ? settings.resourceCirculationExpansionEnabled : settings.resourceCirculationEnabled;
+      if (!enabled) {
+        const hint = settlement ? "Settings [V]" : "Settings [U]";
+        const logPrefix =
+          source === "manual"
+            ? settlement
+              ? "Expansion"
+              : "Builder"
+            : settlement
+              ? "Expansion"
+              : "Builder Loop";
+        logInfo(`[${logPrefix}] Resource circulation OFF (${hint}); send merchants manually.`);
+        return { status: "circulation_disabled" };
+      }
+
+      if (!targetVillage || !Number.isFinite(Number(targetVillage.id))) {
+        logWarn("[Circulation] No target village selected; skipping.");
+        return { status: "circulation_skipped", message: "no_target_village" };
+      }
+
+      const logPrefixAuto =
+        source === "manual"
+          ? settlement
+            ? "Expansion"
+            : "Builder"
+          : settlement
+            ? "Expansion Loop"
+            : "Builder Loop";
+
+      if (resourceCirculation.isMarketplaceBusy()) {
+        logWarn(`[${logPrefixAuto}] Marketplace is busy elsewhere; skipping auto circulation this pass.`);
+        return { status: "circulation_skipped", message: "market_busy" };
+      }
+
+      await refreshVillageState({ navigateToStatusPage: true, silent: true }).catch(() => null);
+
+      const deficit = blocker.deficit || {};
+      const progressLog = (line) => logInfo(`[${logPrefixAuto}] ${line}`);
+
+      const circulateOptions =
+        settlement
+          ? {
+              targetVillage,
+              villages: villageState.villages,
+              deficit,
+              targetStock: blocker.stock,
+              targetWarehouseCap: blocker.warehouseCap,
+              targetGranaryCap: blocker.granaryCap,
+              progressLog,
+
+              planMode: "village",
+              warehouseTopMerchantTrips: Number(settings.resourceCirculationBuilderMerchantLoads)
+            }
+          : {
+              targetVillage,
+              villages: villageState.villages,
+              deficit,
+              targetStock: buildResult.report && buildResult.report.stock,
+              targetWarehouseCap: buildResult.report && buildResult.report.warehouseCap,
+              targetGranaryCap: buildResult.report && buildResult.report.granaryCap,
+              progressLog,
+              planMode:
+                normalizeBuilderPlanMode(planMode) === "resource" ? "resource" : "village",
+              warehouseTopMerchantTrips: Number(settings.resourceCirculationBuilderMerchantLoads)
+            };
+
+      logInfo(`[${logPrefixAuto}] Starting automated resource circulation toward ${villageDisplayName(targetVillage)}…`);
+
+      let circ;
+      try {
+        circ = await resourceCirculation.circulateResourcesForBuild(getPage, settings, circulateOptions);
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        logError(`[${logPrefixAuto}] Circulation failed: ${msg}`);
+        await restoreSelectedVillageContext(`${logPrefixAuto} Circulation`).catch(() => null);
+        return { status: "circulation_failed", message: msg };
+      }
+
+      await restoreSelectedVillageContext(`${logPrefixAuto} Circulation`).catch(() => null);
+
+      if (!circ || circ.status === "circulation_skipped") {
+        logWarn(`[${logPrefixAuto}] ${(circ && circ.message) || "Circulation skipped."}`);
+        return circ || { status: "circulation_skipped" };
+      }
+
+      if (circ.status === "transfer_sent") {
+        logSuccess(`[${logPrefixAuto}] ${circ.message}`);
+        recordAction({
+          actionType: "resource.transfer",
+          status: "success",
+          durationMs: 0,
+          details: {
+            source: settlement ? "settlement_prep" : "builder",
+            trigger: source === "manual" ? "manual" : "auto-loop",
+            etaMinutes: circ.etaMinutes,
+            shipmentCount: Array.isArray(circ.shipments) ? circ.shipments.length : 0,
+            villageId: targetVillage.id,
+            villageName: targetVillage.name,
+            ...(circ.remainingDeficit ? { remainingDeficit: circ.remainingDeficit } : {})
+          }
+        });
+        const etaMs = Math.max(
+          Number.isFinite(Number(circ.etaMinutes)) ? Math.ceil(Number(circ.etaMinutes)) * 60 * 1000 : 5 * 60 * 1000,
+          60 * 1000
+        );
+        pendingMerchantArrivalByVillage.set(targetVillage.id, Date.now() + etaMs);
+        return circ;
+      }
+
+      logWarn(`[${logPrefixAuto}] Unexpected circulation result: ${circ.status || "?"} (${circ.message || ""})`);
+      return circ;
+    };
+
+    const resolveRaidEvacuationPivotVillage = (sourceVillage) => {
+      const villages = Array.isArray(villageState.villages) ? villageState.villages : [];
+      if (!villages.length) {
+        return null;
+      }
+      const sourceId = sourceVillage && Number.isFinite(Number(sourceVillage.id))
+        ? Number(sourceVillage.id)
+        : null;
+      const pivotSet = parsePivotVillageIdSet(settings.raidEvacuationPivotVillageIds);
+      const matchesPivot = villages.filter((v) => pivotSet.has(Number(v.id)));
+      const notSource = (v) => Number(v.id) !== sourceId;
+
+      const chosenPivot =
+        matchesPivot.find(notSource) ||
+        villages.find((v) => v.isCapital && notSource(v)) ||
+        villages.find((v) => notSource(v)) ||
+        null;
+      return chosenPivot;
+    };
+
+    const attemptRaidEvacuationForAllVillages = async () => {
+      if (settings.raidEvacuationEnabled === false) {
+        return { status: "evacuation_disabled", results: [], handledNearImpact: false };
+      }
+      if (!villageState.villages.length) {
+        return { status: "evacuation_no_villages", results: [], handledNearImpact: false };
+      }
+      if (resourceCirculation.isMarketplaceBusy && resourceCirculation.isMarketplaceBusy()) {
+        return { status: "evacuation_market_busy", results: [], handledNearImpact: false };
+      }
+
+      const triggerMinutes = Number.isFinite(Number(settings.raidEvacuationTriggerMinutes))
+        ? Math.max(1, Math.floor(Number(settings.raidEvacuationTriggerMinutes)))
+        : 30;
+      const reservePerResource = Number.isFinite(Number(settings.raidEvacuationReservePerResource))
+        ? Math.max(0, Math.floor(Number(settings.raidEvacuationReservePerResource)))
+        : 300;
+      const nowTs = Date.now();
+      const results = [];
+      let handledNearImpact = false;
+
+      for (const village of villageState.villages) {
+        if (!village || !Number.isFinite(Number(village.id))) {
+          continue;
+        }
+
+        const alerts = await readIncomingAttackAlerts(getPage, settings, village.id).catch(() => []);
+        if (!alerts.length) {
+          raidEvacuationByVillage.delete(village.id);
+          continue;
+        }
+
+        const nearest = alerts[0];
+        const nearestMinutes = Math.max(1, Math.ceil((Number(nearest.etaSeconds) || 0) / 60));
+        if (!(nearestMinutes <= triggerMinutes)) {
+          continue;
+        }
+
+        const lock = raidEvacuationByVillage.get(village.id);
+        if (lock && Number.isFinite(lock.nextAttemptAt) && lock.nextAttemptAt > nowTs) {
+          const prevLog = Number(raidEvacuationSkipLogAtByVillage.get(village.id) || 0);
+          if (!Number.isFinite(prevLog) || nowTs - prevLog > 120000) {
+            raidEvacuationSkipLogAtByVillage.set(village.id, nowTs);
+            const waitSec = Math.max(1, Math.ceil((lock.nextAttemptAt - nowTs) / 1000));
+            logInfo(
+              `[Raid Evacuation] ${villageDisplayName(village)} already handled recently; ` +
+                `retry allowed in ${waitSec}s.`
+            );
+          }
+          continue;
+        }
+
+        const pivotVillage = resolveRaidEvacuationPivotVillage(village);
+        if (!pivotVillage) {
+          continue;
+        }
+        if (Number(pivotVillage.id) === Number(village.id)) {
+          continue;
+        }
+
+        try {
+          const executed = await runAction(
+            `raid-evacuation-${village.id}`,
+            async () => {
+              await ensureVillageBrowserContext(village, "Raid Evacuation");
+              const evac = await resourceCirculation.evacuateResourcesFromVillage({
+                getPage,
+                settings,
+                sourceVillage: village,
+                pivotVillage,
+                attackAlerts: alerts,
+                triggerEtaMinutes: nearestMinutes,
+                reservePerResource,
+                crannyKeepRatio: 0.8,
+                nowTs,
+                log: (m) => logInfo(m)
+              });
+              results.push({
+                villageId: village.id,
+                villageName: village.name,
+                pivotVillageId: pivotVillage.id,
+                pivotVillageName: pivotVillage.name,
+                nearestMinutes,
+                result: evac
+              });
+
+              if (evac && evac.status === "evacuation_sent") {
+                handledNearImpact = true;
+                raidEvacuationByVillage.set(village.id, {
+                  nextAttemptAt: Date.now() + 120000
+                });
+                logSuccess(`[Raid Evacuation] ${evac.message}`);
+                recordAction({
+                  actionType: "resource.evacuation",
+                  status: "success",
+                  durationMs: 0,
+                  details: {
+                    source: "raid-guard",
+                    villageId: village.id,
+                    villageName: village.name || null,
+                    pivotVillageId: pivotVillage.id,
+                    pivotVillageName: pivotVillage.name || null,
+                    triggerMinutes,
+                    nearestImpactMinutes: nearestMinutes,
+                    keepRatio: 0.8,
+                    reservePerResource,
+                    sent: evac.sent || null
+                  }
+                });
+              } else {
+                const msg = (evac && evac.message) || (evac && evac.status) || "evacuation skipped";
+                logWarn(`[Raid Evacuation] ${villageDisplayName(village)}: ${msg}`);
+              }
+            },
+            { raidGuardPriority: true }
+          );
+          if (!executed) {
+            continue;
+          }
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          logWarn(`[Raid Evacuation] Failed for ${villageDisplayName(village)}: ${message}`);
+          recordAction({
+            actionType: "resource.evacuation",
+            status: "failed",
+            durationMs: 0,
+            details: {
+              source: "raid-guard",
+              villageId: village.id,
+              villageName: village.name || null,
+              pivotVillageId: pivotVillage.id,
+              pivotVillageName: pivotVillage.name || null
+            },
+            errorMessage: message
+          });
+        }
+      }
+
+      return { status: "evacuation_checked", results, handledNearImpact };
+    };
+
+    runRaidGuardPriorityCheck = async () => {
+      if (settings.raidEvacuationEnabled === false || actionInProgress) {
+        return false;
+      }
+      const result = await attemptRaidEvacuationForAllVillages();
+      return Boolean(result && result.handledNearImpact);
+    };
+
+    const summarizeActions = () => {
+      const summary = {
+        totalActions: 0,
+        successfulActions: 0,
+        failedActions: 0,
+        buildingUpgradeFails: 0,
+        thisSessionActions: 0,
+        byType: {
+          "farmlist.send": 0,
+          "troop.train": 0,
+          "building.upgrade": 0,
+          "building.gold_complete": 0,
+          "village.builder.open": 0,
+          "resource.transfer": 0,
+          "resource.evacuation": 0
+        },
+        totals: {
+          goldCompletions: 0,
+          goldSpent: 0,
+          transferShipments: 0,
+          evacuationSends: 0
+        },
+        recentBuilds: []
+      };
+
+      if (!fs.existsSync(logFilePath)) {
+        return summary;
+      }
+
+      const raw = fs.readFileSync(logFilePath, "utf8");
+      const lines = raw.split(/\r?\n/).filter(Boolean);
+
+      lines.forEach((line) => {
+        try {
+          const event = JSON.parse(line);
+          summary.totalActions += 1;
+          if (event.status === "success") {
+            summary.successfulActions += 1;
+          }
+          if (event.status === "failed") {
+            summary.failedActions += 1;
+          }
+          if (event.actionType === "building.upgrade" && event.status === "failed") {
+            summary.buildingUpgradeFails += 1;
+          }
+          if (event.sessionId === sessionId) {
+            summary.thisSessionActions += 1;
+          }
+          if (event.actionType && Object.prototype.hasOwnProperty.call(summary.byType, event.actionType)) {
+            summary.byType[event.actionType] += 1;
+          }
+          if (event.actionType === "building.gold_complete" && event.status === "success") {
+            summary.totals.goldCompletions += Number((event.details && event.details.completions) || 0);
+            summary.totals.goldSpent += Number((event.details && event.details.goldSpent) || 0);
+          }
+          if (event.actionType === "resource.transfer" && event.status === "success") {
+            summary.totals.transferShipments += Number((event.details && event.details.shipmentCount) || 0);
+          }
+          if (event.actionType === "resource.evacuation" && event.status === "success") {
+            summary.totals.evacuationSends += 1;
+          }
+          if (
+            (event.actionType === "building.upgrade" || event.actionType === "building.gold_complete") &&
+            event.status === "success"
+          ) {
+            summary.recentBuilds.push({
+              timestamp: event.timestamp,
+              building: (event.details && event.details.building) || "?",
+              slot: (event.details && event.details.slot) || "?",
+              fromLevel: (event.details && event.details.fromLevel) || "?",
+              toLevel: (event.details && event.details.toLevel) || "?",
+              village: (event.details && event.details.villageName) || "?",
+              type: event.actionType
+            });
+          }
+        } catch (_error) {
+          // Ignore malformed lines to keep summary resilient.
+        }
+      });
+
+      return summary;
+    };
+
+    const showLogSummary = () => {
+      const summary = summarizeActions();
+      printDivider("ACTION LOG SUMMARY");
+      printKeyValueRows([
+        { label: "Log file", value: logFilePath },
+        { label: "Retention", value: "Append-only (no auto-delete)" },
+        { label: "Total actions", value: String(summary.totalActions) },
+        { label: "This session", value: String(summary.thisSessionActions) },
+        { label: "Successful", value: String(summary.successfulActions) },
+        { label: "Failed", value: String(summary.failedActions) },
+        { label: "Farmlist sends", value: String(summary.byType["farmlist.send"] || 0) },
+        { label: "Troop trainings", value: String(summary.byType["troop.train"] || 0) },
+        { label: "Building upgrades", value: String(summary.byType["building.upgrade"] || 0) },
+        { label: "Building upgrade fails", value: String(summary.buildingUpgradeFails || 0) },
+        { label: "Autocomplete actions", value: String(summary.byType["building.gold_complete"] || 0) },
+        { label: "Autocompletes used", value: String(summary.totals.goldCompletions || 0) },
+        { label: "Gold spent", value: String(summary.totals.goldSpent || 0) },
+        { label: "Builder opens", value: String(summary.byType["village.builder.open"] || 0) },
+        { label: "Merchant transfer events", value: String(summary.byType["resource.transfer"] || 0) },
+        { label: "Transfer shipment batches", value: String(summary.totals.transferShipments || 0) },
+        { label: "Raid evacuation events", value: String(summary.byType["resource.evacuation"] || 0) },
+        { label: "Raid evacuation sends", value: String(summary.totals.evacuationSends || 0) }
+      ]);
+
+      // Show last 5 building actions
+      if (summary.recentBuilds.length > 0) {
+        printSubDivider("RECENT BUILDING ACTIONS");
+        const recent = summary.recentBuilds.slice(-5);
+        recent.forEach((b) => {
+          const ts = b.timestamp ? b.timestamp.replace("T", " ").slice(0, 19) : "?";
+          const typeLabel = b.type === "building.gold_complete"
+            ? color("[GOLD]", ANSI.yellow, ANSI.bold)
+            : "";
+          console.log(
+            `  ${color(ts, ANSI.gray)} ${b.building} slot ${b.slot} ${b.fromLevel}->${b.toLevel} ${color(`(${b.village})`, ANSI.dim)} ${typeLabel}`
+          );
+        });
+      }
+    };
+
+    logInfo(`[Log] ${path.basename(logFilePath)}`);
+
+    try {
+      await refreshVillageState({ navigateToStatusPage: true, silent: false });
+    } catch (error) {
+      logWarn(`[Village] Failed to load village list: ${error.message || error}`);
+    }
+
+    const cancelFarmlistLoopTimer = () => {
+      if (farmlistLoopTimer) {
+        clearTimeout(farmlistLoopTimer);
+        farmlistLoopTimer = null;
+      }
+      nextFarmlistRunAt = null;
+    };
+
+    const scheduleFarmlistLoop = () => {
+      cancelFarmlistLoopTimer();
+
+      const normalized = normalizeMinuteRange(
+        settings.farmlistLoopMinMinutes,
+        settings.farmlistLoopMaxMinutes,
+        10,
+        20
+      );
+      settings.farmlistLoopMinMinutes = normalized.min;
+      settings.farmlistLoopMaxMinutes = normalized.max;
+
+      if (!settings.farmlistLoopEnabled || done) {
+        return;
+      }
+
+      const minutes = pickNextFarmlistDelayMinutes(
+        settings.farmlistLoopMinMinutes,
+        settings.farmlistLoopMaxMinutes
+      );
+      farmlistResumeWaitLogged = false;
+      nextFarmlistRunAt = Date.now() + minutes * 60 * 1000;
+      logInfo(`[Farmlist Loop] Next auto-send in ${minutes} minute(s).`);
+
+      const runFarmlistScheduledTick = async () => {
+        if (done || !settings.farmlistLoopEnabled) {
+          scheduleFarmlistLoop();
+          return;
+        }
+
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+
+        if (automationStatus.paused) {
+          nextFarmlistRunAt = null;
+          if (!farmlistResumeWaitLogged) {
+            logInfo(
+              `[Farmlist Loop] Paused (${automationStatus.reason}). Waiting for session to resume...`
+            );
+            farmlistResumeWaitLogged = true;
+          }
+
+          farmlistLoopTimer = setTimeout(() => {
+            if (!done && settings.farmlistLoopEnabled) {
+              scheduleFarmlistLoop();
+            }
+          }, 15000);
+          return;
+        }
+
+        try {
+          const startedAt = Date.now();
+          const executed = await runAction("auto-send farmlists", async () => {
+            logInfo("[Farmlist Loop] Auto-send starting...");
+            await runWithRandomDelay(
+              settings,
+              "Auto Send Farmlists",
+              () => sendFarmlists(getPage, settings),
+              () => cancelRequested
+            );
+            logSuccess("[Farmlist Loop] Auto-send completed.");
+            await maybePrintAutoFarmlistStatus("Farmlist Loop");
+          }, { raidGuardPriority: true });
+          if (executed) {
+            recordAction({
+              actionType: "farmlist.send",
+              status: "success",
+              durationMs: Date.now() - startedAt,
+              details: {
+                source: "auto-loop",
+                minMinutes: settings.farmlistLoopMinMinutes,
+                maxMinutes: settings.farmlistLoopMaxMinutes,
+                ...getVillageMeta("all")
+              }
+            });
+          }
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          const isTransientSessionState =
+            /has been closed|context or browser has been closed|Session page is currently unavailable/i.test(
+              message
+            );
+          const isLoggedOutState =
+            /Farmlist page unavailable \(likely redirected\/out of session\)|\/index\.php/i.test(
+              message
+            );
+
+          if (isLoggedOutState && runtimeControls.reloginNow) {
+            logWarn(`[Farmlist Loop] ${message}`);
+            try {
+              await runtimeControls.reloginNow("farmlist_loop_logged_out");
+              logSuccess("[Farmlist Loop] Re-login complete. Retrying auto-send now...");
+
+              const retryStartedAt = Date.now();
+              const retryExecuted = await runAction("auto-send farmlists retry", async () => {
+                await sendFarmlists(getPage, settings);
+                logSuccess("[Farmlist Loop] Auto-send completed after re-login.");
+                await maybePrintAutoFarmlistStatus("Farmlist Loop");
+              }, { raidGuardPriority: true });
+
+              if (retryExecuted) {
+                recordAction({
+                  actionType: "farmlist.send",
+                  status: "success",
+                  durationMs: Date.now() - retryStartedAt,
+                  details: {
+                    source: "auto-loop-retry",
+                    minMinutes: settings.farmlistLoopMinMinutes,
+                    maxMinutes: settings.farmlistLoopMaxMinutes,
+                    ...getVillageMeta("all")
+                  }
+                });
+              }
+
+              scheduleFarmlistLoop();
+              return;
+            } catch (reloginError) {
+              const reloginMessage =
+                reloginError && reloginError.message ? reloginError.message : String(reloginError);
+              recordAction({
+                actionType: "farmlist.send",
+                status: "failed",
+                durationMs: 0,
+                details: {
+                  source: "auto-loop",
+                  ...getVillageMeta("all")
+                },
+                errorMessage: `${message} | relogin failed: ${reloginMessage}`
+              });
+              logError(`[Farmlist Loop] Re-login/retry failed: ${reloginMessage}`);
+            }
+          } else {
+            recordAction({
+              actionType: "farmlist.send",
+              status: "failed",
+              durationMs: 0,
+              details: {
+                source: "auto-loop",
+                ...getVillageMeta("all")
+              },
+              errorMessage: message
+            });
+            if (isTransientSessionState) {
+              logWarn(`[Farmlist Loop] Auto-send skipped: ${message}`);
+            } else {
+              logError(`[Farmlist Loop] Auto-send failed: ${message}`);
+            }
+          }
+        }
+
+        await restoreSelectedVillageContext("Farmlist Loop");
+        scheduleFarmlistLoop();
+      };
+
+      farmlistLoopTimer = setTimeout(() => void runFarmlistScheduledTick(), minutes * 60 * 1000);
+    };
+
+    const cancelBuilderLoopTimer = () => {
+      if (builderLoopTimer) {
+        clearTimeout(builderLoopTimer);
+        builderLoopTimer = null;
+      }
+      nextBuilderRunAt = null;
+    };
+
+    const pickNextBuilderDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (lastBuilderDelayMinutes !== null && max > min && next === lastBuilderDelayMinutes) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastBuilderDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleBuilderLoop = () => {
+      cancelBuilderLoopTimer();
+
+      const normalized = normalizeMinuteRange(
+        settings.builderLoopMinMinutes,
+        settings.builderLoopMaxMinutes,
+        5,
+        10
+      );
+      settings.builderLoopMinMinutes = normalized.min;
+      settings.builderLoopMaxMinutes = normalized.max;
+
+      if (!settings.builderLoopEnabled || done) {
+        return;
+      }
+
+      if (!villageState.villages.length) {
+        const now = Date.now();
+        if (
+          !Number.isFinite(builderVillageWaitLastLogAt) ||
+          now - builderVillageWaitLastLogAt > 120000
+        ) {
+          builderVillageWaitLastLogAt = now;
+          logInfo(
+            "[Builder Loop] Village list is empty (not loaded yet). Retrying in 30s..."
+          );
+        }
+        builderLoopTimer = setTimeout(() => {
+          if (!done && settings.builderLoopEnabled) {
+            scheduleBuilderLoop();
+          }
+        }, 30000);
+        return;
+      }
+
+      if (!settings.builderRoundRobinEnabled) {
+        const fallback = resolveBuilderFallbackVillage();
+        if (fallback && villageState.selectedVillageId !== fallback.id) {
+          villageState.selectedVillageId = fallback.id;
+        }
+      }
+
+      const minutes = pickNextBuilderDelayMinutes(
+        settings.builderLoopMinMinutes,
+        settings.builderLoopMaxMinutes
+      );
+      const activePlan = getBuilderPlanMeta(activeBuilderPlanMode);
+      builderResumeWaitLogged = false;
+      nextBuilderRunAt = Date.now() + minutes * 60 * 1000;
+      logInfo(`[Builder Loop] Next auto-build (${activePlan.short}) in ${minutes} minute(s).`);
+
+      const runBuilderScheduledTick = async () => {
+        if (done || !settings.builderLoopEnabled) {
+          scheduleBuilderLoop();
+          return;
+        }
+
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+
+        if (automationStatus.paused) {
+          nextBuilderRunAt = null;
+          if (!builderResumeWaitLogged) {
+            logInfo(
+              `[Builder Loop] Paused (${automationStatus.reason}). Waiting for session to resume...`
+            );
+            builderResumeWaitLogged = true;
+          }
+
+          builderLoopTimer = setTimeout(() => {
+            if (!done && settings.builderLoopEnabled) {
+              scheduleBuilderLoop();
+            }
+          }, 15000);
+          return;
+        }
+
+        if (settings.crannyDefenseRoundRobinEnabled) {
+          if (!builderTemplateDeferredForCrannyLogged) {
+            builderTemplateDeferredForCrannyLogged = true;
+            logInfo(
+              "[Builder Loop] Template auto-build is suspended while Cranny defense RR is ON (Settings [I] to turn off)."
+            );
+          }
+          scheduleBuilderLoop();
+          return;
+        }
+        builderTemplateDeferredForCrannyLogged = false;
+
+        let targetVillage;
+        let roundRobinAdvanceStep = 1;
+        if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
+          const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+          if (!nonCapitalVillages.length) {
+            logWarn("[Builder Loop] No non-capital villages available for template auto-build. Skipping.");
+            scheduleBuilderLoop();
+            return;
+          }
+          const totalVillages = nonCapitalVillages.length;
+          const now = Date.now();
+          let earliestBlockedUntil = null;
+
+          for (let offset = 0; offset < totalVillages; offset += 1) {
+            const candidate = nonCapitalVillages[(roundRobinIndex + offset) % totalVillages];
+            const merchantWaitUntil = pendingMerchantArrivalByVillage.get(candidate.id);
+            const cooldownUntil = builderVillageCooldownUntilByVillage.get(candidate.id);
+            const blockedUntil = Math.max(
+              Number.isFinite(merchantWaitUntil) ? merchantWaitUntil : 0,
+              Number.isFinite(cooldownUntil) ? cooldownUntil : 0
+            );
+
+            if (!Number.isFinite(blockedUntil) || blockedUntil <= now) {
+              targetVillage = candidate;
+              roundRobinAdvanceStep = offset + 1;
+              break;
+            }
+            earliestBlockedUntil = earliestBlockedUntil === null
+              ? blockedUntil
+              : Math.min(earliestBlockedUntil, blockedUntil);
+          }
+
+          if (!targetVillage) {
+            const delayMs = Math.max(
+              30000,
+              (Number.isFinite(earliestBlockedUntil) ? earliestBlockedUntil - now : 60000) + 10000
+            );
+            builderEfficiencyWindow.skippedCooldown += 1;
+            maybeLogBuilderEfficiencyWindow();
+            logInfo(
+              `[Builder Loop] All RR villages are waiting (merchant/cooldown). Retrying in ~${Math.max(
+                1,
+                Math.ceil(delayMs / 60000)
+              )} min...`
+            );
+            nextBuilderRunAt = now + delayMs;
+            builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+            return;
+          }
+        } else {
+          targetVillage = resolveBuilderFallbackVillage();
+        }
+
+        if (!targetVillage) {
+          logWarn("[Builder Loop] No village available for auto-build. Skipping.");
+          scheduleBuilderLoop();
+          return;
+        }
+
+        const now = Date.now();
+        const merchantWaitUntil = pendingMerchantArrivalByVillage.get(targetVillage.id);
+        const cooldownUntil = builderVillageCooldownUntilByVillage.get(targetVillage.id);
+        const blockedUntil = Math.max(
+          Number.isFinite(merchantWaitUntil) ? merchantWaitUntil : 0,
+          Number.isFinite(cooldownUntil) ? cooldownUntil : 0
+        );
+        if (Number.isFinite(blockedUntil) && now < blockedUntil) {
+          const delayMs = Math.max(30000, blockedUntil - now + 10000);
+          builderEfficiencyWindow.skippedCooldown += 1;
+          maybeLogBuilderEfficiencyWindow();
+          logInfo(
+            `[Builder Loop] ${villageDisplayName(targetVillage)} still in cooldown/wait state. Retrying in ~${Math.max(
+              1,
+              Math.ceil(delayMs / 60000)
+            )} min...`
+          );
+          nextBuilderRunAt = now + delayMs;
+          builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+          return;
+        }
+        if (Number.isFinite(merchantWaitUntil)) {
+          const now = Date.now();
+          if (now < merchantWaitUntil) {
+            const delayMs = Math.max(30000, merchantWaitUntil - now + 20000);
+            logInfo(
+              `[Builder Loop] Waiting ~${Math.max(1, Math.ceil(delayMs / 60000))} min for merchants to arrive at ${villageDisplayName(
+                targetVillage
+              )} before building again…`
+            );
+            nextBuilderRunAt = now + delayMs;
+            builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+            return;
+          }
+          pendingMerchantArrivalByVillage.delete(targetVillage.id);
+        }
+
+        try {
+          const startedAt = Date.now();
+          const executed = await runAction("auto-builder", async () => {
+            const loopPlan = getBuilderPlanMeta(activeBuilderPlanMode);
+            builderEfficiencyWindow.attempts += 1;
+            await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+            logInfo(`[Builder Loop] Auto-build (${loopPlan.short}) starting for ${villageDisplayName(targetVillage)}...`);
+            const result = await runWithRandomDelay(
+              settings,
+              `Auto Builder (${loopPlan.short})`,
+              () =>
+                builder.runBuilderStep(getPage, settings, targetVillage, {
+                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                  goldCompleteMax: settings.builderGoldCompleteMax,
+                  masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                  planMode: loopPlan.key
+                }),
+              () => cancelRequested
+            );
+
+            let finalResult = result;
+            const maxFollowupAttempts = 4;
+            const maxFollowupElapsedMs = 20000;
+            let followupAttempt = 0;
+            let lastFollowupSignature = "";
+            while (
+              finalResult &&
+              (finalResult.status === "already_satisfied" ||
+                finalResult.status === "template_complete" ||
+                finalResult.status === "realigned_template") &&
+              followupAttempt < maxFollowupAttempts
+            ) {
+              if (Date.now() - startedAt > maxFollowupElapsedMs) {
+                logInfo("[Builder Loop] Follow-up retry budget reached for this tick. Continuing on next cycle.");
+                break;
+              }
+              const followupSignature = `${finalResult.status}|${String(finalResult.message || "")}`;
+              if (followupSignature === lastFollowupSignature) {
+                logInfo("[Builder Loop] Repeated follow-up result detected. Deferring remaining progress to next cycle.");
+                break;
+              }
+              lastFollowupSignature = followupSignature;
+              const followupTag = finalResult.status === "realigned_template" ? "realigned_template" : "progress_advanced";
+              logInfo(`[Builder Loop] ${followupTag}: ${finalResult.message} Retrying next step...`);
+              await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+              finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
+                goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                goldCompleteMax: settings.builderGoldCompleteMax,
+                masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                planMode: loopPlan.key
+              });
+              followupAttempt += 1;
+            }
+
+            if (finalResult.status === "realigned_template") {
+              const streak = incrementRealignStreak(targetVillage.id, loopPlan.key);
+              if (streak >= 3) {
+                logWarn(
+                  `[Builder Loop] repeated_realign (${streak}): ${villageDisplayName(targetVillage)} in ${loopPlan.short} plan keeps realigning. ` +
+                  "Likely unmet prerequisites (e.g. Main Building level or required resource-field levels)."
+                );
+              }
+            } else {
+              resetRealignStreak(targetVillage.id, loopPlan.key);
+            }
+
+            if (finalResult.status === "blocked_resources") {
+              logInfo(`[Builder Loop] ${finalResult.message}`);
+              await attemptResourceCirculation({
+                kind: "builder",
+                buildResult: finalResult,
+                source: "auto-loop",
+                targetVillage,
+                planMode: loopPlan.key
+              });
+            }
+
+            const cooldownMs = getBuilderCooldownMsForStatus(finalResult.status);
+            if (cooldownMs > 0) {
+              builderVillageCooldownUntilByVillage.set(targetVillage.id, Date.now() + cooldownMs);
+            } else {
+              builderVillageCooldownUntilByVillage.delete(targetVillage.id);
+            }
+
+            if (finalResult.status === "success") {
+              builderEfficiencyWindow.success += 1;
+              logSuccess(`[Builder Loop] ${finalResult.message}`);
+              recordAction({
+                actionType: "building.upgrade",
+                status: "success",
+                durationMs: Date.now() - startedAt,
+                details: {
+                  source: "auto-loop",
+                  planMode: loopPlan.key,
+                  ...finalResult.report,
+                  ...getVillageMeta("single")
+                }
+              });
+            } else if (finalResult.status === "template_complete" || finalResult.status === "all_complete") {
+              logSuccess(`[Builder Loop] ${finalResult.message}`);
+            } else {
+              if (String(finalResult.status || "").startsWith("blocked_") || finalResult.status === "idle_saturated") {
+                builderEfficiencyWindow.blocked += 1;
+              }
+              logInfo(`[Builder Loop] ${finalResult.message}`);
+            }
+            maybeLogBuilderEfficiencyWindow();
+          }, { raidGuardPriority: true });
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          recordAction({
+            actionType: "building.upgrade",
+            status: "failed",
+            durationMs: 0,
+            details: {
+              source: "auto-loop",
+              planMode: normalizeBuilderPlanMode(activeBuilderPlanMode),
+              ...getVillageMeta("single")
+            },
+            errorMessage: message
+          });
+          const isTransientSessionState =
+            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|interrupted by another navigation|Execution context was destroyed/i.test(
+              message
+            );
+          if (isTransientSessionState) {
+            logWarn(`[Builder Loop] Auto-build skipped: ${message}`);
+          } else {
+            logError(`[Builder Loop] Auto-build failed: ${message}`);
+          }
+        }
+
+        if (settings.builderRoundRobinEnabled) {
+          roundRobinIndex += Math.max(1, roundRobinAdvanceStep);
+        }
+        await restoreSelectedVillageContext("Builder Loop");
+        scheduleBuilderLoop();
+      };
+
+      builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), minutes * 60 * 1000);
+    };
+
+    const cancelTroopTrainingLoopTimer = () => {
+      if (troopTrainingLoopTimer) {
+        clearTimeout(troopTrainingLoopTimer);
+        troopTrainingLoopTimer = null;
+      }
+      nextTroopTrainingRunAt = null;
+    };
+
+    const pickNextTroopDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (lastTroopDelayMinutes !== null && max > min && next === lastTroopDelayMinutes) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastTroopDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleTroopTrainingLoop = () => {
+      cancelTroopTrainingLoopTimer();
+
+      if (!settings.troopTrainingRoundRobinEnabled || done) {
+        return;
+      }
+      if (!villageState.villages.length) {
+        troopTrainingLoopTimer = setTimeout(() => {
+          if (!done && settings.troopTrainingRoundRobinEnabled) {
+            scheduleTroopTrainingLoop();
+          }
+        }, 30000);
+        return;
+      }
+
+      const normalized = normalizeMinuteRange(
+        settings.troopTrainingLoopMinMinutes,
+        settings.troopTrainingLoopMaxMinutes,
+        5,
+        10
+      );
+      settings.troopTrainingLoopMinMinutes = normalized.min;
+      settings.troopTrainingLoopMaxMinutes = normalized.max;
+      const minutes = pickNextTroopDelayMinutes(normalized.min, normalized.max);
+      nextTroopTrainingRunAt = Date.now() + minutes * 60 * 1000;
+      logInfo(`[Troop RR Loop] Next auto-train in ${minutes} minute(s).`);
+
+      const runTroopTrainingScheduledTick = async () => {
+        if (done || !settings.troopTrainingRoundRobinEnabled) {
+          scheduleTroopTrainingLoop();
+          return;
+        }
+
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+        if (automationStatus.paused) {
+          nextTroopTrainingRunAt = null;
+          troopTrainingLoopTimer = setTimeout(() => {
+            if (!done && settings.troopTrainingRoundRobinEnabled) {
+              scheduleTroopTrainingLoop();
+            }
+          }, 15000);
+          return;
+        }
+
+        const villages = villageState.villages;
+        const troopTemplateMode = normalizeTroopTemplateMode(settings.troopTemplateMode);
+        const targetVillage = troopTemplateMode === "offensive"
+          ? (getSelectedVillage() || villages[0] || null)
+          : (villages[troopRoundRobinIndex % villages.length] || null);
+        if (!targetVillage) {
+          scheduleTroopTrainingLoop();
+          return;
+        }
+
+        try {
+          const startedAt = Date.now();
+          let trainedTroop = settings.troopTrainingPreset;
+          let recordedTrainerBuilding = "barracks";
+          const executed = await runAction("auto-troop-trainer", async () => {
+            await ensureVillageBrowserContext(targetVillage, "Troop RR Loop");
+
+            const useAlternateBarracksGreat =
+              settings.troopTrainingAlternateGreatBarracks && troopTemplateMode === "offensive";
+
+            let trainOptions = {};
+            if (useAlternateBarracksGreat) {
+              const ph = troopTrainingBuildingPhase % 3;
+              if (ph === 0) {
+                trainOptions = {
+                  mapVariant: "barracks",
+                  trainerUrl: settings.troopTrainerUrl,
+                  templateStrategyMode: "offensive",
+                  templateBranch: "infantry"
+                };
+                logInfo("[Troop RR Loop] Building: Barracks — offensive infantry");
+              } else if (ph === 1) {
+                trainOptions = {
+                  mapVariant: "great_barracks",
+                  trainerUrl: settings.troopGreatTrainerUrl,
+                  templateStrategyMode: "defensive",
+                  templateBranch: "infantry"
+                };
+                logInfo("[Troop RR Loop] Building: Great Barracks — defensive infantry");
+              } else {
+                trainOptions = {
+                  mapVariant: "stable",
+                  trainerUrl: settings.troopStableTrainerUrl,
+                  templateStrategyMode: troopTemplateMode,
+                  templateBranch: "cavalry"
+                };
+                logInfo(`[Troop RR Loop] Building: Stable — ${troopTemplateMode} cavalry`);
+              }
+              troopTrainingBuildingPhase += 1;
+            } else {
+              const ph2 = troopTrainingBuildingPhase % 2;
+              trainOptions =
+                ph2 === 0
+                  ? {
+                      mapVariant: "barracks",
+                      trainerUrl: settings.troopTrainerUrl,
+                      templateStrategyMode: troopTemplateMode,
+                      templateBranch: "infantry"
+                    }
+                  : {
+                      mapVariant: "stable",
+                      trainerUrl: settings.troopStableTrainerUrl,
+                      templateStrategyMode: troopTemplateMode,
+                      templateBranch: "cavalry"
+                    };
+              logInfo(
+                `[Troop RR Loop] Building: ${
+                  ph2 === 0
+                    ? `Barracks — ${troopTemplateMode} infantry`
+                    : `Stable — ${troopTemplateMode} cavalry`
+                }`
+              );
+              troopTrainingBuildingPhase += 1;
+            }
+
+            recordedTrainerBuilding =
+              trainOptions.mapVariant === "great_barracks"
+                ? "great_barracks"
+                : trainOptions.mapVariant === "stable"
+                  ? "stable"
+                  : "barracks";
+
+            logInfo(`[Troop RR Loop] Auto-train starting for ${villageDisplayName(targetVillage)}...`);
+            const result = await runWithRandomDelay(
+              settings,
+              "Auto Troop Trainer",
+              () => trainTroopsInBarracks(getPage, settings, targetVillage.id, trainOptions),
+              () => cancelRequested
+            );
+            trainedTroop = result && result.preset ? result.preset : trainedTroop;
+            logSuccess(
+              `[Troop RR Loop] Trained ${result && result.queued != null ? result.queued : "?"} ${(result && result.preset) || trainedTroop} in ${villageDisplayName(targetVillage)}.`
+            );
+          }, { raidGuardPriority: true });
+          if (executed) {
+            recordAction({
+              actionType: "troop.train",
+              status: "success",
+              durationMs: Date.now() - startedAt,
+              details: {
+                source: "auto-loop",
+                templateMode: normalizeTroopTemplateMode(settings.troopTemplateMode),
+                preset: trainedTroop,
+                villageId: targetVillage.id,
+                villageName: targetVillage.name,
+                villageCoords: targetVillage.coordsText || null,
+                trainerBuilding: recordedTrainerBuilding
+              }
+            });
+          }
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          recordAction({
+            actionType: "troop.train",
+            status: "failed",
+            durationMs: 0,
+            details: {
+              source: "auto-loop",
+              templateMode: normalizeTroopTemplateMode(settings.troopTemplateMode),
+              preset: settings.troopTrainingPreset,
+              villageId: targetVillage.id,
+              villageName: targetVillage.name,
+              villageCoords: targetVillage.coordsText || null
+            },
+            errorMessage: message
+          });
+          logWarn(`[Troop RR Loop] Auto-train skipped/failed for ${villageDisplayName(targetVillage)}: ${message}`);
+        }
+
+        if (troopTemplateMode !== "offensive") {
+          troopRoundRobinIndex++;
+        }
+        await restoreSelectedVillageContext("Troop RR Loop");
+        scheduleTroopTrainingLoop();
+      };
+
+      troopTrainingLoopTimer = setTimeout(() => void runTroopTrainingScheduledTick(), minutes * 60 * 1000);
+    };
+
+    const cancelCrannyDefenseLoopTimer = () => {
+      if (crannyDefenseLoopTimer) {
+        clearTimeout(crannyDefenseLoopTimer);
+        crannyDefenseLoopTimer = null;
+      }
+      nextCrannyDefenseRunAt = null;
+    };
+
+    const pickNextCrannyDefenseDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (
+        lastCrannyDefenseDelayMinutes !== null &&
+        max > min &&
+        next === lastCrannyDefenseDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastCrannyDefenseDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleCrannyDefenseLoop = () => {
+      cancelCrannyDefenseLoopTimer();
+
+      if (!settings.crannyDefenseRoundRobinEnabled || done) {
+        return;
+      }
+      if (!villageState.villages.length) {
+        crannyDefenseLoopTimer = setTimeout(() => {
+          if (!done && settings.crannyDefenseRoundRobinEnabled) {
+            scheduleCrannyDefenseLoop();
+          }
+        }, 30000);
+        return;
+      }
+
+      const normalized = normalizeMinuteRange(
+        settings.crannyDefenseLoopMinMinutes,
+        settings.crannyDefenseLoopMaxMinutes,
+        8,
+        15
+      );
+      settings.crannyDefenseLoopMinMinutes = normalized.min;
+      settings.crannyDefenseLoopMaxMinutes = normalized.max;
+      const minutes = pickNextCrannyDefenseDelayMinutes(normalized.min, normalized.max);
+      nextCrannyDefenseRunAt = Date.now() + minutes * 60 * 1000;
+      logInfo(`[Cranny defense RR] Next run in ${minutes} minute(s).`);
+
+      const runCrannyDefenseScheduledTick = async () => {
+        if (done || !settings.crannyDefenseRoundRobinEnabled) {
+          scheduleCrannyDefenseLoop();
+          return;
+        }
+
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+        if (automationStatus.paused) {
+          nextCrannyDefenseRunAt = null;
+          crannyDefenseLoopTimer = setTimeout(() => {
+            if (!done && settings.crannyDefenseRoundRobinEnabled) {
+              scheduleCrannyDefenseLoop();
+            }
+          }, 15000);
+          return;
+        }
+
+        const villages = villageState.villages;
+        const n = villages.length;
+        if (!n) {
+          scheduleCrannyDefenseLoop();
+          return;
+        }
+
+        try {
+          const startedAt = Date.now();
+          let defenseResult = null;
+          let recordVillage = null;
+          let rotationStart = 0;
+          let rotationAttempts = 0;
+
+          const executed = await runAction(
+            "cranny-defense-rr",
+            async () => {
+              const start = ((crannyRoundRobinIndex % n) + n) % n;
+              rotationStart = start;
+              let decidedNextStart = (start + 1) % n;
+
+              for (let attempt = 0; attempt < n; attempt++) {
+                const idx = (start + attempt) % n;
+                const targetVillage = villages[idx];
+                recordVillage = targetVillage;
+                rotationAttempts = attempt + 1;
+
+                await ensureVillageBrowserContext(targetVillage, "Cranny defense RR");
+                logInfo(
+                  `[Cranny defense RR] ${attempt + 1}/${n} ${villageDisplayName(targetVillage)} — scanning slots...`
+                );
+                defenseResult = await builder.runCrannyDefenseStep(getPage, settings, targetVillage, {
+                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                  goldCompleteMax: settings.builderGoldCompleteMax,
+                  masterBuilderEnabled: settings.builderMasterBuilderEnabled
+                });
+
+                if (defenseResult.status === "success") {
+                  logSuccess(`[Cranny defense RR] ${defenseResult.message}`);
+                  decidedNextStart = (idx + 1) % n;
+                  break;
+                }
+                if (defenseResult.status === "idle_saturated") {
+                  logInfo(`[Cranny defense RR] ${defenseResult.message}`);
+                  if (attempt + 1 < n) {
+                    logInfo("[Cranny defense RR] No work here — trying next village in rotation…");
+                  }
+                  continue;
+                }
+                logWarn(`[Cranny defense RR] ${defenseResult.message || defenseResult.status}`);
+              }
+
+              if (
+                defenseResult &&
+                defenseResult.status === "idle_saturated" &&
+                rotationAttempts === n
+              ) {
+                const nextV = villages[decidedNextStart];
+                logInfo(
+                  `[Cranny defense RR] Scanned all ${n} village(s); none queued Cranny work. ` +
+                    `Next tick starts at ${villageDisplayName(nextV)}.`
+                );
+              }
+
+              crannyRoundRobinIndex = decidedNextStart;
+            },
+            { preemptAutoBuilder: true, raidGuardPriority: true }
+          );
+
+          if (executed && defenseResult && recordVillage) {
+            const ok =
+              defenseResult.status === "success" || defenseResult.status === "idle_saturated";
+            recordAction({
+              actionType: "building.cranny_defense",
+              status: ok ? "success" : "info",
+              durationMs: Date.now() - startedAt,
+              details: {
+                source: "auto-loop",
+                status: defenseResult.status,
+                message: defenseResult.message,
+                report: defenseResult.report,
+                villageId: recordVillage.id,
+                villageName: recordVillage.name,
+                villageCoords: recordVillage.coordsText || null,
+                crannyRotationStartIndex: rotationStart,
+                crannyRotationAttempts: rotationAttempts,
+                crannyRotationVillageCount: n
+              }
+            });
+          }
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          const fallbackVillage =
+            villages[((crannyRoundRobinIndex % n) + n) % n] || villages[0] || null;
+          recordAction({
+            actionType: "building.cranny_defense",
+            status: "failed",
+            durationMs: 0,
+            details: {
+              source: "auto-loop",
+              villageId: fallbackVillage ? fallbackVillage.id : null,
+              villageName: fallbackVillage ? fallbackVillage.name : null,
+              villageCoords: fallbackVillage ? fallbackVillage.coordsText : null
+            },
+            errorMessage: message
+          });
+          logWarn(
+            `[Cranny defense RR] Failed: ${message}` +
+              (fallbackVillage ? ` (while near ${villageDisplayName(fallbackVillage)})` : "")
+          );
+          crannyRoundRobinIndex = (crannyRoundRobinIndex + 1) % n;
+        }
+
+        await restoreSelectedVillageContext("Cranny defense RR");
+        scheduleCrannyDefenseLoop();
+      };
+
+      crannyDefenseLoopTimer = setTimeout(
+        () => void runCrannyDefenseScheduledTick(),
+        minutes * 60 * 1000
+      );
+    };
+
+    const cancelRaidEvacuationLoopTimer = () => {
+      if (raidEvacuationLoopTimer) {
+        clearTimeout(raidEvacuationLoopTimer);
+        raidEvacuationLoopTimer = null;
+      }
+    };
+
+    const scheduleRaidEvacuationLoop = () => {
+      cancelRaidEvacuationLoopTimer();
+      if (done || settings.raidEvacuationEnabled === false) {
+        return;
+      }
+
+      const runRaidEvacuationScheduledTick = async () => {
+        if (done || settings.raidEvacuationEnabled === false) {
+          scheduleRaidEvacuationLoop();
+          return;
+        }
+        if (actionInProgress) {
+          scheduleRaidEvacuationLoop();
+          return;
+        }
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+        if (!automationStatus.paused) {
+          try {
+            await attemptRaidEvacuationForAllVillages();
+          } catch (error) {
+            const message = String(error && error.message ? error.message : error);
+            const isTransientNavRace = /ERR_ABORTED|interrupted by another navigation|Execution context was destroyed/i.test(
+              message
+            );
+            if (!isTransientNavRace) {
+              logWarn(`[Raid Guard] Check failed: ${message}`);
+            }
+          }
+        }
+        scheduleRaidEvacuationLoop();
+      };
+
+      raidEvacuationLoopTimer = setTimeout(() => void runRaidEvacuationScheduledTick(), 5000);
+    };
+
+    scheduleFarmlistLoop();
+    scheduleBuilderLoop();
+    scheduleTroopTrainingLoop();
+    scheduleCrannyDefenseLoop();
+    scheduleRaidEvacuationLoop();
+
+    while (!done) {
+      printMainMenu();
+      const sessionLoopStatus = runtimeControls.getSessionLoopStatus
+        ? runtimeControls.getSessionLoopStatus()
+        : { enabled: settings.sessionLoopEnabled, nextInMinutes: null };
+      const farmlistLoopStatus = {
+        enabled: settings.farmlistLoopEnabled,
+        nextInMinutes: nextFarmlistRunAt
+          ? Math.max(0, Math.ceil((nextFarmlistRunAt - Date.now()) / 60000))
+          : null
+      };
+      const builderLoopStatus = {
+        enabled: settings.builderLoopEnabled,
+        nextInMinutes: nextBuilderRunAt
+          ? Math.max(0, Math.ceil((nextBuilderRunAt - Date.now()) / 60000))
+          : null,
+        roundRobinProgress: settings.builderRoundRobinEnabled
+          ? getRoundRobinProgress(villageState.villages, activeBuilderPlanMode)
+          : null
+      };
+      const troopLoopStatus = {
+        enabled: settings.troopTrainingRoundRobinEnabled,
+        nextInMinutes: nextTroopTrainingRunAt
+          ? Math.max(0, Math.ceil((nextTroopTrainingRunAt - Date.now()) / 60000))
+          : null
+      };
+      const crannyLoopStatus = {
+        enabled: settings.crannyDefenseRoundRobinEnabled,
+        nextInMinutes: nextCrannyDefenseRunAt
+          ? Math.max(0, Math.ceil((nextCrannyDefenseRunAt - Date.now()) / 60000))
+          : null
+      };
+      printSessionLoopStatus(settings, {
+        sessionLoop: sessionLoopStatus,
+        farmlistLoop: farmlistLoopStatus,
+        builderLoop: builderLoopStatus,
+        troopLoop: troopLoopStatus,
+        crannyLoop: crannyLoopStatus
+      }, activeBuilderPlanMode);
+      printVillageContextStatus(villageState);
+      const rawInput = (await askQuestion(rl, "Choose option: ")).trim();
+      const input = rawInput.toUpperCase();
+
+      if (input === "1") {
+        const startedAt = Date.now();
+        await runAction("Send Farmlists", async () => {
+          logInfo("Running: Send Farmlists...");
+          await runWithRandomDelay(
+            settings,
+            "Send Farmlists",
+            () => sendFarmlists(getPage, settings),
+            () => cancelRequested
+          );
+          logSuccess("Send Farmlists completed.");
+          await printSelectedVillageStatus("Farmlists");
+          recordAction({
+            actionType: "farmlist.send",
+            status: "success",
+            durationMs: Date.now() - startedAt,
+            details: {
+              source: "manual",
+              ...getVillageMeta("all")
+            }
+          });
+        }).catch((error) => {
+          const message = error.message || String(error);
+          recordAction({
+            actionType: "farmlist.send",
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            details: {
+              source: "manual",
+              ...getVillageMeta("all")
+            },
+            errorMessage: message
+          });
+          logError(`Send Farmlists failed: ${message}`);
+        });
+        continue;
+      }
+
+      if (input === "2" || input === "3") {
+        const selectedPlan = getBuilderPlanMeta(input === "3" ? "resource" : "village");
+        activeBuilderPlanMode = selectedPlan.key;
+        const startedAt = Date.now();
+        await runAction(selectedPlan.name, async () => {
+          const selectedVillage = getSelectedVillage();
+          if (!selectedVillage) {
+            logWarn("No village selected. Use V to select a village first.");
+            return;
+          }
+
+          // Show preview first
+          const preview = builder.previewPlan(selectedVillage, { planMode: selectedPlan.key });
+          printSubDivider(`${selectedPlan.name.toUpperCase()} PLAN`);
+
+          if (preview.status === "all_complete") {
+            logSuccess(preview.message);
+            return;
+          }
+
+          if (preview.status === "template_complete") {
+            logInfo(preview.message);
+          }
+
+          if (preview.status === "error") {
+            logError(preview.message);
+            return;
+          }
+
+          if (preview.status === "pending") {
+            printKeyValueRows([
+              { label: "Template", value: `${preview.templateName} (${preview.activeTemplate})` },
+              { label: "Progress", value: `Stage ${preview.currentStageIndex + 1}/${preview.totalStages}` },
+              { label: "Next step", value: preview.message }
+            ]);
+
+            if (preview.upcoming && preview.upcoming.length > 0) {
+              printSubDivider("UPCOMING");
+              preview.upcoming.forEach((item, idx) => {
+                const marker = item.isCurrent
+                  ? color(">>", ANSI.bold, ANSI.green)
+                  : color("  ", ANSI.dim);
+                console.log(
+                  `  ${marker} ${color(`${idx + 1}.`, ANSI.bold, ANSI.cyan)} ${item.building} slot ${item.slot} -> lvl ${item.targetLevel} ${color(`(${item.stageName})`, ANSI.gray)}`
+                );
+              });
+            }
+          }
+
+          // Execute the next step
+          logInfo("Executing next build step...");
+          const result = await runWithRandomDelay(
+            settings,
+            selectedPlan.name,
+            () =>
+              builder.runBuilderStep(getPage, settings, selectedVillage, {
+                goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                goldCompleteMax: settings.builderGoldCompleteMax,
+                masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                planMode: selectedPlan.key
+              }),
+            () => cancelRequested
+          );
+
+          // Display result
+          if (result.report) {
+            printSubDivider("BUILD STEP RESULT");
+            const r = result.report;
+            const costText = Object.keys(r.costs).length > 0
+              ? Object.entries(r.costs).map(([k, v]) => `${k}: ${v}`).join(" | ")
+              : "N/A";
+            const stockText = `W:${r.stock.wood} C:${r.stock.clay} I:${r.stock.iron} Cr:${r.stock.crop}`;
+            const storageText = `WH:${r.warehouseCap} GR:${r.granaryCap}`;
+            const availableBuildOptions = Array.isArray(r.availableNewBuildingOptions)
+              ? r.availableNewBuildingOptions
+              : [];
+            const normalizeName = (value) =>
+              String(value || "")
+                .toLowerCase()
+                .replace(/\u00a0/g, " ")
+                .replace(/[^a-z0-9]+/g, " ")
+                .trim()
+                .replace(/\s+/g, " ");
+            const targetName = normalizeName(r.targetBuilding);
+            const targetCompact = targetName.replace(/\s+/g, "");
+            const optionsText = availableBuildOptions.length > 0
+              ? availableBuildOptions
+                .map((opt) => {
+                  const optionLabel = `${opt.name || "?"}${opt.canBuild ? "" : " (locked)"}`;
+                  const optionName = normalizeName(opt.name);
+                  const optionCompact = optionName.replace(/\s+/g, "");
+                  const isTarget =
+                    Boolean(targetCompact) &&
+                    Boolean(optionCompact) &&
+                    (optionName === targetName || optionCompact === targetCompact);
+
+                  return isTarget
+                    ? color(optionLabel, ANSI.red, ANSI.bold)
+                    : optionLabel;
+                })
+                .join(color(" | ", ANSI.dim))
+              : "N/A";
+            const upgradeStatus = (() => {
+              if (r.isEmptySlot) {
+                return "N/A";
+              }
+              const hasRegular = Boolean(r.hasUpgradeButton);
+              const regularState = hasRegular ? (r.upgradeDisabled ? "regular (disabled)" : "regular") : "regular: none";
+              const hasMb = Boolean(r.hasMasterBuilderUpgradeButton);
+              const mbState = hasMb ? (r.masterBuilderUpgradeDisabled ? "MB (disabled)" : "MB") : "MB: none";
+              return `${regularState} | ${mbState}`;
+            })();
+            printKeyValueRows([
+              { label: "Slot", value: String(r.slot) },
+              { label: "Building", value: `${r.currentBuilding || r.targetBuilding} (target: ${r.targetBuilding})` },
+              { label: "Level", value: `${r.currentLevel} -> ${r.targetLevel}` },
+              { label: "Cost", value: costText },
+              { label: "Stock", value: stockText },
+              { label: "Storage", value: storageText },
+              { label: "Upgrade btn", value: upgradeStatus },
+              { label: "Gold used", value: `${result.goldCompletions || 0} completion(s), ${result.goldSpent || 0} gold` },
+              { label: "Build options", value: optionsText, raw: true }
+            ]);
+          }
+
+          if (result.status === "success") {
+            logSuccess(result.message);
+            recordAction({
+              actionType: "building.upgrade",
+              status: "success",
+              durationMs: Date.now() - startedAt,
+              details: {
+                planMode: selectedPlan.key,
+                template: result.report.template,
+                stage: result.report.stage,
+                slot: result.report.slot,
+                building: result.report.targetBuilding,
+                fromLevel: result.report.currentLevel,
+                toLevel: result.report.targetLevel,
+                goldCompleted: result.goldCompletions || 0,
+                goldSpent: result.goldSpent || 0,
+                ...getVillageMeta("single")
+              }
+            });
+            if (result.goldCompletions > 0) {
+              logInfo(`Builder: Gold autocomplete used ${result.goldCompletions} time(s), spent ${result.goldSpent || 0} gold.`);
+              recordAction({
+                actionType: "building.gold_complete",
+                status: "success",
+                durationMs: 0,
+                details: {
+                  planMode: selectedPlan.key,
+                  slot: result.report.slot,
+                  building: result.report.targetBuilding,
+                  completions: result.goldCompletions,
+                  goldSpent: result.goldSpent || 0,
+                  ...getVillageMeta("single")
+                }
+              });
+            }
+          } else if (result.status === "realigned_template") {
+            logWarn(`Builder: ${result.message}`);
+          } else if (result.status === "already_satisfied") {
+            logInfo(result.message);
+          } else if (result.status === "template_complete") {
+            logSuccess(result.message);
+          } else if (result.status === "all_complete") {
+            logSuccess(result.message);
+          } else if (result.status === "blocked_resources") {
+            logInfo(`Builder: ${result.message}`);
+            await attemptResourceCirculation({
+              kind: "builder",
+              buildResult: result,
+              source: "manual",
+              targetVillage: selectedVillage,
+              planMode: selectedPlan.key
+            });
+            recordAction({
+              actionType: "building.upgrade",
+              status: "failed",
+              durationMs: Date.now() - startedAt,
+              details: {
+                planMode: selectedPlan.key,
+                template: result.report ? result.report.template : null,
+                slot: result.report ? result.report.slot : null,
+                building: result.report ? result.report.targetBuilding : null,
+                reason: result.status,
+                ...getVillageMeta("single")
+              },
+              errorMessage: result.message
+            });
+          } else {
+            logWarn(`Builder: ${result.message}`);
+            recordAction({
+              actionType: "building.upgrade",
+              status: "failed",
+              durationMs: Date.now() - startedAt,
+              details: {
+                planMode: selectedPlan.key,
+                template: result.report ? result.report.template : null,
+                slot: result.report ? result.report.slot : null,
+                building: result.report ? result.report.targetBuilding : null,
+                reason: result.status,
+                ...getVillageMeta("single")
+              },
+              errorMessage: result.message
+            });
+          }
+        }).catch((error) => {
+          const message = error.message || String(error);
+          recordAction({
+            actionType: "building.upgrade",
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            details: {
+              planMode: selectedPlan.key,
+              ...getVillageMeta("single")
+            },
+            errorMessage: message
+          });
+          logError(`${selectedPlan.name} failed: ${message}`);
+        });
+        continue;
+      }
+
+      if (input === "0") {
+        await runAction("Village Status", async () => {
+          const selectedVillage = getSelectedVillage();
+          logInfo("Reading: Village Status...");
+          await runWithRandomDelay(
+            settings,
+            "Village Status",
+            () =>
+              showVillageStatus(
+                getPage,
+                settings,
+                selectedVillage ? selectedVillage.id : null,
+                selectedVillage || null
+              ),
+            () => cancelRequested
+          );
+        }).catch((error) => {
+          logError(`Village Status failed: ${error.message || error}`);
+        });
+        continue;
+      }
+
+      if (input === "4") {
+        const startedAt = Date.now();
+        await runAction("Troop Trainer", async () => {
+          const selectedVillage = getSelectedVillage();
+          if (!selectedVillage) {
+            logWarn("No village selected. Use V to select a village first.");
+            return;
+          }
+          const focus = normalizeTroopTrainingManualFocus(settings.troopTrainingManualFocus);
+          const tplMode = normalizeTroopTemplateMode(settings.troopTemplateMode);
+          const steps = [];
+          if (focus === "both" || focus === "infantry") {
+            steps.push({
+              label: "Barracks (infantry)",
+              opts: {
+                mapVariant: "barracks",
+                templateStrategyMode: tplMode,
+                templateBranch: "infantry"
+              }
+            });
+          }
+          if (focus === "both" || focus === "cavalry") {
+            steps.push({
+              label: "Stable (cavalry)",
+              opts: {
+                mapVariant: "stable",
+                trainerUrl: settings.troopStableTrainerUrl,
+                templateStrategyMode: tplMode,
+                templateBranch: "cavalry"
+              }
+            });
+          }
+          logInfo(`Running: Troop Trainer (${focus})...`);
+          await ensureVillageBrowserContext(selectedVillage, "Troop Trainer");
+          let lastResult = null;
+          for (const step of steps) {
+            logInfo(`  → ${step.label}`);
+            lastResult = await runWithRandomDelay(
+              settings,
+              "Troop Trainer",
+              () => trainTroopsInBarracks(getPage, settings, selectedVillage.id, step.opts),
+              () => cancelRequested
+            );
+          }
+          const result = lastResult;
+          recordAction({
+            actionType: "troop.train",
+            status: "success",
+            durationMs: Date.now() - startedAt,
+            details: {
+              templateMode: tplMode,
+              manualFocus: focus,
+              preset: result && result.preset ? result.preset : settings.troopTrainingPreset,
+              queued: result && Number.isFinite(result.queued) ? result.queued : 0,
+              troop: result && result.preset ? result.preset : settings.troopTrainingPreset,
+              trainerBuilding: result && result.trainerBuilding ? result.trainerBuilding : null,
+              ...getVillageMeta("single")
+            }
+          });
+        }).catch((error) => {
+          const message = error.message || String(error);
+          recordAction({
+            actionType: "troop.train",
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            details: {
+              templateMode: normalizeTroopTemplateMode(settings.troopTemplateMode),
+              preset: settings.troopTrainingPreset,
+              ...getVillageMeta("single")
+            },
+            errorMessage: message
+          });
+          logError(`Troop Trainer failed: ${message}`);
+        });
+        continue;
+      }
+
+      if (input === "C") {
+        const startedAt = Date.now();
+        await runAction(
+          "Cranny defense",
+          async () => {
+            const selectedVillage =
+              getSelectedVillage() || resolveBuilderFallbackVillage();
+            if (!selectedVillage) {
+              logWarn("No village context. Use V to select a village or refresh the village list.");
+              return;
+            }
+            logInfo("Running: Cranny defense (one step)...");
+            await ensureVillageBrowserContext(selectedVillage, "Cranny defense");
+            const result = await runWithRandomDelay(
+              settings,
+              "Cranny defense",
+              () =>
+                builder.runCrannyDefenseStep(getPage, settings, selectedVillage, {
+                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                  goldCompleteMax: settings.builderGoldCompleteMax,
+                  masterBuilderEnabled: settings.builderMasterBuilderEnabled
+                }),
+              () => cancelRequested
+            );
+            const ok = result && (result.status === "success" || result.status === "idle_saturated");
+            recordAction({
+              actionType: "building.cranny_defense",
+              status: ok ? "success" : "info",
+              durationMs: Date.now() - startedAt,
+              details: {
+                status: result && result.status,
+                message: result && result.message,
+                report: result && result.report,
+                ...getVillageMeta("single")
+              }
+            });
+            if (result.status === "success") {
+              logSuccess(result.message || "Cranny defense step completed.");
+            } else if (result.status === "idle_saturated") {
+              logInfo(result.message || "Nothing to do for Cranny defense.");
+            } else {
+              logWarn(result.message || String(result.status || "Cranny defense skipped."));
+            }
+          },
+          { preemptAutoBuilder: true, raidGuardPriority: true }
+        ).catch((error) => {
+          const message = error.message || String(error);
+          recordAction({
+            actionType: "building.cranny_defense",
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            details: {
+              ...getVillageMeta("single")
+            },
+            errorMessage: message
+          });
+          logError(`Cranny defense failed: ${message}`);
+        });
+        continue;
+      }
+
+      if (input === "T") {
+        await runTroopTemplateCategoryMenu();
+        continue;
+      }
+
+      if (input === "5") {
+        const startedAt = Date.now();
+        await runAction("Expansion / Residence Check", async () => {
+          const selectedVillage = getSelectedVillage();
+          if (!selectedVillage) {
+            logWarn("No village selected. Use V to select a village first.");
+            return;
+          }
+          logInfo("Running: Expansion / Residence Check...");
+          const result = await runWithRandomDelay(
+            settings,
+            "Expansion Check",
+            () =>
+              villageExpansion.runExpansionStep(
+                getPage,
+                settings,
+                selectedVillage
+              ),
+            () => cancelRequested
+          );
+          printSubDivider("EXPANSION STATUS");
+          printKeyValueRows([
+            { label: "Village", value: villageDisplayName(selectedVillage) },
+            { label: "Status", value: result.status },
+            { label: "Phase", value: result.phase || "N/A" },
+            { label: "Message", value: result.message }
+          ]);
+          if (result.residenceLevel !== undefined) {
+            console.log(`  Residence Level: ${result.residenceLevel}`);
+          }
+          if (result.settlers !== undefined) {
+            console.log(`  Settlers: ${result.settlers}`);
+          }
+          if (result.queued !== undefined) {
+            console.log(`  Queued: ${result.queued}`);
+          }
+          if (result.status === "need_settlement_resources") {
+            await attemptResourceCirculation({
+              kind: "settlement",
+              expansionResult: result,
+              source: "manual",
+              targetVillage: selectedVillage,
+              planMode: "village"
+            });
+          }
+          let settleResult = null;
+          if (result.status === "ready_to_expand" || result.status === "settlers_ready") {
+            logInfo("Settlers are ready. Dispatching automatically...");
+            let preferredTargets = [];
+            if (settings.expansionUsePlannedTargets) {
+              const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
+              if (!loaded.ok) {
+                logWarn(`${loaded.message}`);
+              } else {
+                preferredTargets = loaded.targets;
+                logInfo(`Loaded ${preferredTargets.length} planned target(s) from file.`);
+              }
+            }
+            settleResult = await runWithRandomDelay(
+              settings,
+              "Settle New Village",
+              () =>
+                villageExpansion.sendSettlersToFoundVillage(
+                  getPage(),
+                  selectedVillage,
+                  undefined,
+                  undefined,
+                  { preferredTargets }
+                ),
+              () => cancelRequested
+            );
+
+            if (
+              settleResult &&
+              settleResult.status === "settle_dispatched" &&
+              settleResult.targetSource === "planned" &&
+              Number.isFinite(settleResult.plannedTargetIndex)
+            ) {
+              const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
+              const currentTargets = loaded.ok ? loaded.targets : [];
+              if (settleResult.plannedTargetIndex >= 0 && settleResult.plannedTargetIndex < currentTargets.length) {
+                currentTargets.splice(settleResult.plannedTargetIndex, 1);
+                const savedPath = savePlannedSettlementTargetsToFile(
+                  settings.expansionPlannedTargetsFile,
+                  currentTargets
+                );
+                logInfo(`Removed used planned target from ${savedPath}. Remaining: ${currentTargets.length}`);
+              }
+            }
+
+            if (settleResult && settleResult.status === "no_settle_target_found") {
+              logWarn("Auto-target failed. Skipping manual prompt for this cycle.");
+            }
+
+            if (settleResult) {
+              printSubDivider("SETTLEMENT STATUS");
+              printKeyValueRows([
+                { label: "Status", value: settleResult.status },
+                { label: "Phase", value: settleResult.phase || "N/A" },
+                { label: "Target Source", value: settleResult.targetSource || "unknown" },
+                { label: "Message", value: settleResult.message }
+              ]);
+              if (settleResult.status === "settle_dispatched" && settleResult.target) {
+                logSuccess(
+                  `Settlers sent successfully to (${settleResult.target.x}|${settleResult.target.y})`
+                );
+              }
+            }
+          }
+          recordAction({
+            actionType: "village.expansion",
+            status: settleResult
+              ? (settleResult.status === "settle_dispatched" ? "success" : "info")
+              : (result.status === "ready_to_expand" || result.status === "settlers_queued" || result.status === "settlers_ready" ? "success" : "info"),
+            durationMs: Date.now() - startedAt,
+            details: {
+              villageId: selectedVillage.id,
+              villageName: selectedVillage.name,
+              status: result.status,
+              phase: result.phase,
+              residenceLevel: result.residenceLevel,
+              settlers: result.settlers,
+              queued: result.queued,
+              settlementStatus: settleResult ? settleResult.status : null,
+              settlementTarget: settleResult && settleResult.target ? settleResult.target : null
+            }
+          });
+        }).catch((error) => {
+          const message = error.message || String(error);
+          recordAction({
+            actionType: "village.expansion",
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            details: {
+              ...getVillageMeta("single")
+            },
+            errorMessage: message
+          });
+          logError(`Expansion check failed: ${message}`);
+        });
+        continue;
+      }
+
+      if (input === "X") {
+        const wasEnabled = settings.builderLoopEnabled;
+
+        if (runtimeControls.updateBuilderLoopConfig) {
+          try {
+            const applied = await runtimeControls.updateBuilderLoopConfig({
+              enabled: false,
+              minMinutes: settings.builderLoopMinMinutes,
+              maxMinutes: settings.builderLoopMaxMinutes
+            });
+            settings.builderLoopEnabled = applied.enabled;
+            settings.builderLoopMinMinutes = applied.minMinutes;
+            settings.builderLoopMaxMinutes = applied.maxMinutes;
+          } catch (error) {
+            logWarn(`Could not persist builder loop OFF state: ${error.message || error}`);
+            settings.builderLoopEnabled = false;
+          }
+        } else {
+          settings.builderLoopEnabled = false;
+        }
+
+        cancelBuilderLoopTimer();
+
+        const isBuilderActionRunning =
+          actionInProgress && /builder/i.test(String(currentActionLabel || ""));
+        if (isBuilderActionRunning) {
+          cancelRequested = true;
+          const currentPage = getPage();
+          if (currentPage && !currentPage.isClosed()) {
+            currentPage.evaluate(() => {
+              if (typeof window.stop === "function") {
+                window.stop();
+              }
+            }).catch(() => {});
+          }
+          logInfo("Stop requested for current builder action...");
+        }
+
+        if (wasEnabled || isBuilderActionRunning) {
+          logSuccess("Builder process stopped (loop disabled and current builder action canceled if active).");
+        } else {
+          logInfo("Builder process is already stopped.");
+        }
+        continue;
+      }
+
+      if (input === "R") {
+        if (!runtimeControls.reloginNow) {
+          logWarn("Relogin control is unavailable in this runtime.");
+          continue;
+        }
+
+        const withStatusAfterRelogin = rawInput === "R";
+        await runAction("Relogin Now", async () => {
+          logInfo("Re-login requested. Refreshing session now...");
+          const result = await runtimeControls.reloginNow("manual-menu");
+          if (result && result.ok) {
+            logSuccess("Re-login complete.");
+            if (withStatusAfterRelogin) {
+              await printSelectedVillageStatus("Relogin");
+            }
+          } else {
+            logWarn("Re-login finished with an unknown status.");
+          }
+        }, { allowWhilePaused: true }).catch((error) => {
+          logError(`Relogin failed: ${error.message || error}`);
+        });
+        continue;
+      }
+
+      if (input === "V") {
+        await runVillageSelectorMenu().catch((error) => {
+          logError(`Village selector failed: ${error.message || error}`);
+        });
+        continue;
+      }
+
+      if (input === "L") {
+        showLogSummary();
+        continue;
+      }
+
+      if (input === "S") {
+        settings.headless = runtimeControls.getHeadlessMode();
+        await runSettingsMenu(rl, settings, {
+          ...runtimeControls,
+          refreshSideInfoVillages: async () =>
+            refreshVillageState({ navigateToStatusPage: true, silent: true }),
+          getRaidPivotVillageUiState: () => ({
+            villages: villageState.villages.slice(),
+            selectedVillageId: villageState.selectedVillageId,
+            activeVillageId: villageState.activeVillageId
+          })
+        });
+        scheduleFarmlistLoop();
+        scheduleBuilderLoop();
+        scheduleTroopTrainingLoop();
+        scheduleCrannyDefenseLoop();
+        scheduleRaidEvacuationLoop();
+        continue;
+      }
+
+      if (input === "Q") {
+        done = true;
+        continue;
+      }
+
+      logWarn("Unknown option. Use 0, 1, 2, 3, 4, C, 5, T, X, r, R, V, L, S, or Q.");
+    }
+  } finally {
+    if (sigintHandler) {
+      process.removeListener("SIGINT", sigintHandler);
+      sigintHandler = null;
+    }
+    if (farmlistLoopTimer) {
+      clearTimeout(farmlistLoopTimer);
+      farmlistLoopTimer = null;
+    }
+    if (builderLoopTimer) {
+      clearTimeout(builderLoopTimer);
+      builderLoopTimer = null;
+    }
+    if (troopTrainingLoopTimer) {
+      clearTimeout(troopTrainingLoopTimer);
+      troopTrainingLoopTimer = null;
+    }
+    if (crannyDefenseLoopTimer) {
+      clearTimeout(crannyDefenseLoopTimer);
+      crannyDefenseLoopTimer = null;
+    }
+    if (raidEvacuationLoopTimer) {
+      clearTimeout(raidEvacuationLoopTimer);
+      raidEvacuationLoopTimer = null;
+    }
+    rl.close();
+  }
+}
+
+module.exports = {
+  runTerminalMenu
+};

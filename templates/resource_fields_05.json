@@ -1,0 +1,29 @@
+{
+  "key": "resource_fields_05",
+  "name": "Resource Fields 05 - Final Finishes (Placeholder)",
+  "description": "Placeholder template. Will include Hero's Mansion and final resource/bonus upgrades.",
+  "version": 1,
+  "sequence_mode": "strict",
+  "identity_policy": "vid_and_coords",
+  "tribes": ["roman", "teuton", "gaul"],
+  "next_template": null,
+  "planner": {
+    "execution_mode": "one_action_per_run",
+    "stop_on_mismatch": true
+  },
+  "stages": [
+    {
+      "name": "Stage 1 - Bakery to 5 (safety check)",
+      "steps": [
+        { "slot": 21, "building": "Bakery", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ],
+      "notes": "Safety step. Should already be at 5 from resource_fields_04. Planner will skip if satisfied."
+    }
+  ],
+  "end_state": {
+    "slots": [
+      { "slot": 21, "building": "Bakery", "min_level": 5 }
+    ]
+  },
+  "_todo": "Add Hero's Mansion placement and final finishes here."
+}

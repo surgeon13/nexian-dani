@@ -1,0 +1,123 @@
+{
+  "key": "village_stage_01",
+  "name": "Village Stage 01 - Core Military and Civic Baseline",
+  "description": "After Stage 00, establish military and civic buildings in strict order.",
+  "version": 1,
+  "sequence_mode": "strict",
+  "identity_policy": "vid_and_coords",
+  "tribes": ["roman", "teuton", "gaul"],
+  "next_template": "village_stage_02",
+  "planner": {
+    "execution_mode": "one_action_per_run",
+    "stop_on_mismatch": true
+  },
+  "stages": [
+    {
+      "name": "Stage 1 - Marketplace to 1",
+      "steps": [
+        {
+          "slot": 33,
+          "building": "Marketplace",
+          "target_level": 1,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 2 - Rally Point to 1",
+      "steps": [
+        {
+          "slot": 39,
+          "building": "Rally Point",
+          "target_level": 1,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 3 - Barracks to 3",
+      "steps": [
+        {
+          "slot": 37,
+          "building": "Barracks",
+          "target_level": 3,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 4 - Marketplace to 8",
+      "steps": [
+        {
+          "slot": 33,
+          "building": "Marketplace",
+          "target_level": 8,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 5 - Academy to 10",
+      "steps": [
+        {
+          "slot": 32,
+          "building": "Academy",
+          "target_level": 10,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 6 - Town Hall to 1",
+      "steps": [
+        {
+          "slot": 30,
+          "building": "Town Hall",
+          "target_level": 1,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 7 - Smithy to 3",
+      "steps": [
+        {
+          "slot": 28,
+          "building": "Smithy",
+          "target_level": 3,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 8 - Stable to 3",
+      "steps": [
+        {
+          "slot": 38,
+          "building": "Stable",
+          "target_level": 3,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    }
+  ],
+  "end_state": {
+    "slots": [
+      { "slot": 33, "building": "Marketplace", "min_level": 8 },
+      { "slot": 39, "building": "Rally Point", "min_level": 1 },
+      { "slot": 37, "building": "Barracks", "min_level": 3 },
+      { "slot": 32, "building": "Academy", "min_level": 10 },
+      { "slot": 30, "building": "Town Hall", "min_level": 1 },
+      { "slot": 28, "building": "Smithy", "min_level": 3 },
+      { "slot": 38, "building": "Stable", "min_level": 3 }
+    ]
+  }
+}

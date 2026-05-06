@@ -1,0 +1,5 @@
+0. captcha solver ability
+1. prepare village to settle new one residence/palace module 
+2. troop evasion for all villages
+3. troop auto reinforcement for self villages
+4. 

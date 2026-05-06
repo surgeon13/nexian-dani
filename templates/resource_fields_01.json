@@ -1,0 +1,76 @@
+{
+  "key": "resource_fields_01",
+  "name": "Resource Fields 01 - All Fields to 5",
+  "description": "Upgrade all 18 resource fields to level 5.",
+  "version": 1,
+  "sequence_mode": "strict",
+  "identity_policy": "vid_and_coords",
+  "tribes": ["roman", "teuton", "gaul"],
+  "next_template": "resource_fields_02",
+  "planner": {
+    "execution_mode": "one_action_per_run",
+    "stop_on_mismatch": true
+  },
+  "stages": [
+    {
+      "name": "Stage 1 - Wood fields to 5",
+      "steps": [
+        { "slot": 1, "building": "Woodcutter", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 2, "building": "Woodcutter", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 3, "building": "Woodcutter", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 4, "building": "Woodcutter", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 2 - Clay fields to 5",
+      "steps": [
+        { "slot": 5, "building": "Clay Pit", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 6, "building": "Clay Pit", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 7, "building": "Clay Pit", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 8, "building": "Clay Pit", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 3 - Iron fields to 5",
+      "steps": [
+        { "slot": 9, "building": "Iron Mine", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 10, "building": "Iron Mine", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 11, "building": "Iron Mine", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 12, "building": "Iron Mine", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 4 - Crop fields to 5",
+      "steps": [
+        { "slot": 13, "building": "Cropland", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 14, "building": "Cropland", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 15, "building": "Cropland", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 16, "building": "Cropland", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 17, "building": "Cropland", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 18, "building": "Cropland", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    }
+  ],
+  "end_state": {
+    "slots": [
+      { "slot": 1, "building": "Woodcutter", "min_level": 5 },
+      { "slot": 2, "building": "Woodcutter", "min_level": 5 },
+      { "slot": 3, "building": "Woodcutter", "min_level": 5 },
+      { "slot": 4, "building": "Woodcutter", "min_level": 5 },
+      { "slot": 5, "building": "Clay Pit", "min_level": 5 },
+      { "slot": 6, "building": "Clay Pit", "min_level": 5 },
+      { "slot": 7, "building": "Clay Pit", "min_level": 5 },
+      { "slot": 8, "building": "Clay Pit", "min_level": 5 },
+      { "slot": 9, "building": "Iron Mine", "min_level": 5 },
+      { "slot": 10, "building": "Iron Mine", "min_level": 5 },
+      { "slot": 11, "building": "Iron Mine", "min_level": 5 },
+      { "slot": 12, "building": "Iron Mine", "min_level": 5 },
+      { "slot": 13, "building": "Cropland", "min_level": 5 },
+      { "slot": 14, "building": "Cropland", "min_level": 5 },
+      { "slot": 15, "building": "Cropland", "min_level": 5 },
+      { "slot": 16, "building": "Cropland", "min_level": 5 },
+      { "slot": 17, "building": "Cropland", "min_level": 5 },
+      { "slot": 18, "building": "Cropland", "min_level": 5 }
+    ]
+  }
+}

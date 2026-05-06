@@ -1,0 +1,111 @@
+{
+  "key": "village_stage_00",
+  "name": "Village Stage 00 - Foundation",
+  "description": "Precursor stage. Establish core infrastructure so later stages can run safely.",
+  "version": 1,
+  "sequence_mode": "strict",
+  "identity_policy": "vid_and_coords",
+  "tribes": ["roman", "teuton", "gaul"],
+  "next_template": "village_stage_01",
+  "planner": {
+    "execution_mode": "one_action_per_run",
+    "stop_on_mismatch": true
+  },
+  "stages": [
+    {
+      "name": "Stage 1 - Main Building to 10",
+      "steps": [
+        {
+          "slot": 26,
+          "building": "Main Building",
+          "target_level": 10,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ],
+      "notes": "Early unlocks and faster build flow."
+    },
+    {
+      "name": "Stage 2 - Warehouse placement",
+      "steps": [
+        {
+          "slot": 19,
+          "building": "Warehouse",
+          "target_level": 1,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ],
+      "notes": "Required storage baseline for growth."
+    },
+    {
+      "name": "Stage 3 - Granary placement",
+      "steps": [
+        {
+          "slot": 24,
+          "building": "Granary",
+          "target_level": 1,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ],
+      "notes": "Required crop storage baseline."
+    },
+    {
+      "name": "Stage 4 - Main Building to 15",
+      "steps": [
+        {
+          "slot": 26,
+          "building": "Main Building",
+          "target_level": 15,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 5 - Warehouse to 3",
+      "steps": [
+        {
+          "slot": 19,
+          "building": "Warehouse",
+          "target_level": 3,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 6 - Granary to 3",
+      "steps": [
+        {
+          "slot": 24,
+          "building": "Granary",
+          "target_level": 3,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ]
+    },
+    {
+      "name": "Stage 7 - Main Building to 20",
+      "steps": [
+        {
+          "slot": 26,
+          "building": "Main Building",
+          "target_level": 20,
+          "action": "build_or_upgrade",
+          "click_strategy": "open_slot_then_primary_build_button"
+        }
+      ],
+      "notes": "Final foundation requirement."
+    }
+  ],
+  "end_state": {
+    "slots": [
+      { "slot": 26, "building": "Main Building", "min_level": 20 },
+      { "slot": 19, "building": "Warehouse", "min_level": 3 },
+      { "slot": 24, "building": "Granary", "min_level": 3 }
+    ]
+  }
+}

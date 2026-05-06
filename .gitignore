@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Secrets and local env (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Playwright session and logs (regenerated locally)
+storageState.json
+log.jsonl
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local builder state
+templates/progress.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Optional local overrides (uncomment if you use a private copy)
+# templates/settlement_targets.json

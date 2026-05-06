@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "default_template": "village_stage_00",
+  "identity_policy": "vid_and_coords",
+  "sequence_mode": "strict",
+  "templates": [
+    {
+      "key": "village_stage_00",
+      "file": "village_stage_00.json",
+      "next_template": "village_stage_01",
+      "enabled": true
+    },
+    {
+      "key": "village_stage_01",
+      "file": "village_stage_01.json",
+      "next_template": "village_stage_02",
+      "enabled": true
+    },
+    {
+      "key": "village_stage_02",
+      "file": "village_stage_02.json",
+      "next_template": null,
+      "enabled": true
+    },
+    {
+      "key": "resource_fields_01",
+      "file": "resource_fields_01.json",
+      "next_template": "resource_fields_02",
+      "enabled": true
+    },
+    {
+      "key": "resource_fields_02",
+      "file": "resource_fields_02.json",
+      "next_template": "resource_fields_03",
+      "enabled": true
+    },
+    {
+      "key": "resource_fields_03",
+      "file": "resource_fields_03.json",
+      "next_template": "resource_fields_04",
+      "enabled": true
+    },
+    {
+      "key": "resource_fields_04",
+      "file": "resource_fields_04.json",
+      "next_template": "resource_fields_05",
+      "enabled": true
+    },
+    {
+      "key": "resource_fields_05",
+      "file": "resource_fields_05.json",
+      "next_template": null,
+      "enabled": true
+    }
+  ]
+}

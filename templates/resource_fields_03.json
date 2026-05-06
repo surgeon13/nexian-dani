@@ -1,0 +1,73 @@
+{
+  "key": "resource_fields_03",
+  "name": "Resource Fields 03 - Bonus Building Prerequisites + Placement",
+  "description": "Upgrade one of each resource to 10 (prerequisite for bonus buildings), then place Sawmill, Brickyard, Iron Foundry and upgrade them to 3. Grain Mill to 5.",
+  "version": 1,
+  "sequence_mode": "strict",
+  "identity_policy": "vid_and_coords",
+  "tribes": ["roman", "teuton", "gaul"],
+  "next_template": "resource_fields_04",
+  "planner": {
+    "execution_mode": "one_action_per_run",
+    "stop_on_mismatch": true
+  },
+  "stages": [
+    {
+      "name": "Stage 1 - One of each resource to 10 (bonus building prerequisites)",
+      "steps": [
+        { "slot": 1, "building": "Woodcutter", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 5, "building": "Clay Pit", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 9, "building": "Iron Mine", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 13, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ],
+      "notes": "Each bonus building requires at least one field of its resource type at level 10."
+    },
+    {
+      "name": "Stage 2 - Place Sawmill",
+      "steps": [
+        { "slot": 31, "building": "Sawmill", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ],
+      "notes": "Requires Woodcutter level 10 and Main Building level 5."
+    },
+    {
+      "name": "Stage 3 - Place Brickyard",
+      "steps": [
+        { "slot": 27, "building": "Brickyard", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ],
+      "notes": "Requires Clay Pit level 10 and Main Building level 5."
+    },
+    {
+      "name": "Stage 4 - Place Iron Foundry",
+      "steps": [
+        { "slot": 23, "building": "Iron Foundry", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ],
+      "notes": "Requires Iron Mine level 10 and Main Building level 5."
+    },
+    {
+      "name": "Stage 5 - Upgrade bonus buildings to 3",
+      "steps": [
+        { "slot": 31, "building": "Sawmill", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 27, "building": "Brickyard", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 23, "building": "Iron Foundry", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 6 - Grain Mill to 5",
+      "steps": [
+        { "slot": 20, "building": "Grain Mill", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    }
+  ],
+  "end_state": {
+    "slots": [
+      { "slot": 1, "building": "Woodcutter", "min_level": 10 },
+      { "slot": 5, "building": "Clay Pit", "min_level": 10 },
+      { "slot": 9, "building": "Iron Mine", "min_level": 10 },
+      { "slot": 13, "building": "Cropland", "min_level": 10 },
+      { "slot": 31, "building": "Sawmill", "min_level": 3 },
+      { "slot": 27, "building": "Brickyard", "min_level": 3 },
+      { "slot": 23, "building": "Iron Foundry", "min_level": 3 },
+      { "slot": 20, "building": "Grain Mill", "min_level": 5 }
+    ]
+  }
+}

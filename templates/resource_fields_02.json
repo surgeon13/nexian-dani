@@ -1,0 +1,85 @@
+{
+  "key": "resource_fields_02",
+  "name": "Resource Fields 02 - Grain Mill + All Fields to 8",
+  "description": "Place Grain Mill, upgrade to 3, then push all resource fields to level 8.",
+  "version": 1,
+  "sequence_mode": "strict",
+  "identity_policy": "vid_and_coords",
+  "tribes": ["roman", "teuton", "gaul"],
+  "next_template": "resource_fields_03",
+  "planner": {
+    "execution_mode": "one_action_per_run",
+    "stop_on_mismatch": true
+  },
+  "stages": [
+    {
+      "name": "Stage 1 - Grain Mill placement and upgrade",
+      "steps": [
+        { "slot": 20, "building": "Grain Mill", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 20, "building": "Grain Mill", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ],
+      "notes": "Grain Mill requires Cropland level 5. Prerequisite met by resource_fields_01."
+    },
+    {
+      "name": "Stage 2 - Wood fields to 8",
+      "steps": [
+        { "slot": 1, "building": "Woodcutter", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 2, "building": "Woodcutter", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 3, "building": "Woodcutter", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 4, "building": "Woodcutter", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 3 - Clay fields to 8",
+      "steps": [
+        { "slot": 5, "building": "Clay Pit", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 6, "building": "Clay Pit", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 7, "building": "Clay Pit", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 8, "building": "Clay Pit", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 4 - Iron fields to 8",
+      "steps": [
+        { "slot": 9, "building": "Iron Mine", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 10, "building": "Iron Mine", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 11, "building": "Iron Mine", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 12, "building": "Iron Mine", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 5 - Crop fields to 8",
+      "steps": [
+        { "slot": 13, "building": "Cropland", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 14, "building": "Cropland", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 15, "building": "Cropland", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 16, "building": "Cropland", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 17, "building": "Cropland", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 18, "building": "Cropland", "target_level": 8, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    }
+  ],
+  "end_state": {
+    "slots": [
+      { "slot": 20, "building": "Grain Mill", "min_level": 3 },
+      { "slot": 1, "building": "Woodcutter", "min_level": 8 },
+      { "slot": 2, "building": "Woodcutter", "min_level": 8 },
+      { "slot": 3, "building": "Woodcutter", "min_level": 8 },
+      { "slot": 4, "building": "Woodcutter", "min_level": 8 },
+      { "slot": 5, "building": "Clay Pit", "min_level": 8 },
+      { "slot": 6, "building": "Clay Pit", "min_level": 8 },
+      { "slot": 7, "building": "Clay Pit", "min_level": 8 },
+      { "slot": 8, "building": "Clay Pit", "min_level": 8 },
+      { "slot": 9, "building": "Iron Mine", "min_level": 8 },
+      { "slot": 10, "building": "Iron Mine", "min_level": 8 },
+      { "slot": 11, "building": "Iron Mine", "min_level": 8 },
+      { "slot": 12, "building": "Iron Mine", "min_level": 8 },
+      { "slot": 13, "building": "Cropland", "min_level": 8 },
+      { "slot": 14, "building": "Cropland", "min_level": 8 },
+      { "slot": 15, "building": "Cropland", "min_level": 8 },
+      { "slot": 16, "building": "Cropland", "min_level": 8 },
+      { "slot": 17, "building": "Cropland", "min_level": 8 },
+      { "slot": 18, "building": "Cropland", "min_level": 8 }
+    ]
+  }
+}
