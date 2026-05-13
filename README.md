@@ -2,6 +2,8 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, troop training, village expansion helpers, timed loops, and append-only action logging (`log.jsonl`).
 
+Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Features
@@ -95,11 +97,13 @@ Opens after login. Typical keys include:
 - **`1`** — Send farmlists (all villages)
 - **`2`** — One **village stage** builder step
 - **`3`** — One **resource fields** builder step
-- **`4`** — Train troops (selected village)
+- **`T`** — Troop trainer (selected village)
+- **`4`** — Troop templates (preset lines, tribe, batch size)
 - **`5`** — Expansion / residence check
 - **`V`** — Pick active village context
 - **`S`** — Settings submenu (loops, gold complete, raid toggle, expansion options, …)
 - **`L`** — Log summary (`log.jsonl`)
+- **`P`** — Pause or resume automation loops (farmlist, builder, troop, cranny, raid guard). Optional auto-resume: `MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES` (Settings **8**).
 - **`Q`** — Quit menu / session teardown per `login.js` flow
 
 Exact labels are printed each run—use those as source of truth if keys change.
@@ -150,7 +154,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 npm run export
 ```
 
-Produces a dated zip beside the project folder. Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `node_modules/`, optionally `templates/progress.json`.
+Produces a zip beside the project folder named like `nexian-v1.2.1-2026-05-13-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `node_modules/`, optionally `templates/progress.json`.
 
 On the new machine: extract → `node setup.js` → fill `.env` → `node login.js --headed --keep-open`.
 

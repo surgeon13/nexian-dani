@@ -146,6 +146,7 @@ const settings = {
   playMaxMinutes: numberEnv("SESSION_PLAY_MAX_MINUTES", 120),
   restMinMinutes: numberEnv("SESSION_REST_MIN_MINUTES", 5),
   restMaxMinutes: numberEnv("SESSION_REST_MAX_MINUTES", 15),
+  manualPauseAutoUnpauseMinutes: numberEnv("MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES", 5),
   logoutUrl:
     process.env.LOGOUT_URL ||
     "https://nexian.world/logout.php",
@@ -180,6 +181,8 @@ const settings = {
   builderLoopMaxMinutes: numberEnv("BUILDER_LOOP_MAX_MINUTES", 10),
   builderRoundRobinEnabled:
     String(process.env.BUILDER_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
+  builderRoundRobinExcludedVillageIds:
+    String(process.env.BUILDER_RR_EXCLUDED_VILLAGE_IDS || "").trim(),
   troopTrainingRoundRobinEnabled:
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   troopTrainingLoopMinMinutes: numberEnv("TROOP_TRAINING_LOOP_MIN_MINUTES", 5),
@@ -277,6 +280,7 @@ function persistRuntimeSettings(selectedKeys) {
     SESSION_PLAY_MAX_MINUTES: String(settings.playMaxMinutes),
     SESSION_REST_MIN_MINUTES: String(settings.restMinMinutes),
     SESSION_REST_MAX_MINUTES: String(settings.restMaxMinutes),
+    MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES: String(settings.manualPauseAutoUnpauseMinutes),
     TROOP_TRAINING_PRESET: String(settings.troopTrainingPreset),
     TROOP_TRIBE: (() => {
       const t = String(settings.troopTribe || "auto").trim().toLowerCase();
@@ -323,6 +327,7 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_LOOP_MIN_MINUTES: String(settings.builderLoopMinMinutes),
     BUILDER_LOOP_MAX_MINUTES: String(settings.builderLoopMaxMinutes),
     BUILDER_ROUND_ROBIN_ENABLED: settings.builderRoundRobinEnabled ? "true" : "false",
+    BUILDER_RR_EXCLUDED_VILLAGE_IDS: String(settings.builderRoundRobinExcludedVillageIds || ""),
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),
@@ -400,6 +405,10 @@ function applySessionLoopDefaults() {
   const rest = normalizeRange(settings.restMinMinutes, settings.restMaxMinutes, 5, 15);
   settings.restMinMinutes = rest.min;
   settings.restMaxMinutes = rest.max;
+  settings.manualPauseAutoUnpauseMinutes = Math.max(
+    1,
+    Math.min(120, Math.floor(Number(settings.manualPauseAutoUnpauseMinutes) || 5))
+  );
 }
 
 function isHeadlessLaunchError(error) {
@@ -509,6 +518,8 @@ async function run() {
   let sessionCycleInProgress = false;
   let sessionCycleReason = "resting";
   let reloginInProgressPromise = null;
+  let manualAutomationPaused = false;
+  let manualAutomationPausedAtMs = null;
 
   const cancelSessionLoopTimer = () => {
     if (sessionLoopTimer) {
@@ -621,6 +632,24 @@ async function run() {
   const getAutomationStatus = () => {
     const pageClosed = !session || !session.page || session.page.isClosed();
 
+    if (manualAutomationPaused) {
+      const manualPauseMinutes = Math.max(
+        1,
+        Math.floor(Number(settings.manualPauseAutoUnpauseMinutes) || 5)
+      );
+      const autoUnpauseAfterMs = manualPauseMinutes * 60 * 1000;
+      const pausedAtMs = Number(manualAutomationPausedAtMs) || Date.now();
+
+      if (Date.now() - pausedAtMs >= autoUnpauseAfterMs) {
+        manualAutomationPaused = false;
+        manualAutomationPausedAtMs = null;
+        console.log(
+          `[Automation] Auto-unpaused after ${manualPauseMinutes} minute(s) (manual pause timeout).`
+        );
+      } else {
+        return { paused: true, reason: "manual_pause" };
+      }
+    }
     if (loopStopped) {
       return { paused: true, reason: "stopped" };
     }
@@ -632,6 +661,12 @@ async function run() {
     }
 
     return { paused: false, reason: "online" };
+  };
+
+  const setAutomationPaused = (paused) => {
+    manualAutomationPaused = Boolean(paused);
+    manualAutomationPausedAtMs = manualAutomationPaused ? Date.now() : null;
+    return getAutomationStatus();
   };
 
   const reloginNow = async (reason = "manual") => {
@@ -736,6 +771,10 @@ async function run() {
   };
 
   const updateTroopTrainingLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.troopTrainingRoundRobinEnabled = nextConfig.enabled;
+    }
+
     const range = normalizeRange(
       Number(nextConfig.minMinutes),
       Number(nextConfig.maxMinutes),
@@ -747,17 +786,23 @@ async function run() {
     settings.troopTrainingLoopMaxMinutes = range.max;
 
     persistRuntimeSettings([
+      "TROOP_TRAINING_ROUND_ROBIN_ENABLED",
       "TROOP_TRAINING_LOOP_MIN_MINUTES",
       "TROOP_TRAINING_LOOP_MAX_MINUTES"
     ]);
 
     return {
+      enabled: settings.troopTrainingRoundRobinEnabled,
       minMinutes: settings.troopTrainingLoopMinMinutes,
       maxMinutes: settings.troopTrainingLoopMaxMinutes
     };
   };
 
   const updateCrannyDefenseLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.crannyDefenseRoundRobinEnabled = nextConfig.enabled;
+    }
+
     const range = normalizeRange(
       Number(nextConfig.minMinutes),
       Number(nextConfig.maxMinutes),
@@ -769,11 +814,13 @@ async function run() {
     settings.crannyDefenseLoopMaxMinutes = range.max;
 
     persistRuntimeSettings([
+      "CRANNY_DEFENSE_ROUND_ROBIN_ENABLED",
       "CRANNY_DEFENSE_LOOP_MIN_MINUTES",
       "CRANNY_DEFENSE_LOOP_MAX_MINUTES"
     ]);
 
     return {
+      enabled: settings.crannyDefenseRoundRobinEnabled,
       minMinutes: settings.crannyDefenseLoopMinMinutes,
       maxMinutes: settings.crannyDefenseLoopMaxMinutes
     };
@@ -792,6 +839,7 @@ async function run() {
           getLogFilePath: () => actionLogFilePath,
           getSessionLoopStatus,
           getAutomationStatus,
+          setAutomationPaused,
           reloginNow,
           updateSessionLoopConfig,
           updateFarmlistLoopConfig,

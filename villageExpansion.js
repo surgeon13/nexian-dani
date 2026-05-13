@@ -42,10 +42,52 @@ async function readResidencePage(page, baseUrl, villageId) {
       element.getAttribute("aria-disabled") !== "true"
     );
 
+    const costs = {};
+    const contractEls = document.querySelectorAll("#contract");
+    const costContainer = contractEls.length > 1 ? contractEls[1] : contractEls[0];
+    if (costContainer) {
+      const costImgs = costContainer.querySelectorAll("img.r1, img.r2, img.r3, img.r4");
+      costImgs.forEach((img) => {
+        const rawText = img.nextSibling ? (img.nextSibling.textContent || "") : "";
+        const costValue = Number(rawText.replace(/[^\d]/g, "")) || 0;
+        const className = img.className || "";
+        if (/\br1\b/.test(className)) {
+          costs.wood = costValue;
+        } else if (/\br2\b/.test(className)) {
+          costs.clay = costValue;
+        } else if (/\br3\b/.test(className)) {
+          costs.iron = costValue;
+        } else if (/\br4\b/.test(className)) {
+          costs.crop = costValue;
+        }
+      });
+    }
+
+    const isMasterBuilderElement = (el) => {
+      if (!el) {
+        return false;
+      }
+      if (el.closest("#building_contract_mb")) {
+        return true;
+      }
+      const text = String(el.textContent || "").toLowerCase();
+      const cls = String(el.className || "").toLowerCase();
+      const href = String(
+        typeof el.getAttribute === "function" ? (el.getAttribute("href") || "") : ""
+      ).toLowerCase();
+      return (
+        text.includes("master builder") ||
+        cls.includes("master-builder") ||
+        href.includes("mb=1") ||
+        href.includes("master")
+      );
+    };
+
     const upgradeCandidates = Array.from(document.querySelectorAll(
       "#build a.build, a.build, #build button.green.build, button.green.build, #contract a.build, #contract button.green"
     ));
-    const upgradeButton = upgradeCandidates.find((el) => canClick(el)) || null;
+    const regularUpgradeButton = upgradeCandidates.find((el) => canClick(el) && !isMasterBuilderElement(el)) || null;
+    const masterBuilderUpgradeButton = upgradeCandidates.find((el) => canClick(el) && isMasterBuilderElement(el)) || null;
 
     const newBuildingLinks = [];
     if (isEmptySlot) {
@@ -74,8 +116,23 @@ async function readResidencePage(page, baseUrl, villageId) {
         const maxText = maxLink ? maxLink.textContent : "";
         const maxMatch = String(maxText).match(/(\d+)/);
         const maxTrainable = maxMatch ? Number(maxMatch[1]) : 0;
+        const costs = {};
+        row.querySelectorAll("img.r1, img.r2, img.r3, img.r4").forEach((img) => {
+          const rawText = img.nextSibling ? (img.nextSibling.textContent || "") : "";
+          const costValue = Number(rawText.replace(/[^\d]/g, "")) || 0;
+          const className = img.className || "";
+          if (/\br1\b/.test(className)) {
+            costs.wood = costValue;
+          } else if (/\br2\b/.test(className)) {
+            costs.clay = costValue;
+          } else if (/\br3\b/.test(className)) {
+            costs.iron = costValue;
+          } else if (/\br4\b/.test(className)) {
+            costs.crop = costValue;
+          }
+        });
 
-        return { unitName, inputName, maxTrainable };
+        return { unitName, inputName, maxTrainable, costs };
       })
       .filter((u) => u.unitName && u.inputName);
 
@@ -139,7 +196,10 @@ async function readResidencePage(page, baseUrl, villageId) {
       unitOptions,
       troopCounts,
       isEmptySlot,
-      hasUpgradeButton: Boolean(upgradeButton),
+      costs,
+      hasUpgradeButton: Boolean(regularUpgradeButton),
+      hasRegularUpgradeButton: Boolean(regularUpgradeButton),
+      hasMasterBuilderUpgradeButton: Boolean(masterBuilderUpgradeButton),
       newBuildingLinks,
       stock: {
         wood: woodRes.current,
@@ -339,16 +399,49 @@ async function clickResidenceUpgrade(page) {
       element.getAttribute("aria-disabled") !== "true"
     );
 
+    const isMasterBuilderElement = (el) => {
+      if (!el) {
+        return false;
+      }
+      if (el.closest("#building_contract_mb")) {
+        return true;
+      }
+      const text = String(el.textContent || "").toLowerCase();
+      const cls = String(el.className || "").toLowerCase();
+      const href = String(
+        typeof el.getAttribute === "function" ? (el.getAttribute("href") || "") : ""
+      ).toLowerCase();
+      return (
+        text.includes("master builder") ||
+        cls.includes("master-builder") ||
+        href.includes("mb=1") ||
+        href.includes("master")
+      );
+    };
+
     const candidates = Array.from(document.querySelectorAll(
       "#build a.build, a.build, #build button.green.build, button.green.build, #contract a.build, #contract button.green"
     ));
-    const btn = candidates.find((el) => canClick(el)) || null;
+    const btn = candidates.find((el) => canClick(el) && !isMasterBuilderElement(el)) || null;
     if (btn) {
       btn.click();
       return true;
     }
     return false;
   });
+}
+
+function calculateResourceDeficit(stock, costs) {
+  const deficit = {};
+  const resources = ["wood", "clay", "iron", "crop"];
+  resources.forEach((res) => {
+    const need = Number(costs && costs[res]) || 0;
+    const have = Number(stock && stock[res]) || 0;
+    if (need > have) {
+      deficit[res] = need - have;
+    }
+  });
+  return deficit;
 }
 
 async function ensureResidenceLevel10(page, village) {
@@ -403,6 +496,23 @@ async function ensureResidenceLevel10(page, village) {
 
   const upgraded = await clickResidenceUpgrade(page);
   if (!upgraded) {
+    const deficit = calculateResourceDeficit(slotInfo.stock, slotInfo.costs);
+    const deficitEntries = Object.entries(deficit);
+    if (slotInfo.hasMasterBuilderUpgradeButton && !slotInfo.hasRegularUpgradeButton) {
+      return {
+        status: "need_residence_resources",
+        phase: "residence_resources",
+        residenceLevel: slotInfo.currentLevel,
+        stock: slotInfo.stock,
+        warehouseCap: slotInfo.warehouseCap,
+        granaryCap: slotInfo.granaryCap,
+        required: slotInfo.costs || {},
+        deficit,
+        message: deficitEntries.length
+          ? `Residence upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
+          : "Residence upgrade is currently only available via Master Builder. Waiting for resources to use normal build queue."
+      };
+    }
     return {
       status: "residence_upgrade_blocked",
       phase: "residence",
@@ -464,6 +574,30 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED) {
 
   const toTrain = Math.min(needed - currentSettlers, settlerOption.maxTrainable);
   if (toTrain <= 0) {
+    const perUnitCosts = settlerOption.costs || {};
+    const required = {
+      wood: Math.max(0, (Number(perUnitCosts.wood) || 0) * Math.max(1, needed - currentSettlers)),
+      clay: Math.max(0, (Number(perUnitCosts.clay) || 0) * Math.max(1, needed - currentSettlers)),
+      iron: Math.max(0, (Number(perUnitCosts.iron) || 0) * Math.max(1, needed - currentSettlers)),
+      crop: Math.max(0, (Number(perUnitCosts.crop) || 0) * Math.max(1, needed - currentSettlers))
+    };
+    const deficit = calculateResourceDeficit(slotInfo.stock, required);
+    const hasResourceDeficit = Object.keys(deficit).length > 0;
+    if (hasResourceDeficit) {
+      const deficitText = Object.entries(deficit)
+        .map(([res, amount]) => `${res}: -${amount}`)
+        .join(", ");
+      return {
+        status: "need_settler_training_resources",
+        phase: "train_resources",
+        required,
+        deficit,
+        stock: slotInfo.stock,
+        warehouseCap: slotInfo.warehouseCap,
+        granaryCap: slotInfo.granaryCap,
+        message: `Not enough resources to train settlers. Deficit: ${deficitText}.`
+      };
+    }
     return {
       status: "cannot_train",
       message: "Cannot train settlers now (check resources or queue)."

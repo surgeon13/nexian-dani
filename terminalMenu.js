@@ -616,20 +616,37 @@ async function escapeShownewBlockingPage(page) {
   }
 }
 
+async function safeGotoFarmlist(page, farmlistUrl, retries = 2) {
+  const options = { waitUntil: "domcontentloaded", timeout: 60000 };
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      await page.goto(farmlistUrl, options);
+      return;
+    } catch (error) {
+      lastError = error;
+      const msg = String(error && error.message ? error.message : error);
+      const transient =
+        /ERR_ABORTED|Execution context was destroyed|interrupted by another navigation/i.test(msg);
+      if (!transient || attempt >= retries) {
+        throw error;
+      }
+      await page.waitForTimeout(250 + attempt * 250).catch(() => {});
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+}
+
 async function gotoFarmlistWithNewsEscape(page, farmlistUrl) {
-  await page.goto(farmlistUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
+  await safeGotoFarmlist(page, farmlistUrl);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const escaped = await escapeShownewBlockingPage(page);
     if (!escaped) {
       break;
     }
-    await page.goto(farmlistUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    }).catch(() => null);
+    await safeGotoFarmlist(page, farmlistUrl).catch(() => null);
   }
 }
 
@@ -1131,19 +1148,28 @@ function villageDisplayName(village) {
   return `${village.name || "?"} ${coords}${capitalTag} (vid=${village.id})`;
 }
 
-function printVillageContextStatus(villageState) {
+function printVillageContextStatus(villageState, settings) {
   const total = villageState.villages.length;
   const selected = villageState.villages.find((v) => v.id === villageState.selectedVillageId) || null;
   const active = villageState.villages.find((v) => v.id === villageState.activeVillageId) || null;
+  const excludedSet = parsePivotVillageIdSet(settings && settings.builderRoundRobinExcludedVillageIds);
+  const selectedExcluded = selected && excludedSet.has(Number(selected.id));
+  const activeExcluded = active && excludedSet.has(Number(active.id));
 
   console.log("");
   console.log(`  ${color("Villages:", ANSI.gray)} ${color(String(total), ANSI.bold, ANSI.cyan)}`);
   console.log(
     `  ${color("Selected:", ANSI.gray)} ${color(villageDisplayName(selected), ANSI.bold, ANSI.yellow)}`
   );
+  if (selectedExcluded) {
+    console.log(`  ${color("Selected RR:", ANSI.gray)} ${color("EXCLUDED", ANSI.bold, ANSI.yellow)}`);
+  }
   console.log(
     `  ${color("Currently Active:", ANSI.gray)} ${color(villageDisplayName(active), ANSI.bold, ANSI.green)}`
   );
+  if (activeExcluded) {
+    console.log(`  ${color("Active RR:", ANSI.gray)} ${color("EXCLUDED", ANSI.bold, ANSI.yellow)}`);
+  }
 }
 
 function printVillageSelectionMenu(villageState) {
@@ -1193,7 +1219,33 @@ function printRaidPivotVillageSheet(snapshot, pivotIdSet) {
   console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
 }
 
-function printMainMenu() {
+function printBuilderRrExclusionSheet(snapshot, excludedIdSet) {
+  const set = excludedIdSet instanceof Set ? excludedIdSet : parsePivotVillageIdSet("");
+  printSubDivider("BUILDER RR EXCLUSIONS");
+  if (!snapshot || !Array.isArray(snapshot.villages) || !snapshot.villages.length) {
+    console.log(`  ${color("No villages detected yet.", ANSI.yellow)}`);
+    return;
+  }
+
+  snapshot.villages.forEach((village, index) => {
+    const selectedMark = village.id === snapshot.selectedVillageId ? "*" : " ";
+    const activeMark = village.id === snapshot.activeVillageId ? "A" : " ";
+    const marker = `[${selectedMark}${activeMark}]`;
+    const excludedTag = set.has(Number(village.id))
+      ? color(" [RR OFF]", ANSI.bold, ANSI.yellow)
+      : color(" [RR ON]", ANSI.dim, ANSI.green);
+    console.log(
+      `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(marker, ANSI.gray)} ${villageDisplayName(village)}${excludedTag}`
+    );
+  });
+
+  console.log("");
+  console.log(`  ${color("A", ANSI.bold, ANSI.cyan)}  Clear all exclusions`);
+  console.log(`  ${color("M", ANSI.bold, ANSI.cyan)}  Set exclusions by CSV (row numbers / vids)`);
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+function printMainMenu(automationStatus) {
   printDivider("NEXIAN");
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
@@ -1204,20 +1256,26 @@ function printMainMenu() {
   const ss = String(now.getSeconds()).padStart(2, "0");
   console.log(`  ${color("Date:", ANSI.gray)} ${color(`${dd} ${mm} ${yyyy}`, ANSI.bold, ANSI.cyan)}`);
   console.log(`  ${color("Time:", ANSI.gray)} ${color(`${hh}:${min}:${ss}`, ANSI.bold, ANSI.cyan)}`);
+  const paused = Boolean(automationStatus && automationStatus.paused);
+  const reason = String((automationStatus && automationStatus.reason) || "online");
+  const pauseLabel = paused ? "PAUSED" : "RUNNING";
+  const pauseColor = paused ? ANSI.yellow : ANSI.green;
+  console.log(`  ${color("Automation:", ANSI.gray)} ${color(pauseLabel, ANSI.bold, pauseColor)} ${color(`(${reason})`, ANSI.gray)}`);
   console.log("");
   console.log(`  ${color("0", ANSI.bold, ANSI.cyan)}  Village Status`);
   console.log(`  ${color("1", ANSI.bold, ANSI.cyan)}  Send Farmlists`);
   console.log(`  ${color("2", ANSI.bold, ANSI.cyan)}  Village Stage Builder`);
   console.log(`  ${color("3", ANSI.bold, ANSI.cyan)}  Resource Fields Builder`);
-  console.log(`  ${color("4", ANSI.bold, ANSI.cyan)}  Troop Trainer`);
+  console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Trainer`);
   console.log(`  ${color("C", ANSI.bold, ANSI.cyan)}  Cranny defense (selected village)`);
-  console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Templates`);
+  console.log(`  ${color("4", ANSI.bold, ANSI.cyan)}  Troop Templates`);
   console.log(`  ${color("5", ANSI.bold, ANSI.cyan)}  Expansion / Residence Check`);
   console.log(`  ${color("X", ANSI.bold, ANSI.cyan)}  Stop Builder Process`);
   console.log(`  ${color("r", ANSI.bold, ANSI.cyan)}  Relogin Now`);
   console.log(`  ${color("R", ANSI.bold, ANSI.cyan)}  Relogin + Village Status`);
   console.log(`  ${color("V", ANSI.bold, ANSI.cyan)}  Select Village Context`);
   console.log(`  ${color("L", ANSI.bold, ANSI.cyan)}  Logs (Summary)`);
+  console.log(`  ${color("P", ANSI.bold, ANSI.cyan)}  Pause/Unpause Automation`);
   console.log(`  ${color("S", ANSI.bold, ANSI.cyan)}  Settings`);
   console.log(`  ${color("Q", ANSI.bold, ANSI.cyan)}  Quit`);
 }
@@ -1594,6 +1652,7 @@ function printSettings(settings, villageState) {
   printKeyValueRows([
     { label: "browserMode", value: settings.headless ? "Headless" : "Full Browser" },
     { label: "randomDelayMs", value: `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}` },
+    { label: "pauseAutoUnpauseMinutes", value: `${settings.manualPauseAutoUnpauseMinutes || 5}` },
     { label: "farmlistUrl", value: settings.farmlistUrl },
     { label: "villageBuilderUrl", value: settings.villageBuilderUrl },
     { label: "troopTrainerUrl", value: settings.troopTrainerUrl },
@@ -1647,6 +1706,13 @@ function printSettings(settings, villageState) {
       value: settings.builderRoundRobinEnabled ? "ON" : "OFF"
     },
     {
+      label: "builderRrExcludedVillages",
+      value: (() => {
+        const excludedCount = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds).size;
+        return excludedCount > 0 ? `${excludedCount} village(s)` : "none";
+      })()
+    },
+    {
       label: "troopRoundRobinLoop",
       value: `${settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF"} (${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes} min)`
     },
@@ -1694,6 +1760,9 @@ function printSettingsMenu(settings, villageState) {
   console.log(
     `  ${opt("2")}  Random Delay       ${tag("", `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}ms`)}`
   );
+  console.log(
+    `  ${opt("8")}  Pause Auto-Unpause ${tag("after", `${settings.manualPauseAutoUnpauseMinutes || 5}m`)}`
+  );
   console.log();
 
   section("Session and Farm");
@@ -1719,6 +1788,12 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("0")}  Builder RR          ${dim("[")}${onOff(settings.builderRoundRobinEnabled)}${dim("]")}`
   );
   console.log(
+    `  ${opt("Y")}  Builder RR Exclusion ${tag(
+      "count",
+      `${parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds).size}`
+    )}`
+  );
+  console.log(
     `  ${opt("7")}  Master Builder      ${dim("[")}${onOff(settings.builderMasterBuilderEnabled)}${dim("]")}`
   );
   console.log(
@@ -1731,13 +1806,7 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("T")}  Troop RR Loop      ${dim("[")}${onOff(settings.troopTrainingRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes}m`)}`
   );
   console.log(
-    `  ${opt("8")}  Troop RR Interval  ${tag("every", `${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes}m`)}`
-  );
-  console.log(
     `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
-  );
-  console.log(
-    `  ${opt("J")}  Cranny Interval    ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
   );
   console.log();
 
@@ -1746,10 +1815,7 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("E")}  Raid Evacuation    ${dim("[")}${onOff(settings.raidEvacuationEnabled !== false)}${dim("]")}  ${tag("trigger", `${settings.raidEvacuationTriggerMinutes || 30}m`)}`
   );
   console.log(
-    `  ${opt("K")}  Troop Evacuation   ${dim("[")}${onOff(settings.raidEvacuationTroopsEnabled !== false)}${dim("]")}`
-  );
-  console.log(
-    `  ${opt("M")}  Troop Recall Delay ${tag("after", `${settings.raidEvacuationTroopRecallSeconds || 60}s`)}`
+    `  ${opt("K")}  Troop Evacuation   ${dim("[")}${onOff(settings.raidEvacuationTroopsEnabled !== false)}${dim("]")}  ${tag("after", `${settings.raidEvacuationTroopRecallSeconds || 60}s`)}`
   );
   console.log(
     `  ${opt("H")}  Pivot Villages     ${tag(
@@ -1813,6 +1879,20 @@ function formatPivotVillageLabelsForSettings(settings, villages) {
     .map((v, idx) => (v ? villageDisplayName(v) : `vid=${ids[idx]}`))
     .filter(Boolean);
   return labels.length ? labels.join("; ") : String(settings.raidEvacuationPivotVillageIds || "auto");
+}
+
+function formatVillageLabelsFromIdCsv(csv, villages, emptyLabel = "none") {
+  const list = Array.isArray(villages) ? villages : [];
+  const set = parsePivotVillageIdSet(csv);
+  if (!set.size) {
+    return String(emptyLabel || "none");
+  }
+  const ids = Array.from(set);
+  const labels = ids
+    .map((id) => list.find((v) => Number(v.id) === Number(id)) || null)
+    .map((v, idx) => (v ? villageDisplayName(v) : `vid=${ids[idx]}`))
+    .filter(Boolean);
+  return labels.length ? labels.join("; ") : String(csv || emptyLabel || "none");
 }
 
 function resolvePivotCsvTokensToVillageIds(csv, villages) {
@@ -1959,10 +2039,121 @@ async function runRaidPivotVillageMenu(rl, settings, runtimeControls) {
   }
 }
 
-async function runSettingsMenu(rl, settings, runtimeControls) {
-  normalizeExpansionSettlementSettings(settings);
+async function runBuilderRrExclusionMenu(rl, settings, runtimeControls) {
+  const refresh =
+    runtimeControls && typeof runtimeControls.refreshSideInfoVillages === "function"
+      ? runtimeControls.refreshSideInfoVillages
+      : null;
+  const getSnapshot =
+    runtimeControls && typeof runtimeControls.getRaidPivotVillageUiState === "function"
+      ? runtimeControls.getRaidPivotVillageUiState
+      : null;
+
+  const persistExcludedSet = async (excludedSet) => {
+    settings.builderRoundRobinExcludedVillageIds = excludedSet.size
+      ? formatPivotCsvFromSet(excludedSet)
+      : "";
+    if (runtimeControls.persistSettings) {
+      await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
+    }
+  };
+
+  if (refresh) {
+    try {
+      await refresh();
+    } catch (_error) {
+      logWarn("Could not refresh village list from game (session busy?).");
+    }
+  }
+
+  let excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
   let done = false;
   while (!done) {
+    const snapshot =
+      typeof getSnapshot === "function"
+        ? getSnapshot()
+        : { villages: [], selectedVillageId: null, activeVillageId: null };
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+    printBuilderRrExclusionSheet(snapshot, excludedSet);
+
+    if (!villages.length) {
+      logWarn("No villages detected.");
+    }
+
+    const answer = (await askQuestion(rl, "Toggle village number, or A/M/B: ")).trim().toUpperCase();
+    if (answer === "B") {
+      done = true;
+      continue;
+    }
+    if (answer === "A") {
+      excludedSet = new Set();
+      await persistExcludedSet(excludedSet);
+      logSuccess("Builder RR exclusions cleared.");
+      continue;
+    }
+    if (answer === "M") {
+      const typed = (await askQuestion(rl, "Exclude villages CSV (rows/vids), empty to clear: ")).trim();
+      if (!typed) {
+        excludedSet = new Set();
+      } else {
+        const { resolvedIds, invalidTokens } = resolvePivotCsvTokensToVillageIds(typed, villages);
+        excludedSet = new Set(resolvedIds);
+        if (invalidTokens.length) {
+          logWarn(
+            `Ignored unknown entries: ${invalidTokens.join(", ")}. Use village row numbers or existing village IDs.`
+          );
+        }
+      }
+      await persistExcludedSet(excludedSet);
+      logSuccess(
+        `Builder RR exclusions: ${formatVillageLabelsFromIdCsv(
+          settings.builderRoundRobinExcludedVillageIds,
+          villages,
+          "none"
+        )}`
+      );
+      continue;
+    }
+
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a listed number, A, M, or B.");
+      continue;
+    }
+
+    const village = villages[index - 1];
+    const vid = Number(village && village.id);
+    if (!Number.isFinite(vid)) {
+      logWarn("Selected village has invalid id.");
+      continue;
+    }
+    if (excludedSet.has(vid)) {
+      excludedSet.delete(vid);
+      await persistExcludedSet(excludedSet);
+      logSuccess(`RR enabled for ${villageDisplayName(village)}.`);
+    } else {
+      excludedSet.add(vid);
+      await persistExcludedSet(excludedSet);
+      logSuccess(`RR excluded for ${villageDisplayName(village)}.`);
+    }
+  }
+}
+
+async function runSettingsMenu(rl, settings, runtimeControls) {
+  normalizeExpansionSettlementSettings(settings);
+  const getVillageStateForUi = () => {
+    if (!runtimeControls || typeof runtimeControls.getRaidPivotVillageUiState !== "function") {
+      return null;
+    }
+    try {
+      return runtimeControls.getRaidPivotVillageUiState() || null;
+    } catch (_error) {
+      return null;
+    }
+  };
+  let done = false;
+  while (!done) {
+    const villageState = getVillageStateForUi();
     printSettings(settings, villageState);
     printSettingsMenu(settings, villageState);
 
@@ -2067,6 +2258,30 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
         logError(`Failed to update session loop: ${error.message || error}`);
       }
 
+      continue;
+    }
+
+    if (input === "8") {
+      const typed = (
+        await askQuestion(rl, "Pause auto-unpause MINUTES (1-120, Enter keep): ")
+      ).trim();
+      if (!typed) {
+        continue;
+      }
+      const n = Number(typed);
+      if (!Number.isFinite(n)) {
+        logWarn("Invalid number. Keeping previous value.");
+        continue;
+      }
+      settings.manualPauseAutoUnpauseMinutes = Math.max(1, Math.min(120, Math.floor(n)));
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES"
+        ]);
+      }
+      logSuccess(
+        `Pause auto-unpause set to ${settings.manualPauseAutoUnpauseMinutes} minute(s).`
+      );
       continue;
     }
 
@@ -2183,39 +2398,6 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "8") {
-      const nextMinText = (
-        await askQuestion(rl, "Troop RR loop MIN minutes (Enter keep): ")
-      ).trim();
-      const nextMaxText = (
-        await askQuestion(rl, "Troop RR loop MAX minutes (Enter keep): ")
-      ).trim();
-
-      const nextConfig = {
-        minMinutes: nextMinText ? Number(nextMinText) : settings.troopTrainingLoopMinMinutes,
-        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.troopTrainingLoopMaxMinutes
-      };
-
-      if (!runtimeControls.updateTroopTrainingLoopConfig) {
-        logWarn("Troop RR interval update is not available in this runtime.");
-        continue;
-      }
-
-      try {
-        const applied = await runtimeControls.updateTroopTrainingLoopConfig(nextConfig);
-        settings.troopTrainingLoopMinMinutes = applied.minMinutes;
-        settings.troopTrainingLoopMaxMinutes = applied.maxMinutes;
-
-        logSuccess(
-          `Troop RR loop interval updated: every ${applied.minMinutes}-${applied.maxMinutes} minute(s).`
-        );
-      } catch (error) {
-        logError(`Failed to update troop RR loop interval: ${error.message || error}`);
-      }
-
-      continue;
-    }
-
     if (input === "9") {
       const enabledText = (
         await askQuestion(rl, "Enable status print after farmlists? (Y/N, Enter keep): ")
@@ -2270,38 +2452,36 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
     }
 
     if (input === "K") {
-      settings.raidEvacuationTroopsEnabled = !(settings.raidEvacuationTroopsEnabled !== false);
-      if (runtimeControls.persistSettings) {
-        await runtimeControls.persistSettings([
-          "RAID_EVACUATION_TROOPS_ENABLED"
-        ]);
-      }
-      logSuccess(
-        `Raid troop evacuation: ${settings.raidEvacuationTroopsEnabled ? "ON" : "OFF"}`
-      );
-      continue;
-    }
+      const enabledText = (
+        await askQuestion(rl, "Enable raid troop evacuation? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
 
-    if (input === "M") {
+      if (enabledText === "Y") {
+        settings.raidEvacuationTroopsEnabled = true;
+      } else if (enabledText === "N") {
+        settings.raidEvacuationTroopsEnabled = false;
+      }
+
       const typed = (
         await askQuestion(rl, "Troop evacuation recall delay SECONDS (10-3600, Enter keep): ")
       ).trim();
-      if (!typed) {
-        continue;
+      if (typed) {
+        const n = Number(typed);
+        if (!Number.isFinite(n)) {
+          logWarn("Invalid number. Keeping previous recall delay.");
+        } else {
+          settings.raidEvacuationTroopRecallSeconds = Math.max(10, Math.min(3600, Math.floor(n)));
+        }
       }
-      const n = Number(typed);
-      if (!Number.isFinite(n)) {
-        logWarn("Invalid number.");
-        continue;
-      }
-      settings.raidEvacuationTroopRecallSeconds = Math.max(10, Math.min(3600, Math.floor(n)));
+
       if (runtimeControls.persistSettings) {
         await runtimeControls.persistSettings([
+          "RAID_EVACUATION_TROOPS_ENABLED",
           "RAID_EVACUATION_TROOP_RECALL_SECONDS"
         ]);
       }
       logSuccess(
-        `Raid troop recall delay: ${settings.raidEvacuationTroopRecallSeconds}s`
+        `Raid troop evacuation: ${settings.raidEvacuationTroopsEnabled ? "ON" : "OFF"}, recall after ${settings.raidEvacuationTroopRecallSeconds || 60}s.`
       );
       continue;
     }
@@ -2324,33 +2504,69 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "Y") {
+      await runBuilderRrExclusionMenu(rl, settings, runtimeControls);
+      continue;
+    }
+
     if (input === "T") {
-      settings.troopTrainingRoundRobinEnabled = !settings.troopTrainingRoundRobinEnabled;
-      if (runtimeControls.persistSettings) {
-        await runtimeControls.persistSettings([
-          "TROOP_TRAINING_ROUND_ROBIN_ENABLED"
-        ]);
+      const enabledText = (
+        await askQuestion(rl, "Enable troop RR loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.troopTrainingRoundRobinEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
       }
-      logSuccess(
-        `Troop training round-robin loop: ${settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF"}`
-      );
+
+      const nextMinText = (
+        await askQuestion(rl, "Troop RR loop MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Troop RR loop MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        minMinutes: nextMinText ? Number(nextMinText) : settings.troopTrainingLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.troopTrainingLoopMaxMinutes
+      };
+
+      if (!runtimeControls.updateTroopTrainingLoopConfig) {
+        logWarn("Troop RR loop update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateTroopTrainingLoopConfig(nextConfig);
+        settings.troopTrainingRoundRobinEnabled = applied.enabled;
+        settings.troopTrainingLoopMinMinutes = applied.minMinutes;
+        settings.troopTrainingLoopMaxMinutes = applied.maxMinutes;
+
+        logSuccess(
+          `Troop RR loop updated: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes} minute(s).`
+        );
+      } catch (error) {
+        logError(`Failed to update troop RR loop: ${error.message || error}`);
+      }
+
       continue;
     }
 
     if (input === "I") {
-      settings.crannyDefenseRoundRobinEnabled = !settings.crannyDefenseRoundRobinEnabled;
-      if (runtimeControls.persistSettings) {
-        await runtimeControls.persistSettings([
-          "CRANNY_DEFENSE_ROUND_ROBIN_ENABLED"
-        ]);
-      }
-      logSuccess(
-        `Cranny defense round-robin: ${settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF"}`
-      );
-      continue;
-    }
+      const enabledText = (
+        await askQuestion(rl, "Enable Cranny RR? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
 
-    if (input === "J") {
+      let nextEnabled = settings.crannyDefenseRoundRobinEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
       const nextMinText = (
         await askQuestion(rl, "Cranny defense RR MIN minutes (Enter keep): ")
       ).trim();
@@ -2359,6 +2575,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       ).trim();
 
       const nextConfig = {
+        enabled: nextEnabled,
         minMinutes: nextMinText ? Number(nextMinText) : settings.crannyDefenseLoopMinMinutes,
         maxMinutes: nextMaxText ? Number(nextMaxText) : settings.crannyDefenseLoopMaxMinutes
       };
@@ -2370,14 +2587,15 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
 
       try {
         const applied = await runtimeControls.updateCrannyDefenseLoopConfig(nextConfig);
+        settings.crannyDefenseRoundRobinEnabled = applied.enabled;
         settings.crannyDefenseLoopMinMinutes = applied.minMinutes;
         settings.crannyDefenseLoopMaxMinutes = applied.maxMinutes;
 
         logSuccess(
-          `Cranny defense RR interval updated: every ${applied.minMinutes}-${applied.maxMinutes} minute(s).`
+          `Cranny RR updated: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes} minute(s).`
         );
       } catch (error) {
-        logError(`Failed to update Cranny defense RR interval: ${error.message || error}`);
+        logError(`Failed to update Cranny RR: ${error.message || error}`);
       }
 
       continue;
@@ -2458,7 +2676,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 0-9, T, I, J, A, D, U, V, E, H, K, M, P, or B.");
+    logWarn("Unknown option. Use 0-9, T, I, Y, A, D, U, V, E, H, K, P, or B.");
   }
 }
 
@@ -2477,7 +2695,7 @@ function printTroopTemplateMenu(settings) {
     },
     {
       label: "manualTrainer",
-      value: `${manualFocus}  ${color("(menu 4)", ANSI.gray)}`
+      value: `${manualFocus}  ${color("(main menu T)", ANSI.gray)}`
     },
     {
       label: "infantry OFF",
@@ -2505,7 +2723,7 @@ function printTroopTemplateMenu(settings) {
   console.log(`  ${color("[7]", ANSI.bold, ANSI.cyan)}  Set batch size (number)`);
   console.log(`  ${color("[8]", ANSI.bold, ANSI.cyan)}  Cycle tribe: auto → teuton → roman → gaul`);
   console.log(
-    `  ${color("[9]", ANSI.bold, ANSI.cyan)}  Menu 4 target: infantry → cavalry → both`
+    `  ${color("[9]", ANSI.bold, ANSI.cyan)}  Troop trainer (main T): infantry → cavalry → both`
   );
   console.log(`  ${color("[+]", ANSI.bold, ANSI.cyan)}  Increase batch +5`);
   console.log(`  ${color("[-]", ANSI.bold, ANSI.cyan)}  Decrease batch -5`);
@@ -3715,8 +3933,6 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let lastAutoFarmlistStatusPrintedAt = null;
     let activeBuilderPlanMode = "village";
     let roundRobinIndex = 0;
-    let builderFocusedVillageId = null;
-    let builderFocusStreak = 0;
     const realignStreakByKey = new Map();
     let troopRoundRobinIndex = 0;
     let crannyRoundRobinIndex = 0;
@@ -4114,12 +4330,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           `[${sourceLabel}] Village status (fallback): ${villageDisplayName(targetVillage)} — use V to pin a village.`
         );
       }
-      await showVillageStatus(
-        getPage,
-        settings,
-        targetVillage.id,
-        targetVillage
-      );
+      try {
+        await showVillageStatus(
+          getPage,
+          settings,
+          targetVillage.id,
+          targetVillage
+        );
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        const isTransientNav =
+          /net::ERR_ABORTED|Execution context was destroyed|interrupted by another navigation/i.test(message);
+        if (isTransientNav) {
+          logWarn(`[${sourceLabel}] Status navigation aborted; skipping status print this time.`);
+          return;
+        }
+        throw error;
+      }
     };
 
     const maybePrintAutoFarmlistStatus = async (sourceLabel = "Farmlist Loop") => {
@@ -4385,7 +4612,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           if (runtimeControls.persistSettings) {
             await runtimeControls.persistSettings(["TROOP_TRAINING_MANUAL_FOCUS"]);
           }
-          logSuccess(`Menu 4 Troop Trainer will train: ${next}.`);
+          logSuccess(`Troop trainer (main menu T) will train: ${next}.`);
           continue;
         }
 
@@ -4562,7 +4789,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const okStatus =
         settlement
-          ? !!(blocker && blocker.status === "need_settlement_resources")
+          ? !!(
+            blocker &&
+            (
+              blocker.status === "need_settlement_resources" ||
+              blocker.status === "need_residence_resources" ||
+              blocker.status === "need_settler_training_resources"
+            )
+          )
           : !!(blocker && blocker.status === "blocked_resources");
 
       if (!okStatus) {
@@ -5070,9 +5304,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return;
         }
 
+        let farmlistExecuted = false;
         try {
           const startedAt = Date.now();
-          const executed = await runAction("auto-send farmlists", async () => {
+          farmlistExecuted = await runAction("auto-send farmlists", async () => {
             logInfo("[Farmlist Loop] Auto-send starting...");
             await runWithRandomDelay(
               settings,
@@ -5083,7 +5318,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             logSuccess("[Farmlist Loop] Auto-send completed.");
             await maybePrintAutoFarmlistStatus("Farmlist Loop");
           }, { raidGuardPriority: true });
-          if (executed) {
+          if (farmlistExecuted) {
             recordAction({
               actionType: "farmlist.send",
               status: "success",
@@ -5099,7 +5334,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
           const isTransientSessionState =
-            /has been closed|context or browser has been closed|Session page is currently unavailable/i.test(
+            /has been closed|context or browser has been closed|Session page is currently unavailable|net::ERR_ABORTED|interrupted by another navigation/i.test(
               message
             );
           const isLoggedOutState =
@@ -5170,7 +5405,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           }
         }
 
-        await restoreSelectedVillageContext("Farmlist Loop");
+        if (farmlistExecuted) {
+          await restoreSelectedVillageContext("Farmlist Loop");
+        }
         scheduleFarmlistLoop();
       };
 
@@ -5286,20 +5523,32 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
         let targetVillage;
         let roundRobinAdvanceStep = 1;
-        let builderTickFinalStatus = null;
         if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
+          const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
           const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
-          if (!nonCapitalVillages.length) {
-            logWarn("[Builder Loop] No non-capital villages available for template auto-build. Skipping.");
+          const loopPlan = getBuilderPlanMeta(activeBuilderPlanMode);
+          const rrCandidateVillages = nonCapitalVillages.filter(
+            (village) =>
+              !excludedVillageIds.has(Number(village.id)) &&
+              !isBuilderPlanFullyComplete(village, loopPlan.key)
+          );
+          if (!rrCandidateVillages.length) {
+            if (nonCapitalVillages.length) {
+              logInfo(
+                `[Builder Loop] All non-capital villages are complete for ${loopPlan.short} plan. Waiting for next changes.`
+              );
+            } else {
+              logWarn("[Builder Loop] No non-capital villages available for template auto-build. Skipping.");
+            }
             scheduleBuilderLoop();
             return;
           }
-          const totalVillages = nonCapitalVillages.length;
+          const totalVillages = rrCandidateVillages.length;
           const now = Date.now();
           let earliestBlockedUntil = null;
 
           for (let offset = 0; offset < totalVillages; offset += 1) {
-            const candidate = nonCapitalVillages[(roundRobinIndex + offset) % totalVillages];
+            const candidate = rrCandidateVillages[(roundRobinIndex + offset) % totalVillages];
             const merchantWaitUntil = pendingMerchantArrivalByVillage.get(candidate.id);
             const cooldownUntil = builderVillageCooldownUntilByVillage.get(candidate.id);
             const blockedUntil = Math.max(
@@ -5381,6 +5630,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           pendingMerchantArrivalByVillage.delete(targetVillage.id);
         }
 
+        let shouldFastRetryDifferentVillage = false;
         try {
           const startedAt = Date.now();
           const executed = await runAction("auto-builder", async () => {
@@ -5451,13 +5701,22 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               });
             }
 
-            builderTickFinalStatus = String(finalResult.status || "");
-
             const cooldownMs = getBuilderCooldownMsForStatus(finalResult.status);
             if (cooldownMs > 0) {
               builderVillageCooldownUntilByVillage.set(targetVillage.id, Date.now() + cooldownMs);
             } else {
               builderVillageCooldownUntilByVillage.delete(targetVillage.id);
+            }
+
+            // If this village is temporarily blocked (queue full / MB-only / etc.),
+            // immediately move on to another unfinished village rather than waiting
+            // the full builder interval.
+            if (
+              settings.builderRoundRobinEnabled &&
+              (String(finalResult.status || "").startsWith("blocked_") || finalResult.status === "idle_saturated") &&
+              villageState.villages.length > 1
+            ) {
+              shouldFastRetryDifferentVillage = true;
             }
 
             if (finalResult.status === "success") {
@@ -5509,46 +5768,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }
 
         if (settings.builderRoundRobinEnabled) {
-          const targetId = targetVillage && Number.isFinite(Number(targetVillage.id))
-            ? Number(targetVillage.id)
-            : null;
-          if (targetId !== null && targetId === builderFocusedVillageId) {
-            builderFocusStreak += 1;
-          } else {
-            builderFocusedVillageId = targetId;
-            builderFocusStreak = 1;
-          }
-
-          const stickyProgressStatuses = new Set([
-            "success",
-            "already_satisfied",
-            "realigned_template"
-          ]);
-          const statusKey = String(builderTickFinalStatus || "").toLowerCase();
-          const stickyBecauseProgress = stickyProgressStatuses.has(statusKey);
-          const maxStickyStreak = 3; // fairness: keep momentum, then rotate across other incomplete villages
-          const shouldAdvance =
-            !stickyBecauseProgress || builderFocusStreak >= maxStickyStreak;
-
-          if (shouldAdvance) {
-            roundRobinIndex += Math.max(1, roundRobinAdvanceStep);
-            builderFocusedVillageId = null;
-            builderFocusStreak = 0;
-            if (stickyBecauseProgress && statusKey && targetVillage) {
-              logInfo(
-                `[Builder Loop] Progress streak cap reached for ${villageDisplayName(targetVillage)} ` +
-                  `(${maxStickyStreak} ticks). Rotating to keep RR fair.`
-              );
-            }
-          } else {
-            // Completion-oriented RR: keep pressure on the same village while it advances.
-            logInfo(
-              `[Builder Loop] Keeping focus on ${villageDisplayName(targetVillage)} ` +
-                `(status: ${builderTickFinalStatus || "progress"}, streak ${builderFocusStreak}/${maxStickyStreak}) before rotating.`
-            );
-          }
+          roundRobinIndex += Math.max(1, roundRobinAdvanceStep);
         }
         await restoreSelectedVillageContext("Builder Loop");
+        if (shouldFastRetryDifferentVillage) {
+          const delayMs = 5000;
+          nextBuilderRunAt = Date.now() + delayMs;
+          logInfo("[Builder Loop] Switching villages (RR) due to temporary block. Retrying in ~5s...");
+          builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+          return;
+        }
         scheduleBuilderLoop();
       };
 
@@ -5628,11 +5857,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return;
         }
 
+        let troopExecuted = false;
         try {
           const startedAt = Date.now();
           let trainedTroop = settings.troopTrainingPreset;
           let recordedTrainerBuilding = "barracks";
-          const executed = await runAction("auto-troop-trainer", async () => {
+          troopExecuted = await runAction("auto-troop-trainer", async () => {
             await ensureVillageBrowserContext(targetVillage, "Troop RR Loop");
 
             const useAlternateBarracksGreat =
@@ -5712,7 +5942,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               `[Troop RR Loop] Trained ${result && result.queued != null ? result.queued : "?"} ${(result && result.preset) || trainedTroop} in ${villageDisplayName(targetVillage)}.`
             );
           }, { raidGuardPriority: true });
-          if (executed) {
+          if (troopExecuted) {
             recordAction({
               actionType: "troop.train",
               status: "success",
@@ -5750,7 +5980,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (troopTemplateMode !== "offensive") {
           troopRoundRobinIndex++;
         }
-        await restoreSelectedVillageContext("Troop RR Loop");
+        if (troopExecuted) {
+          await restoreSelectedVillageContext("Troop RR Loop");
+        }
         scheduleTroopTrainingLoop();
       };
 
@@ -5837,8 +6069,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           let recordVillage = null;
           let rotationStart = 0;
           let rotationAttempts = 0;
+          let crannyExecuted = false;
 
-          const executed = await runAction(
+          crannyExecuted = await runAction(
             "cranny-defense-rr",
             async () => {
               const start = ((crannyRoundRobinIndex % n) + n) % n;
@@ -5893,7 +6126,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             { preemptAutoBuilder: true, raidGuardPriority: true }
           );
 
-          if (executed && defenseResult && recordVillage) {
+          if (crannyExecuted && defenseResult && recordVillage) {
             const ok =
               defenseResult.status === "success" || defenseResult.status === "idle_saturated";
             recordAction({
@@ -5937,7 +6170,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           crannyRoundRobinIndex = (crannyRoundRobinIndex + 1) % n;
         }
 
-        await restoreSelectedVillageContext("Cranny defense RR");
+        if (crannyExecuted) {
+          await restoreSelectedVillageContext("Cranny defense RR");
+        }
         scheduleCrannyDefenseLoop();
       };
 
@@ -5998,7 +6233,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     scheduleRaidEvacuationLoop();
 
     while (!done) {
-      printMainMenu();
+      const automationStatus = runtimeControls.getAutomationStatus
+        ? runtimeControls.getAutomationStatus()
+        : { paused: false, reason: "online" };
+      printMainMenu(automationStatus);
       const sessionLoopStatus = runtimeControls.getSessionLoopStatus
         ? runtimeControls.getSessionLoopStatus()
         : { enabled: settings.sessionLoopEnabled, nextInMinutes: null };
@@ -6036,7 +6274,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         troopLoop: troopLoopStatus,
         crannyLoop: crannyLoopStatus
       }, activeBuilderPlanMode);
-      printVillageContextStatus(villageState);
+      printVillageContextStatus(villageState, settings);
       const rawInput = (await askQuestion(rl, "Choose option: ")).trim();
       const input = rawInput.toUpperCase();
 
@@ -6083,9 +6321,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         activeBuilderPlanMode = selectedPlan.key;
         const startedAt = Date.now();
         await runAction(selectedPlan.name, async () => {
-          const selectedVillage = getSelectedVillage();
+          let selectedVillage = getSelectedVillage();
+          let roundRobinAdvanceStepManual = 1;
+          let rrCandidateVillagesManual = [];
+          let rrCursorManual = 0;
+          if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
+            const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
+            const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+            rrCandidateVillagesManual = nonCapitalVillages.filter(
+              (village) =>
+                !excludedVillageIds.has(Number(village.id)) &&
+                !isBuilderPlanFullyComplete(village, selectedPlan.key)
+            );
+            if (rrCandidateVillagesManual.length) {
+              const totalVillages = rrCandidateVillagesManual.length;
+              rrCursorManual = ((roundRobinIndex % totalVillages) + totalVillages) % totalVillages;
+              selectedVillage = rrCandidateVillagesManual[rrCursorManual] || rrCandidateVillagesManual[0];
+              roundRobinAdvanceStepManual = 1;
+              logInfo(`[Builder Manual] RR picked ${villageDisplayName(selectedVillage)} (${selectedPlan.short}).`);
+            }
+          }
           if (!selectedVillage) {
-            logWarn("No village selected. Use V to select a village first.");
+            logWarn("No village selected/available for builder. Use V to select a village first.");
             return;
           }
 
@@ -6141,11 +6398,75 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }),
             () => cancelRequested
           );
+          let finalResult = result;
+
+          // Match scheduled builder behavior: when a step is already satisfied or a template just
+          // completed, keep progressing in the same manual run so we do not appear "stuck" on
+          // template boundaries.
+          const maxFollowupAttempts = 20;
+          const maxFollowupElapsedMs = 120000;
+          let followupAttempt = 0;
+          const followupStartedAt = Date.now();
+          while (
+            finalResult &&
+            (finalResult.status === "already_satisfied" ||
+              finalResult.status === "template_complete" ||
+              finalResult.status === "realigned_template") &&
+            followupAttempt < maxFollowupAttempts
+          ) {
+            if (Date.now() - followupStartedAt > maxFollowupElapsedMs) {
+              logInfo("[Builder Manual] Follow-up retry budget reached for this run.");
+              break;
+            }
+            logInfo(`[Builder Manual] ${finalResult.status}: ${finalResult.message} Retrying next step...`);
+            finalResult = await builder.runBuilderStep(getPage, settings, selectedVillage, {
+              goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+              goldCompleteMax: settings.builderGoldCompleteMax,
+              masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+              planMode: selectedPlan.key
+            });
+            followupAttempt += 1;
+          }
+
+          const isTemporaryBlockedBuilderStatus = (status) =>
+            String(status || "").startsWith("blocked_") || status === "idle_saturated";
+
+          if (
+            settings.builderRoundRobinEnabled &&
+            isTemporaryBlockedBuilderStatus(finalResult && finalResult.status) &&
+            rrCandidateVillagesManual.length > 1
+          ) {
+            for (let hop = 1; hop < rrCandidateVillagesManual.length; hop += 1) {
+              const nextCursor = (rrCursorManual + hop) % rrCandidateVillagesManual.length;
+              const nextVillage = rrCandidateVillagesManual[nextCursor];
+              if (!nextVillage || Number(nextVillage.id) === Number(selectedVillage.id)) {
+                continue;
+              }
+              logInfo(
+                `[Builder Manual] ${finalResult.status} on ${villageDisplayName(selectedVillage)}. ` +
+                `Trying next RR village: ${villageDisplayName(nextVillage)}...`
+              );
+              selectedVillage = nextVillage;
+              rrCursorManual = nextCursor;
+              roundRobinAdvanceStepManual = hop + 1;
+              await ensureVillageBrowserContext(selectedVillage, "Builder Manual");
+              const hoppedResult = await builder.runBuilderStep(getPage, settings, selectedVillage, {
+                goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                goldCompleteMax: settings.builderGoldCompleteMax,
+                masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                planMode: selectedPlan.key
+              });
+              finalResult = hoppedResult;
+              if (!isTemporaryBlockedBuilderStatus(finalResult && finalResult.status)) {
+                break;
+              }
+            }
+          }
 
           // Display result
-          if (result.report) {
+          if (finalResult.report) {
             printSubDivider("BUILD STEP RESULT");
-            const r = result.report;
+            const r = finalResult.report;
             const costText = Object.keys(r.costs).length > 0
               ? Object.entries(r.costs).map(([k, v]) => `${k}: ${v}`).join(" | ")
               : "N/A";
@@ -6198,59 +6519,59 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               { label: "Stock", value: stockText },
               { label: "Storage", value: storageText },
               { label: "Upgrade btn", value: upgradeStatus },
-              { label: "Gold used", value: `${result.goldCompletions || 0} completion(s), ${result.goldSpent || 0} gold` },
+              { label: "Gold used", value: `${finalResult.goldCompletions || 0} completion(s), ${finalResult.goldSpent || 0} gold` },
               { label: "Build options", value: optionsText, raw: true }
             ]);
           }
 
-          if (result.status === "success") {
-            logSuccess(result.message);
+          if (finalResult.status === "success") {
+            logSuccess(finalResult.message);
             recordAction({
               actionType: "building.upgrade",
               status: "success",
               durationMs: Date.now() - startedAt,
               details: {
                 planMode: selectedPlan.key,
-                template: result.report.template,
-                stage: result.report.stage,
-                slot: result.report.slot,
-                building: result.report.targetBuilding,
-                fromLevel: result.report.currentLevel,
-                toLevel: result.report.targetLevel,
-                goldCompleted: result.goldCompletions || 0,
-                goldSpent: result.goldSpent || 0,
+                template: finalResult.report.template,
+                stage: finalResult.report.stage,
+                slot: finalResult.report.slot,
+                building: finalResult.report.targetBuilding,
+                fromLevel: finalResult.report.currentLevel,
+                toLevel: finalResult.report.targetLevel,
+                goldCompleted: finalResult.goldCompletions || 0,
+                goldSpent: finalResult.goldSpent || 0,
                 ...getVillageMeta("single")
               }
             });
-            if (result.goldCompletions > 0) {
-              logInfo(`Builder: Gold autocomplete used ${result.goldCompletions} time(s), spent ${result.goldSpent || 0} gold.`);
+            if (finalResult.goldCompletions > 0) {
+              logInfo(`Builder: Gold autocomplete used ${finalResult.goldCompletions} time(s), spent ${finalResult.goldSpent || 0} gold.`);
               recordAction({
                 actionType: "building.gold_complete",
                 status: "success",
                 durationMs: 0,
                 details: {
                   planMode: selectedPlan.key,
-                  slot: result.report.slot,
-                  building: result.report.targetBuilding,
-                  completions: result.goldCompletions,
-                  goldSpent: result.goldSpent || 0,
+                  slot: finalResult.report.slot,
+                  building: finalResult.report.targetBuilding,
+                  completions: finalResult.goldCompletions,
+                  goldSpent: finalResult.goldSpent || 0,
                   ...getVillageMeta("single")
                 }
               });
             }
-          } else if (result.status === "realigned_template") {
-            logWarn(`Builder: ${result.message}`);
-          } else if (result.status === "already_satisfied") {
-            logInfo(result.message);
-          } else if (result.status === "template_complete") {
-            logSuccess(result.message);
-          } else if (result.status === "all_complete") {
-            logSuccess(result.message);
-          } else if (result.status === "blocked_resources") {
-            logInfo(`Builder: ${result.message}`);
+          } else if (finalResult.status === "realigned_template") {
+            logWarn(`Builder: ${finalResult.message}`);
+          } else if (finalResult.status === "already_satisfied") {
+            logInfo(finalResult.message);
+          } else if (finalResult.status === "template_complete") {
+            logSuccess(finalResult.message);
+          } else if (finalResult.status === "all_complete") {
+            logSuccess(finalResult.message);
+          } else if (finalResult.status === "blocked_resources") {
+            logInfo(`Builder: ${finalResult.message}`);
             await attemptResourceCirculation({
               kind: "builder",
-              buildResult: result,
+              buildResult: finalResult,
               source: "manual",
               targetVillage: selectedVillage,
               planMode: selectedPlan.key
@@ -6261,30 +6582,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               durationMs: Date.now() - startedAt,
               details: {
                 planMode: selectedPlan.key,
-                template: result.report ? result.report.template : null,
-                slot: result.report ? result.report.slot : null,
-                building: result.report ? result.report.targetBuilding : null,
-                reason: result.status,
+                template: finalResult.report ? finalResult.report.template : null,
+                slot: finalResult.report ? finalResult.report.slot : null,
+                building: finalResult.report ? finalResult.report.targetBuilding : null,
+                reason: finalResult.status,
                 ...getVillageMeta("single")
               },
-              errorMessage: result.message
+              errorMessage: finalResult.message
             });
           } else {
-            logWarn(`Builder: ${result.message}`);
+            logWarn(`Builder: ${finalResult.message}`);
             recordAction({
               actionType: "building.upgrade",
               status: "failed",
               durationMs: Date.now() - startedAt,
               details: {
                 planMode: selectedPlan.key,
-                template: result.report ? result.report.template : null,
-                slot: result.report ? result.report.slot : null,
-                building: result.report ? result.report.targetBuilding : null,
-                reason: result.status,
+                template: finalResult.report ? finalResult.report.template : null,
+                slot: finalResult.report ? finalResult.report.slot : null,
+                building: finalResult.report ? finalResult.report.targetBuilding : null,
+                reason: finalResult.status,
                 ...getVillageMeta("single")
               },
-              errorMessage: result.message
+              errorMessage: finalResult.message
             });
+          }
+
+          if (settings.builderRoundRobinEnabled) {
+            roundRobinIndex += Math.max(1, roundRobinAdvanceStepManual);
           }
         }).catch((error) => {
           const message = error.message || String(error);
@@ -6325,7 +6650,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      if (input === "4") {
+      if (input === "T") {
         const startedAt = Date.now();
         await runAction("Troop Trainer", async () => {
           const selectedVillage = getSelectedVillage();
@@ -6463,7 +6788,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      if (input === "T") {
+      if (input === "4") {
         await runTroopTemplateCategoryMenu();
         continue;
       }
@@ -6504,7 +6829,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           if (result.queued !== undefined) {
             console.log(`  Queued: ${result.queued}`);
           }
-          if (result.status === "need_settlement_resources") {
+          if (
+            result.status === "need_settlement_resources" ||
+            result.status === "need_residence_resources" ||
+            result.status === "need_settler_training_resources"
+          ) {
             await attemptResourceCirculation({
               kind: "settlement",
               expansionResult: result,
@@ -6693,6 +7022,21 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
+      if (input === "P") {
+        if (!runtimeControls.setAutomationPaused || !runtimeControls.getAutomationStatus) {
+          logWarn("Pause control is unavailable in this runtime.");
+          continue;
+        }
+        const current = runtimeControls.getAutomationStatus();
+        const next = runtimeControls.setAutomationPaused(!current.paused);
+        if (next && next.paused) {
+          logSuccess(`Automation paused (${next.reason || "manual_pause"}).`);
+        } else {
+          logSuccess("Automation resumed.");
+        }
+        continue;
+      }
+
       if (input === "S") {
         settings.headless = runtimeControls.getHeadlessMode();
         await runSettingsMenu(rl, settings, {
@@ -6718,7 +7062,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      logWarn("Unknown option. Use 0, 1, 2, 3, 4, C, 5, T, X, r, R, V, L, S, or Q.");
+      logWarn("Unknown option. Use 0, 1, 2, 3, T, C, 4, 5, X, r, R, V, L, P, S, or Q.");
     }
   } finally {
     if (sigintHandler) {

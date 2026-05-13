@@ -895,9 +895,11 @@ function resolveNextStep(template, villageProgress) {
   if (!Number.isFinite(startStepIndex) || startStepIndex < 0) {
     startStepIndex = 0;
   }
+  // reconcileTemplateProgressIndices may persist stage_index === nStages once end_state validates
+  // (sentinel: "past final step"). Returning the first step of the last stage here caused an
+  // infinite "already satisfied → advance → clamp back" loop after the final slot.
   if (startStageIndex >= nStages) {
-    startStageIndex = nStages - 1;
-    startStepIndex = 0;
+    return null;
   }
 
   for (let si = startStageIndex; si < template.stages.length; si++) {
@@ -2036,6 +2038,31 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
       allowGenericResourceFieldStep
     )
   ) {
+    if (isLast) {
+      if (template.next_template) {
+        setVillageProgress(village, {
+          active_template: template.next_template,
+          stage_index: 0,
+          step_index: 0,
+          completed_template: activeTemplateKey
+        }, {
+          planMode: mode
+        });
+        return {
+          status: "template_complete",
+          planMode: mode,
+          completedTemplate: activeTemplateKey,
+          nextTemplate: template.next_template,
+          message: `${planLabel} template '${activeTemplateKey}' completed. Advanced to '${template.next_template}'.`
+        };
+      }
+      return {
+        status: "all_complete",
+        planMode: mode,
+        message: `All ${planLabel} templates completed for this village.`
+      };
+    }
+
     // Step already done — advance progress
     const nextStepIndex = stepIndex + 1;
     const currentStage = template.stages[stageIndex];

@@ -4,14 +4,15 @@ const fs = require("fs");
 
 const projectDir = __dirname;
 const parentDir = path.dirname(projectDir);
-const folderName = path.basename(projectDir);
 const pkg = JSON.parse(fs.readFileSync(path.join(projectDir, "package.json"), "utf8"));
 const version = pkg.version || "0.0.0";
+const exportBase = String(pkg.name || "nexian").trim() || "nexian";
 const now = new Date();
-const stamp = now.toISOString().replace(/[:T]/g, "-").slice(0, 16);
-const zipName = `${folderName}-v${version}-${stamp}.zip`;
+const pad2 = (n) => String(n).padStart(2, "0");
+const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}-${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
+const zipName = `${exportBase}-v${version}-${stamp}.zip`;
 const zipPath = path.join(parentDir, zipName);
-const exportRootName = `${folderName}-v${version}`;
+const exportRootName = `${exportBase}-v${version}`;
 const tempDir = path.join(require("os").tmpdir(), `nexian-export-${Date.now()}`);
 const stagedProjectDir = path.join(tempDir, exportRootName);
 
@@ -48,7 +49,7 @@ function copyDir(src, dest, rel) {
   }
 }
 
-console.log(`Zipping ${folderName} -> ${zipPath}`);
+console.log(`Zipping ${exportBase} v${version} -> ${zipPath}`);
 console.log(
   "Excluding: .git, node_modules, .env files, storageState.json, log.jsonl, templates/progress.json, debug logs\n"
 );
