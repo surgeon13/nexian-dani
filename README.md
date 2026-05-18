@@ -154,7 +154,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 npm run export
 ```
 
-Produces a zip beside the project folder named like `nexian-v1.2.1-2026-05-13-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `node_modules/`, optionally `templates/progress.json`.
+Produces a zip beside the project folder named like `nexian-v1.3.0-2026-05-18-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `node_modules/`, optionally `templates/progress.json`.
 
 On the new machine: extract → `node setup.js` → fill `.env` → `node login.js --headed --keep-open`.
 

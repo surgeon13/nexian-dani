@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.0] — 2026-05-18
+
+### Release
+
+Stable **1.3** package: everything from **1.2.1** (automation pause, builder RR exclusions, expansion resource statuses, main menu **T** / **4** keys) plus export packaging.
+
+### Changed
+
+- **Export zip naming:** `nexian-v{version}-{YYYY-MM-DD-HH-mm-ss}.zip` (local time); archive root folder `nexian-v{version}` (no repo directory name in the filename).
+
+### Export
+
+```bash
+npm run clean:runtime
+npm run export
+```
+
+---
+
 ## [1.2.1] — 2026-05-12
 
 ### Fixed
