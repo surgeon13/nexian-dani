@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nexian Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>Nexian</h1>
+      <p class="subtitle">Local automation dashboard</p>
+    </div>
+    <div class="header-meta">
+      <span id="clock" class="clock">--:--:--</span>
+      <span id="automation-pill" class="pill pill-running">RUNNING</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button type="button" class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button type="button" class="tab-btn" data-tab="settings">Settings</button>
+    <button type="button" class="tab-btn" data-tab="troops">Troop Templates</button>
+  </nav>
+
+  <main id="tab-dashboard" class="layout tab-view active">
+    <section class="panel status-panel">
+      <h2>Status</h2>
+      <div id="account-strip" class="account-strip"></div>
+      <div id="status-grid" class="status-grid"></div>
+      <div id="village-context" class="village-context"></div>
+      <h3 class="subsection-title">Village selector</h3>
+      <div id="village-list" class="village-list"></div>
+    </section>
+
+    <section class="panel actions-panel">
+      <h2>Actions</h2>
+      <div id="action-grid" class="action-grid"></div>
+      <p id="busy-note" class="busy-note hidden">Action in progress…</p>
+    </section>
+
+    <section class="panel console-panel">
+      <h2>Live console</h2>
+      <div id="console-list" class="console-list"></div>
+    </section>
+
+    <section class="panel logs-panel">
+      <h2>Recent log</h2>
+      <div id="log-list" class="log-list"></div>
+    </section>
+  </main>
+
+  <div id="tab-settings" class="layout tab-view">
+    <section class="panel settings-panel">
+      <div class="panel-head">
+        <h2>Settings</h2>
+      </div>
+
+      <div id="activity-panel" class="troop-rr-panel activity-panel">
+        <div class="troop-rr-head">
+          <h3 class="subsection-title">Activity simulation</h3>
+          <span id="activity-pill" class="pill pill-paused">OFF</span>
+        </div>
+        <p class="hint activity-hint">
+          Periodically opens random Travian pages (village overview, map, barracks, reports, etc.), waits a few seconds,
+          and refreshes local village data — no attacks, builds, or sends.
+        </p>
+        <div class="troop-rr-stats">
+          <div class="troop-rr-stat">
+            <div class="troop-rr-stat-label">Status</div>
+            <div id="activity-status-text" class="troop-rr-stat-value">—</div>
+          </div>
+          <div class="troop-rr-stat">
+            <div class="troop-rr-stat-label">Interval</div>
+            <div id="activity-interval" class="troop-rr-stat-value">—</div>
+          </div>
+          <div class="troop-rr-stat troop-rr-stat-next">
+            <div class="troop-rr-stat-label">Completed</div>
+            <div id="activity-completed" class="troop-rr-stat-value">0</div>
+          </div>
+          <div class="troop-rr-stat troop-rr-stat-next">
+            <div class="troop-rr-stat-label">Next browse</div>
+            <div id="activity-next" class="troop-rr-stat-value troop-rr-next-value">—</div>
+          </div>
+        </div>
+        <div id="activity-last" class="activity-last hidden"></div>
+        <form id="activity-form" class="troop-rr-form">
+          <label class="troop-rr-enable">
+            <input id="activity-enabled" name="enabled" type="checkbox" />
+            <span>Enable activity simulation</span>
+          </label>
+          <div class="troop-rr-range">
+            <label class="troop-field">
+              <span>Min interval (min)</span>
+              <input id="activity-min" name="minMinutes" type="number" min="1" max="9999" step="1" />
+            </label>
+            <label class="troop-field">
+              <span>Max interval (min)</span>
+              <input id="activity-max" name="maxMinutes" type="number" min="1" max="9999" step="1" />
+            </label>
+          </div>
+          <fieldset class="activity-patterns">
+            <legend>Browse patterns</legend>
+            <div id="activity-patterns" class="activity-patterns-grid"></div>
+          </fieldset>
+          <button type="submit" class="primary-btn troop-rr-save">Save activity settings</button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-troops" class="layout tab-view">
+    <section class="panel troop-panel">
+      <div class="panel-head">
+        <h2>Troop training</h2>
+      </div>
+
+      <div id="troop-rr-panel" class="troop-rr-panel">
+        <div class="troop-rr-head">
+          <h3 class="subsection-title troop-rr-title">Automatic training</h3>
+          <span id="troop-rr-pill" class="pill pill-paused">OFF</span>
+        </div>
+        <div id="troop-rr-stats" class="troop-rr-stats">
+          <div class="troop-rr-stat">
+            <div class="troop-rr-stat-label">Status</div>
+            <div id="troop-rr-status-text" class="troop-rr-stat-value">—</div>
+          </div>
+          <div class="troop-rr-stat">
+            <div class="troop-rr-stat-label">Default interval</div>
+            <div id="troop-rr-interval" class="troop-rr-stat-value">—</div>
+          </div>
+          <div class="troop-rr-stat troop-rr-stat-next">
+            <div class="troop-rr-stat-label">Soonest train</div>
+            <div id="troop-rr-next" class="troop-rr-stat-value troop-rr-next-value">—</div>
+          </div>
+        </div>
+        <form id="troop-rr-form" class="troop-rr-form">
+          <label class="troop-rr-enable">
+            <input id="troop-rr-enabled" name="troopLoopEnabled" type="checkbox" />
+            <span>Enable scheduler (each village runs its own timer)</span>
+          </label>
+          <div class="troop-rr-range">
+            <label class="troop-field">
+              <span>Default min (min)</span>
+              <input id="troop-rr-min" name="troopLoopMinMinutes" type="number" min="1" max="9999" step="1" />
+            </label>
+            <label class="troop-field">
+              <span>Default max (min)</span>
+              <input id="troop-rr-max" name="troopLoopMaxMinutes" type="number" min="1" max="9999" step="1" />
+            </label>
+            <button type="submit" class="primary-btn troop-rr-save">Save schedule</button>
+          </div>
+        </form>
+      </div>
+      <p class="hint">
+        Use the <strong>Auto repeat</strong> toggle on each village to turn training on or off. Set min/max interval when on.
+        Unit settings are saved per village to <code>templates/troop_village_preferences.json</code>.
+      </p>
+
+      <details id="troop-global-section" class="troop-global-section">
+        <summary>Global defaults (.env)</summary>
+        <form id="troop-global-form" class="troop-form troop-form-global"></form>
+      </details>
+
+      <h3 class="subsection-title">Villages</h3>
+      <div id="troop-villages-empty" class="log-entry hidden">No villages loaded yet. Log in first.</div>
+      <div id="troop-villages-list" class="troop-villages-list"></div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

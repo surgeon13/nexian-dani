@@ -4,10 +4,58 @@ const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
 const { runTerminalMenu } = require("./terminalMenu");
+const { createDashboardBridge } = require("./dashboardBridge");
+const {
+  parsePatterns: parseActivityPatterns,
+  serializePatterns: serializeActivityPatterns
+} = require("./activitySimulation");
+const { startDashboardServer, getDashboardNetworkInfo } = require("./dashboardServer");
 
 function getArgValue(prefix) {
   const match = process.argv.find((arg) => arg.startsWith(prefix));
   return match ? match.slice(prefix.length) : undefined;
+}
+
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+
+let consoleMirrorInstalled = false;
+function mirrorConsoleToDashboard(bridge) {
+  if (consoleMirrorInstalled || !bridge || typeof bridge.pushConsole !== "function") {
+    return;
+  }
+  consoleMirrorInstalled = true;
+
+  const format = (args) =>
+    args
+      .map((arg) => {
+        if (typeof arg === "string") {
+          return arg;
+        }
+        try {
+          return require("util").inspect(arg, { depth: 2, colors: false });
+        } catch (_error) {
+          return String(arg);
+        }
+      })
+      .join(" ")
+      .replace(ANSI_PATTERN, "");
+
+  const wrap = (method, level) => {
+    const original = console[method].bind(console);
+    console[method] = (...args) => {
+      original(...args);
+      try {
+        bridge.pushConsole(level, format(args));
+      } catch (_error) {
+        /* never let mirroring break logging */
+      }
+    };
+  };
+
+  wrap("log", "log");
+  wrap("info", "info");
+  wrap("warn", "warn");
+  wrap("error", "error");
 }
 
 const envFile = getArgValue("--env-file=") || process.env.NEXIAN_ENV_FILE || ".env";
@@ -77,10 +125,32 @@ const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).
 const LOGIN_URL = process.env.NEXIAN_URL || "https://nexian.world/";
 const USERNAME = process.env.NEXIAN_USERNAME;
 const PASSWORD = process.env.NEXIAN_PASSWORD;
+
+// Realm host for in-game pages (farmlist, builder, trainer, status, logout).
+// Set GAME_HOST=https://s1.nexian.world (or your realm) so URLs target the realm,
+// not the nexian.world portal which redirects to village2.php.
+const GAME_HOST = (() => {
+  const raw = String(process.env.GAME_HOST || "https://nexian.world").trim();
+  try {
+    return new URL(raw).origin;
+  } catch (_error) {
+    return "https://nexian.world";
+  }
+})();
+const gameUrl = (pathAndQuery) => `${GAME_HOST}${pathAndQuery}`;
 const headlessByDefault = !(
   process.argv.includes("--headed") || process.env.HEADLESS === "false"
 );
 const keepOpen = process.argv.includes("--keep-open") || process.env.KEEP_OPEN !== "false";
+const dashboardEnabled =
+  process.argv.includes("--dashboard") ||
+  String(process.env.DASHBOARD_ENABLED || "false").toLowerCase() === "true";
+const dashboardPort = Math.max(
+  1024,
+  Math.min(65535, Math.floor(Number(process.env.DASHBOARD_PORT || 3847) || 3847))
+);
+const dashboardOpenBrowser =
+  String(process.env.DASHBOARD_OPEN_BROWSER ?? "true").toLowerCase() !== "false";
 
 function numberEnv(name, fallback) {
   const parsed = Number(process.env[name]);
@@ -91,19 +161,23 @@ const settings = {
   headless: headlessByDefault,
   farmlistUrl:
     process.env.FARMLIST_URL ||
-    "https://nexian.world/build.php?id=39&t=99&gid=16",
+    gameUrl("/build.php?id=39&t=99&gid=16"),
+  farmlistVillageId: (() => {
+    const raw = Number(process.env.FARMLIST_VILLAGE_ID);
+    return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : null;
+  })(),
   villageBuilderUrl:
     process.env.VILLAGE_BUILDER_URL ||
-    "https://nexian.world/village2.php",
+    gameUrl("/village2.php"),
   troopTrainerUrl:
     process.env.TROOP_TRAINER_URL ||
-    "https://nexian.world/build.php?id=37",
+    gameUrl("/build.php?id=37"),
   troopGreatTrainerUrl:
     process.env.TROOP_GREAT_TRAINER_URL ||
-    "https://nexian.world/build.php?id=35",
+    gameUrl("/build.php?id=35"),
   troopStableTrainerUrl:
     process.env.TROOP_STABLE_TRAINER_URL ||
-    "https://nexian.world/build.php?id=38",
+    gameUrl("/build.php?id=38"),
   troopTrainingAlternateGreatBarracks:
     String(process.env.TROOP_TRAINING_ALTERNATE_GREAT_BARRACKS || "false").toLowerCase() ===
       "true",
@@ -124,20 +198,10 @@ const settings = {
   troopTemplateInfantryDefensive: String(process.env.TROOP_TEMPLATE_INFANTRY_DEFENSIVE ?? "").trim(),
   troopTemplateCavalryOffensive: String(process.env.TROOP_TEMPLATE_CAVALRY_OFFENSIVE ?? "").trim(),
   troopTemplateCavalryDefensive: String(process.env.TROOP_TEMPLATE_CAVALRY_DEFENSIVE ?? "").trim(),
-  troopTrainingManualFocus: (() => {
-    const f = String(process.env.TROOP_TRAINING_MANUAL_FOCUS || "infantry").trim().toLowerCase();
-    if (f === "cavalry" || f === "cav") {
-      return "cavalry";
-    }
-    if (f === "both" || f === "all") {
-      return "both";
-    }
-    return "infantry";
-  })(),
   troopTrainingBatchSize: numberEnv("TROOP_TRAINING_BATCH_SIZE", 5),
   villageStatusUrl:
     process.env.VILLAGE_STATUS_URL ||
-    "https://nexian.world/village1.php",
+    gameUrl("/village1.php"),
   farmlistLoopEnabled: String(process.env.FARMLIST_LOOP_ENABLED || "false").toLowerCase() === "true",
   farmlistLoopMinMinutes: numberEnv("FARMLIST_LOOP_MIN_MINUTES", 10),
   farmlistLoopMaxMinutes: numberEnv("FARMLIST_LOOP_MAX_MINUTES", 20),
@@ -146,10 +210,10 @@ const settings = {
   playMaxMinutes: numberEnv("SESSION_PLAY_MAX_MINUTES", 120),
   restMinMinutes: numberEnv("SESSION_REST_MIN_MINUTES", 5),
   restMaxMinutes: numberEnv("SESSION_REST_MAX_MINUTES", 15),
-  manualPauseAutoUnpauseMinutes: numberEnv("MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES", 5),
+  manualPauseAutoUnpauseMinutes: numberEnv("MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES", 0),
   logoutUrl:
     process.env.LOGOUT_URL ||
-    "https://nexian.world/logout.php",
+    gameUrl("/logout.php"),
   randomDelayMinMs: numberEnv("RANDOM_DELAY_MIN_MS", 1000),
   randomDelayMaxMs: numberEnv("RANDOM_DELAY_MAX_MS", 2000),
   selectAllSelector:
@@ -191,6 +255,15 @@ const settings = {
     String(process.env.CRANNY_DEFENSE_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   crannyDefenseLoopMinMinutes: numberEnv("CRANNY_DEFENSE_LOOP_MIN_MINUTES", 8),
   crannyDefenseLoopMaxMinutes: numberEnv("CRANNY_DEFENSE_LOOP_MAX_MINUTES", 15),
+  activitySimulationEnabled:
+    String(process.env.ACTIVITY_SIMULATION_ENABLED || "false").toLowerCase() === "true",
+  activitySimulationLoopMinMinutes: numberEnv("ACTIVITY_SIMULATION_LOOP_MIN_MINUTES", 20),
+  activitySimulationLoopMaxMinutes: numberEnv("ACTIVITY_SIMULATION_LOOP_MAX_MINUTES", 45),
+  activitySimulationPatterns: serializeActivityPatterns(
+    parseActivityPatterns(process.env.ACTIVITY_SIMULATION_PATTERNS)
+  ),
+  activitySimulationDwellMinMs: numberEnv("ACTIVITY_SIMULATION_DWELL_MIN_MS", 2000),
+  activitySimulationDwellMaxMs: numberEnv("ACTIVITY_SIMULATION_DWELL_MAX_MS", 6000),
   expansionAutoDispatchEnabled:
     String(process.env.EXPANSION_AUTO_DISPATCH_ENABLED || "false").toLowerCase() === "true",
   expansionUsePlannedTargets:
@@ -294,16 +367,6 @@ function persistRuntimeSettings(selectedKeys) {
     TROOP_TEMPLATE_CAVALRY_OFFENSIVE: String(settings.troopTemplateCavalryOffensive || ""),
     TROOP_TEMPLATE_CAVALRY_DEFENSIVE: String(settings.troopTemplateCavalryDefensive || ""),
     TROOP_STABLE_TRAINER_URL: String(settings.troopStableTrainerUrl || ""),
-    TROOP_TRAINING_MANUAL_FOCUS: (() => {
-      const f = String(settings.troopTrainingManualFocus || "infantry").trim().toLowerCase();
-      if (f === "cavalry" || f === "cav") {
-        return "cavalry";
-      }
-      if (f === "both" || f === "all") {
-        return "both";
-      }
-      return "infantry";
-    })(),
     TROOP_TRAINING_BATCH_SIZE: (() => {
       const n = Math.floor(Number(settings.troopTrainingBatchSize));
       if (!Number.isFinite(n)) {
@@ -334,6 +397,12 @@ function persistRuntimeSettings(selectedKeys) {
     CRANNY_DEFENSE_ROUND_ROBIN_ENABLED: settings.crannyDefenseRoundRobinEnabled ? "true" : "false",
     CRANNY_DEFENSE_LOOP_MIN_MINUTES: String(settings.crannyDefenseLoopMinMinutes || 8),
     CRANNY_DEFENSE_LOOP_MAX_MINUTES: String(settings.crannyDefenseLoopMaxMinutes || 15),
+    ACTIVITY_SIMULATION_ENABLED: settings.activitySimulationEnabled ? "true" : "false",
+    ACTIVITY_SIMULATION_LOOP_MIN_MINUTES: String(settings.activitySimulationLoopMinMinutes),
+    ACTIVITY_SIMULATION_LOOP_MAX_MINUTES: String(settings.activitySimulationLoopMaxMinutes),
+    ACTIVITY_SIMULATION_PATTERNS: String(settings.activitySimulationPatterns || ""),
+    ACTIVITY_SIMULATION_DWELL_MIN_MS: String(settings.activitySimulationDwellMinMs),
+    ACTIVITY_SIMULATION_DWELL_MAX_MS: String(settings.activitySimulationDwellMaxMs),
     EXPANSION_AUTO_DISPATCH_ENABLED: settings.expansionAutoDispatchEnabled ? "true" : "false",
     EXPANSION_USE_PLANNED_TARGETS: settings.expansionUsePlannedTargets ? "true" : "false",
     EXPANSION_PLANNED_TARGETS_FILE: String(settings.expansionPlannedTargetsFile || ""),
@@ -398,6 +467,26 @@ function applySessionLoopDefaults() {
   settings.crannyDefenseLoopMinMinutes = crannyDefenseLoop.min;
   settings.crannyDefenseLoopMaxMinutes = crannyDefenseLoop.max;
 
+  const activitySimulationLoop = normalizeRange(
+    settings.activitySimulationLoopMinMinutes,
+    settings.activitySimulationLoopMaxMinutes,
+    20,
+    45
+  );
+  settings.activitySimulationLoopMinMinutes = activitySimulationLoop.min;
+  settings.activitySimulationLoopMaxMinutes = activitySimulationLoop.max;
+  settings.activitySimulationPatterns = serializeActivityPatterns(
+    parseActivityPatterns(settings.activitySimulationPatterns)
+  );
+  settings.activitySimulationDwellMinMs = Math.max(
+    500,
+    Math.floor(Number(settings.activitySimulationDwellMinMs) || 2000)
+  );
+  settings.activitySimulationDwellMaxMs = Math.max(
+    settings.activitySimulationDwellMinMs,
+    Math.floor(Number(settings.activitySimulationDwellMaxMs) || 6000)
+  );
+
   const play = normalizeRange(settings.playMinMinutes, settings.playMaxMinutes, 60, 120);
   settings.playMinMinutes = play.min;
   settings.playMaxMinutes = play.max;
@@ -406,8 +495,8 @@ function applySessionLoopDefaults() {
   settings.restMinMinutes = rest.min;
   settings.restMaxMinutes = rest.max;
   settings.manualPauseAutoUnpauseMinutes = Math.max(
-    1,
-    Math.min(120, Math.floor(Number(settings.manualPauseAutoUnpauseMinutes) || 5))
+    0,
+    Math.min(120, Math.floor(Number(settings.manualPauseAutoUnpauseMinutes) || 0))
   );
 }
 
@@ -433,6 +522,110 @@ function waitForEnter(message) {
   });
 }
 
+function rewriteGameUrlHost(url, gameOrigin) {
+  if (!url || !gameOrigin) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    const base = new URL(gameOrigin);
+    if (parsed.host === base.host) {
+      return url;
+    }
+    parsed.protocol = base.protocol;
+    parsed.host = base.host;
+    return parsed.toString();
+  } catch (_error) {
+    return url;
+  }
+}
+
+function syncSettingsGameHostFromPage(page, settings) {
+  let origin;
+  try {
+    const parsed = new URL(page.url());
+    if (/^s\d+\.nexian\.world$/i.test(parsed.hostname)) {
+      origin = parsed.origin;
+    } else if (
+      parsed.hostname.endsWith("nexian.world") &&
+      /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(parsed.pathname)
+    ) {
+      origin = parsed.origin;
+    } else {
+      return null;
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  [
+    "farmlistUrl",
+    "villageBuilderUrl",
+    "troopTrainerUrl",
+    "troopGreatTrainerUrl",
+    "troopStableTrainerUrl",
+    "villageStatusUrl",
+    "logoutUrl"
+  ].forEach((key) => {
+    if (settings[key]) {
+      settings[key] = rewriteGameUrlHost(settings[key], origin);
+    }
+  });
+
+  return origin;
+}
+
+async function openNexianPortalLoginForm(page) {
+  const portalUser = page.locator('input[placeholder="Enter your username"]');
+  if (await portalUser.isVisible().catch(() => false)) {
+    return;
+  }
+
+  const playNow = page.getByRole("link", { name: /Play Now/i });
+  if (await playNow.count()) {
+    await playNow.first().click({ timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(1000);
+  }
+
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll("button")).find(
+      (el) => /^login$/i.test((el.textContent || "").trim()) && el.offsetParent !== null
+    );
+    if (btn) {
+      btn.click();
+    }
+  });
+
+  await portalUser.waitFor({ state: "visible", timeout: 30000 });
+}
+
+async function isLoggedIntoGame(page) {
+  const url = page.url();
+  try {
+    const parsed = new URL(url);
+    if (/^s\d+\.nexian\.world$/i.test(parsed.hostname)) {
+      return /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(parsed.pathname);
+    }
+  } catch (_error) {
+    return false;
+  }
+
+  const legacyLoginVisible = await page.locator('form[name="login"]').isVisible().catch(() => false);
+  if (legacyLoginVisible) {
+    return false;
+  }
+
+  const portalLoginVisible = await page
+    .locator('input[placeholder="Enter your username"]')
+    .isVisible()
+    .catch(() => false);
+  if (portalLoginVisible) {
+    return false;
+  }
+
+  return /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(url);
+}
+
 if (
   !hasRealCredential(USERNAME, "your_username_here") ||
   !hasRealCredential(PASSWORD, "your_password_here")
@@ -447,28 +640,38 @@ async function loginToPage(page, context) {
   console.log(`  Opening ${LOGIN_URL} ...`);
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-  await page.fill('input[name="name"]', USERNAME);
-  await page.fill('input[name="password"]', PASSWORD);
+  const legacyForm = page.locator('form[name="login"]');
+  const onLegacyLogin = await legacyForm.isVisible().catch(() => false);
 
-  await Promise.all([
-    page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {}),
-    page.click('button[type="submit"][name="submit"]')
-  ]);
-
-  // Keep this generic since post-login UI can change over time.
-  const stillOnLoginForm = await page.locator('form[name="login"]').isVisible().catch(() => false);
-  const url = page.url();
-
-  if (!stillOnLoginForm) {
-    console.log("  Login OK");
+  if (onLegacyLogin) {
+    await page.fill('form[name="login"] input[name="name"]', USERNAME);
+    await page.fill('form[name="login"] input[name="password"]', PASSWORD);
+    await Promise.all([
+      page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {}),
+      page.click('form[name="login"] button[type="submit"], form[name="login"] input[type="submit"]')
+    ]);
   } else {
-    console.warn("  Login FAILED — form is still visible. Check credentials.");
+    await openNexianPortalLoginForm(page);
+    await page.locator('input[placeholder="Enter your username"]').fill(USERNAME);
+    await page.locator('input[placeholder="Enter your password"]').fill(PASSWORD);
+    const enterRealm = page.getByRole("button", { name: /Enter Realm/i });
+    await Promise.all([
+      page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {}),
+      enterRealm.click({ timeout: 15000 })
+    ]);
+    await page.waitForTimeout(1500);
   }
 
-  // Save auth state for reuse by other scripts if login succeeded.
-  if (!stillOnLoginForm) {
+  if (await isLoggedIntoGame(page)) {
+    console.log("  Login OK");
+    const gameOrigin = syncSettingsGameHostFromPage(page, settings);
+    if (gameOrigin) {
+      console.log(`  Game host: ${gameOrigin}`);
+    }
     await context.storageState({ path: "storageState.json" });
     console.log("  Session saved");
+  } else {
+    console.warn("  Login FAILED — check credentials or portal UI changes.");
   }
 }
 
@@ -520,6 +723,7 @@ async function run() {
   let reloginInProgressPromise = null;
   let manualAutomationPaused = false;
   let manualAutomationPausedAtMs = null;
+  let dashboardServer = null;
 
   const cancelSessionLoopTimer = () => {
     if (sessionLoopTimer) {
@@ -634,9 +838,14 @@ async function run() {
 
     if (manualAutomationPaused) {
       const manualPauseMinutes = Math.max(
-        1,
-        Math.floor(Number(settings.manualPauseAutoUnpauseMinutes) || 5)
+        0,
+        Math.floor(Number(settings.manualPauseAutoUnpauseMinutes) || 0)
       );
+
+      if (manualPauseMinutes <= 0) {
+        return { paused: true, reason: "manual_pause" };
+      }
+
       const autoUnpauseAfterMs = manualPauseMinutes * 60 * 1000;
       const pausedAtMs = Number(manualAutomationPausedAtMs) || Date.now();
 
@@ -798,6 +1007,43 @@ async function run() {
     };
   };
 
+  const updateActivitySimulationLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.activitySimulationEnabled = nextConfig.enabled;
+    }
+
+    const range = normalizeRange(
+      Number(nextConfig.minMinutes),
+      Number(nextConfig.maxMinutes),
+      settings.activitySimulationLoopMinMinutes,
+      settings.activitySimulationLoopMaxMinutes
+    );
+    settings.activitySimulationLoopMinMinutes = range.min;
+    settings.activitySimulationLoopMaxMinutes = range.max;
+
+    if (nextConfig.patterns !== undefined) {
+      settings.activitySimulationPatterns = serializeActivityPatterns(
+        Array.isArray(nextConfig.patterns)
+          ? nextConfig.patterns
+          : parseActivityPatterns(nextConfig.patterns)
+      );
+    }
+
+    persistRuntimeSettings([
+      "ACTIVITY_SIMULATION_ENABLED",
+      "ACTIVITY_SIMULATION_LOOP_MIN_MINUTES",
+      "ACTIVITY_SIMULATION_LOOP_MAX_MINUTES",
+      "ACTIVITY_SIMULATION_PATTERNS"
+    ]);
+
+    return {
+      enabled: settings.activitySimulationEnabled,
+      minMinutes: settings.activitySimulationLoopMinMinutes,
+      maxMinutes: settings.activitySimulationLoopMaxMinutes,
+      patterns: parseActivityPatterns(settings.activitySimulationPatterns)
+    };
+  };
+
   const updateCrannyDefenseLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.crannyDefenseRoundRobinEnabled = nextConfig.enabled;
@@ -829,11 +1075,42 @@ async function run() {
   try {
     scheduleNextSessionCycle();
 
+    let dashboardBridge = null;
+    let dashboardAccount = null;
+    if (dashboardEnabled && keepOpen) {
+      dashboardBridge = createDashboardBridge();
+      const dashboardNetwork = await getDashboardNetworkInfo(dashboardPort);
+      dashboardAccount = {
+        username: USERNAME,
+        browserMode: settings.headless ? "headless" : "headed",
+        ...dashboardNetwork
+      };
+      dashboardServer = startDashboardServer({
+        bridge: dashboardBridge,
+        port: dashboardPort,
+        logFilePath: actionLogFilePath,
+        openBrowser: dashboardOpenBrowser
+      });
+      mirrorConsoleToDashboard(dashboardBridge);
+      if (dashboardNetwork.localAddresses.length) {
+        console.log(
+          `  Dashboard (LAN): ${dashboardNetwork.localAddresses.map((ip) => `http://${ip}:${dashboardPort}`).join(", ")}`
+        );
+      }
+    } else if (dashboardEnabled && !keepOpen) {
+      console.warn("Dashboard requires --keep-open; ignoring --dashboard.");
+    }
+
     if (keepOpen) {
       await runTerminalMenu(
         () => session.page,
         settings,
         {
+          dashboardMode: Boolean(dashboardBridge),
+          dashboardBridge,
+          dashboardPort,
+          dashboardEnvLabel: path.basename(resolvedEnvPath),
+          dashboardAccount,
           getHeadlessMode: () => settings.headless,
           getSessionId: () => sessionId,
           getLogFilePath: () => actionLogFilePath,
@@ -846,6 +1123,7 @@ async function run() {
           updateBuilderLoopConfig,
           updateTroopTrainingLoopConfig,
           updateCrannyDefenseLoopConfig,
+          updateActivitySimulationLoopConfig,
           async persistSettings(selectedKeys) {
             persistRuntimeSettings(selectedKeys);
           },
@@ -864,9 +1142,25 @@ async function run() {
     } else {
       await waitForEnter("Browser will stay open. Press Enter here to close it... ");
     }
+    if (keepOpen) {
+      console.log("Session ended.");
+    }
   } finally {
     loopStopped = true;
     cancelSessionLoopTimer();
+    if (dashboardServer) {
+      try {
+        if (typeof dashboardServer.closeAllConnections === "function") {
+          dashboardServer.closeAllConnections();
+        }
+        await new Promise((resolve) => {
+          dashboardServer.close(() => resolve());
+        });
+      } catch (_error) {
+        /* ignore dashboard shutdown errors */
+      }
+      dashboardServer = null;
+    }
     await session.browser.close();
   }
 }

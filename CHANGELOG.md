@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.0] — 2026-06-18
+
+### Added
+
+- **Web dashboard** (`dashboardServer.js`, `dashboardBridge.js`, `public/`): local UI at `http://127.0.0.1:3847` with live status, console, actions, and SSE updates. npm scripts `dashboard`, `dashboard:nexian`, etc.
+- **Troop Templates tab:** per-village unit toggles and quantities, global defaults, per-village auto-repeat with independent min/max timers, saved to `templates/troop_village_preferences.json`.
+- **Settings tab:** activity simulation controls (enable, interval, browse patterns).
+- **Activity simulation** (`activitySimulation.js`): random page browsing on a timer to simulate account activity without sending troops or resources; session event counter in logs and dashboard.
+- **Terminal settings `[N]`** for activity simulation; troop manual-focus setting removed (Train now always runs infantry + cavalry from template toggles).
+
+### Changed
+
+- Troop training loop uses per-village timers instead of a single round-robin tick.
+- Graceful dashboard quit (SIGINT / Ctrl+C) and dev launcher scripts (`dashboard-dev*.cmd`, `.ps1`, `.sh`).
+- Dependencies: `playwright` and `dotenv` updated to latest compatible versions.
+
+---
+
 ## [1.3.0] — 2026-05-18
 
 ### Release

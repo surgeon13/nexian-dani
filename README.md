@@ -84,6 +84,10 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run login:headed` | Visible browser + keep-open defaults |
 | `npm run login:nexian` | Uses `.env.nexian` (path via `NEXIAN_ENV_FILE` or package script convention) |
 | `npm run login:nexian:headed` / `:headless` | Variants for `.env.nexian` profiles |
+| `npm run dashboard` | Headless login + dashboard at `http://127.0.0.1:3847` |
+| `npm run dashboard:nexian:headless` | Same with `.env.nexian` (Playwright headless + web UI) |
+| `npm run dashboard:nexian:headed` | Visible browser + dashboard |
+| `npm run dashboard:headed` | Dashboard with headed browser (default `.env`) |
 | `npm run playwright:install` | Install Playwright Chromium only |
 | `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `templates/progress.json` |
 
