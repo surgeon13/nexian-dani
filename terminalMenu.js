@@ -633,26 +633,7 @@ async function escapeShownewBlockingPage(page) {
 }
 
 async function safeGotoFarmlist(page, farmlistUrl, retries = 2) {
-  const options = { waitUntil: "domcontentloaded", timeout: 60000 };
-  let lastError = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      await page.goto(farmlistUrl, options);
-      return;
-    } catch (error) {
-      lastError = error;
-      const msg = String(error && error.message ? error.message : error);
-      const transient =
-        /ERR_ABORTED|Execution context was destroyed|interrupted by another navigation/i.test(msg);
-      if (!transient || attempt >= retries) {
-        throw error;
-      }
-      await page.waitForTimeout(250 + attempt * 250).catch(() => {});
-    }
-  }
-  if (lastError) {
-    throw lastError;
-  }
+  await safeGotoWithRetry(page, farmlistUrl, {}, retries);
 }
 
 async function gotoFarmlistWithNewsEscape(page, farmlistUrl) {
@@ -1167,6 +1148,63 @@ function withVillageId(url, villageId) {
   } catch (_error) {
     return url;
   }
+}
+
+function isTransientNavigationError(error) {
+  const msg = String(error && error.message ? error.message : error);
+  return /ERR_ABORTED|Execution context was destroyed|interrupted by another navigation|Navigation failed because page was closed/i.test(
+    msg
+  );
+}
+
+/** Retry goto when Nexian redirects (e.g. village1.php → village1.php?vid=…). */
+async function safeGotoWithRetry(page, url, options = {}, retries = 2) {
+  const gotoOptions = { waitUntil: "domcontentloaded", timeout: 60000, ...options };
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      await page.goto(url, gotoOptions);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isTransientNavigationError(error)) {
+        throw error;
+      }
+      await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+      try {
+        const target = new URL(url, page.url());
+        const current = new URL(String(page.url() || ""));
+        if (current.origin === target.origin) {
+          const currentPath = current.pathname.toLowerCase();
+          const targetPath = target.pathname.toLowerCase();
+          if (
+            currentPath === targetPath ||
+            /\/(village1|dorf1|village2|dorf2)\.php$/.test(currentPath)
+          ) {
+            return;
+          }
+        }
+      } catch (_parseError) {
+        /* fall through to retry */
+      }
+      if (attempt >= retries) {
+        throw error;
+      }
+      await page.waitForTimeout(250 + attempt * 250).catch(() => {});
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+}
+
+function resolveVillageStatusUrl(settings, villageState = null) {
+  const preferredVid =
+    villageState &&
+    (villageState.selectedVillageId || villageState.activeVillageId || null);
+  return preferredVid
+    ? withVillageId(settings.villageStatusUrl, preferredVid)
+    : settings.villageStatusUrl;
 }
 
 function villageDisplayName(village) {
@@ -3468,10 +3506,7 @@ async function trainTroopsInBarracks(getPage, settings, selectedVillageId, optio
 
 async function showVillageStatus(getPage, settings, selectedVillageId, selectedVillage) {
   const page = getPage();
-  await page.goto(withVillageId(settings.villageStatusUrl, selectedVillageId), {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
+  await safeGotoWithRetry(page, withVillageId(settings.villageStatusUrl, selectedVillageId));
 
   const status = await page.evaluate(() => {
     const getText = (selector) => {
@@ -3834,32 +3869,7 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
 async function readIncomingAttackAlerts(getPage, settings, villageId) {
   const page = getPage();
   const statusUrl = withVillageId(settings.villageStatusUrl, villageId);
-  let navigated = false;
-  let lastError = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto(statusUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000
-      });
-      navigated = true;
-      break;
-    } catch (error) {
-      lastError = error;
-      const msg = String(error && error.message ? error.message : error);
-      if (!/ERR_ABORTED|Navigation failed because page was closed|Execution context was destroyed/i.test(msg)) {
-        throw error;
-      }
-      await page.waitForTimeout(150 + attempt * 150).catch(() => {});
-    }
-  }
-  if (!navigated) {
-    const msg = String(lastError && lastError.message ? lastError.message : lastError || "");
-    if (msg) {
-      throw new Error(msg);
-    }
-    return [];
-  }
+  await safeGotoWithRetry(page, statusUrl, {}, 3);
   const movements = await page.evaluate(() => {
     const classifyMovementRowDirection = (row) => {
       const tbody = row.closest("tbody");
@@ -4226,10 +4236,7 @@ async function readUnderAttackVillageIds(getPage, settings) {
     return ids;
   }
 
-  await page.goto(settings.villageStatusUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  }).catch(() => null);
+  await safeGotoWithRetry(page, settings.villageStatusUrl).catch(() => null);
   ids = await collect().catch(() => []);
   return ids;
 }
@@ -4607,10 +4614,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (navigateToStatusPage) {
-        await page.goto(settings.villageStatusUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 60000
-        });
+        await safeGotoWithRetry(page, resolveVillageStatusUrl(settings, villageState));
       }
 
       const snapshot = await fetchVillageSnapshotFromPage();
@@ -4707,10 +4711,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const currentVid = getCurrentVidFromPage(page);
       const sameVillageAlready = Number.isFinite(currentVid) && Number(currentVid) === Number(selectedVillage.id);
       if (!sameVillageAlready) {
-        await page.goto(withVillageId(settings.villageStatusUrl, selectedVillage.id), {
-          waitUntil: "domcontentloaded",
-          timeout: 60000
-        }).catch(() => null);
+        await safeGotoWithRetry(
+          page,
+          withVillageId(settings.villageStatusUrl, selectedVillage.id)
+        ).catch(() => null);
       }
       await refreshVillageState({ navigateToStatusPage: false, silent: true }).catch(() => null);
       if (!sameVillageAlready) {
@@ -4731,10 +4735,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const sameVillageAlready = Number.isFinite(currentVid) && Number(currentVid) === Number(village.id);
       const alreadyOnUsableVillagePage = sameVillageAlready && isOnVillageStatusLikePage(page);
       if (!alreadyOnUsableVillagePage) {
-        await page.goto(withVillageId(settings.villageStatusUrl, village.id), {
-          waitUntil: "domcontentloaded",
-          timeout: 60000
-        }).catch(() => null);
+        await safeGotoWithRetry(
+          page,
+          withVillageId(settings.villageStatusUrl, village.id)
+        ).catch(() => null);
       }
       await refreshVillageState({ navigateToStatusPage: false, silent: true }).catch(() => null);
       if (!alreadyOnUsableVillagePage) {
@@ -4920,10 +4924,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         villageState.selectedVillageId = nextVillage.id;
         const page = getPage();
         if (page && !page.isClosed()) {
-          await page.goto(withVillageId(settings.villageStatusUrl, nextVillage.id), {
-            waitUntil: "domcontentloaded",
-            timeout: 60000
-          });
+          await safeGotoWithRetry(
+            page,
+            withVillageId(settings.villageStatusUrl, nextVillage.id)
+          );
           await refreshVillageState({ navigateToStatusPage: false, silent: true });
         }
         logSuccess(`Selected village context: ${villageDisplayName(nextVillage)}`);

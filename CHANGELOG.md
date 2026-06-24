@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.1] — 2026-06-18
+
+### Fixed
+
+- **Village selector navigation** — `village1.php` redirects to `?vid=…` no longer fail with “interrupted by another navigation”; shared `safeGotoWithRetry` handles redirect races (village menu **V**, dashboard village pick, status refresh).
+
+---
+
 ## [1.5.0] — 2026-06-18
 
 ### Added
