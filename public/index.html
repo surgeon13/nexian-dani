@@ -22,10 +22,6 @@
       <p class="subtitle">Local automation dashboard</p>
     </div>
     <div class="header-meta">
-      <div class="view-switch" role="radiogroup" aria-label="Display density">
-        <button type="button" class="view-switch-btn active" data-view="regular" title="Regular layout">Regular</button>
-        <button type="button" class="view-switch-btn" data-view="compact" title="Compact layout for small screens">Compact</button>
-      </div>
       <span id="clock" class="clock">--:--:--</span>
       <span id="automation-pill" class="pill pill-running">RUNNING</span>
     </div>
@@ -71,21 +67,19 @@
       </div>
 
       <div id="display-panel" class="display-settings-panel">
-        <div class="display-settings-head">
-          <h3 class="subsection-title">Display</h3>
-        </div>
-        <p class="hint display-hint">
-          Compact view reduces spacing and font sizes so more fits on small screens (e.g. Raspberry Pi display).
-        </p>
-        <div class="display-view-toggle" role="radiogroup" aria-label="Dashboard display density">
-          <label class="display-view-option">
-            <input type="radio" name="display-view" value="regular" checked />
-            <span>Regular</span>
-          </label>
-          <label class="display-view-option">
-            <input type="radio" name="display-view" value="compact" />
-            <span>Compact</span>
-          </label>
+        <h3 class="subsection-title">Display</h3>
+        <div class="display-toggle-row">
+          <p class="hint display-hint">
+            Use compact view on small screens (e.g. Raspberry Pi display).
+          </p>
+          <div class="display-toggle-control">
+            <span class="display-mode-label active" data-mode="full">Full view</span>
+            <label class="troop-switch display-view-switch">
+              <input id="display-compact" type="checkbox" aria-label="Compact view" />
+              <span class="troop-switch-slider"></span>
+            </label>
+            <span class="display-mode-label" data-mode="compact">Compact view</span>
+          </div>
         </div>
       </div>
 

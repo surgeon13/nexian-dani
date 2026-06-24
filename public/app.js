@@ -50,6 +50,7 @@ const els = {
   activityMin: document.getElementById("activity-min"),
   activityMax: document.getElementById("activity-max"),
   activityPatterns: document.getElementById("activity-patterns"),
+  displayCompact: document.getElementById("display-compact"),
   toast: document.getElementById("toast")
 };
 
@@ -1749,29 +1750,23 @@ function applyDisplayView(view) {
   try {
     localStorage.setItem(DISPLAY_VIEW_KEY, compact ? "compact" : "regular");
   } catch (_) {}
-  document.querySelectorAll('input[name="display-view"]').forEach((input) => {
-    input.checked = input.value === (compact ? "compact" : "regular");
-  });
-  document.querySelectorAll(".view-switch-btn[data-view]").forEach((btn) => {
-    btn.classList.toggle("active", btn.getAttribute("data-view") === (compact ? "compact" : "regular"));
+  if (els.displayCompact) {
+    els.displayCompact.checked = compact;
+  }
+  document.querySelectorAll(".display-mode-label").forEach((label) => {
+    const mode = label.getAttribute("data-mode");
+    label.classList.toggle("active", mode === (compact ? "compact" : "full"));
   });
   updateTabLabels(compact);
 }
 
 function setupDisplaySettings() {
   applyDisplayView(getDisplayView());
-  document.querySelectorAll('input[name="display-view"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      if (input.checked) {
-        applyDisplayView(input.value);
-      }
+  if (els.displayCompact) {
+    els.displayCompact.addEventListener("change", () => {
+      applyDisplayView(els.displayCompact.checked ? "compact" : "regular");
     });
-  });
-  document.querySelectorAll(".view-switch-btn[data-view]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      applyDisplayView(btn.getAttribute("data-view") || "regular");
-    });
-  });
+  }
 }
 
 function setupTabs() {

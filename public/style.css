@@ -49,42 +49,6 @@ body {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.view-switch {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.25);
-}
-
-.view-switch-btn {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 0.28rem 0.55rem;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.view-switch-btn.active {
-  background: rgba(88, 166, 255, 0.22);
-  color: var(--cyan);
-}
-
-.view-switch-btn:hover:not(.active) {
-  color: var(--text);
-}
-
-.view-switch-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .clock {
@@ -1704,51 +1668,43 @@ button.action-btn.danger:hover:not(:disabled) {
   border-bottom: 1px solid var(--border);
 }
 
-.display-view-toggle {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.2);
+.display-settings-panel .subsection-title {
+  margin-top: 0;
 }
 
-.display-view-option {
+.display-toggle-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.display-toggle-control {
   display: flex;
   align-items: center;
-  cursor: pointer;
-  user-select: none;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
 }
 
-.display-view-option input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-}
-
-.display-view-option span {
-  display: block;
-  padding: 0.45rem 1rem;
-  font-size: 0.85rem;
+.display-mode-label {
+  font-size: 0.88rem;
   font-weight: 600;
   color: var(--muted);
-  border-right: 1px solid var(--border);
-  transition: background 0.15s, color 0.15s;
+  min-width: 5.5rem;
+  text-align: center;
+  transition: color 0.15s;
 }
 
-.display-view-option:last-child span {
-  border-right: none;
-}
-
-.display-view-option input:checked + span {
-  background: rgba(88, 166, 255, 0.2);
+.display-mode-label.active {
   color: var(--cyan);
 }
 
-.display-view-option input:focus-visible + span {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+.display-view-switch {
+  flex-shrink: 0;
 }
 
 /* --- Compact view (small screens / Pi display) --- */
@@ -1770,11 +1726,6 @@ html.compact-view .header h1 {
 
 html.compact-view .header-meta {
   gap: 0.35rem;
-}
-
-html.compact-view .view-switch-btn {
-  font-size: 0.6rem;
-  padding: 0.2rem 0.4rem;
 }
 
 html.compact-view .subtitle,
@@ -1940,9 +1891,14 @@ html.compact-view .display-settings-panel {
   padding-bottom: 0.65rem;
 }
 
-html.compact-view .display-view-option span {
-  padding: 0.35rem 0.75rem;
+html.compact-view .display-toggle-control {
+  padding: 0.45rem 0.55rem;
+  gap: 0.5rem;
+}
+
+html.compact-view .display-mode-label {
   font-size: 0.75rem;
+  min-width: 4.5rem;
 }
 
 html.compact-view .troop-rr-panel {
