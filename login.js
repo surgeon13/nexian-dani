@@ -740,6 +740,8 @@ async function run() {
   let manualAutomationPaused = false;
   let manualAutomationPausedAtMs = null;
   let dashboardServer = null;
+  let dashboardBridge = null;
+  let dashboardAccount = null;
 
   const cancelSessionLoopTimer = () => {
     if (sessionLoopTimer) {
@@ -1102,8 +1104,6 @@ async function run() {
   try {
     scheduleNextSessionCycle();
 
-    let dashboardBridge = null;
-    let dashboardAccount = null;
     if (dashboardEnabled && keepOpen) {
       dashboardBridge = createDashboardBridge();
       const dashboardNetwork = await getDashboardNetworkInfo(dashboardPort);

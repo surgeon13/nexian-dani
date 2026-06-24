@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.3] — 2026-06-18
+
+### Fixed
+
+- **Settings [D] Compact UI** — `dashboardBridge is not defined` when toggling display; bridge variable is now in the same scope as `updateDashboardDisplayConfig`.
+
+---
+
 ## [1.5.2] — 2026-06-18
 
 ### Fixed
