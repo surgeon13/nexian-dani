@@ -2101,25 +2101,48 @@ body.compact-view {
   font-size: 0.75rem;
 }
 
-@media (min-width: 480px) {
-  :is(html, body).compact-view #tab-dashboard.layout {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
-  }
+/* Compact dashboard: single column — status, actions, console, log (bottom) */
+:is(html, body).compact-view #tab-dashboard.layout {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: calc(100dvh - 6.25rem);
+  padding-bottom: 0.5rem;
+}
 
-  :is(html, body).compact-view #tab-dashboard .status-panel {
-    grid-column: 1;
-  }
+:is(html, body).compact-view #tab-dashboard .status-panel {
+  order: 1;
+  flex: 0 0 auto;
+}
 
-  :is(html, body).compact-view #tab-dashboard .actions-panel {
-    grid-column: 2;
-  }
+:is(html, body).compact-view #tab-dashboard .actions-panel {
+  order: 2;
+  flex: 0 0 auto;
+  max-width: none;
+}
 
-  :is(html, body).compact-view #tab-dashboard .console-panel,
-  :is(html, body).compact-view #tab-dashboard .logs-panel {
-    grid-column: 1 / -1;
-  }
+:is(html, body).compact-view #tab-dashboard .console-panel {
+  order: 3;
+  flex: 1 1 auto;
+  min-height: 4.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+:is(html, body).compact-view #tab-dashboard .console-panel .console-list {
+  flex: 1 1 auto;
+  min-height: 3.5rem;
+  max-height: none;
+}
+
+:is(html, body).compact-view #tab-dashboard .logs-panel {
+  order: 4;
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+:is(html, body).compact-view #tab-dashboard .logs-panel .log-list {
+  max-height: 4.5rem;
 }
 
 @media (max-width: 479px) {
