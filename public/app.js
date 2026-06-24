@@ -51,6 +51,7 @@ const els = {
   activityMax: document.getElementById("activity-max"),
   activityPatterns: document.getElementById("activity-patterns"),
   displayCompact: document.getElementById("display-compact"),
+  displayModeBadge: document.getElementById("display-mode-badge"),
   toast: document.getElementById("toast")
 };
 
@@ -298,15 +299,22 @@ function appendConsoleEntry(entry, atBottomBeforeAdd) {
   if (entry.id) {
     lastConsoleId = entry.id;
   }
+  const compact = document.body.classList.contains("compact-view");
   const line = document.createElement("div");
   line.className = `console-line console-${entry.level || "log"}`;
-  const time = document.createElement("span");
-  time.className = "console-time";
-  time.textContent = formatConsoleTime(entry.at);
+  if (!compact) {
+    const time = document.createElement("span");
+    time.className = "console-time";
+    time.textContent = formatConsoleTime(entry.at);
+    line.appendChild(time);
+  }
   const text = document.createElement("span");
   text.className = "console-text";
-  text.textContent = entry.text || "";
-  line.appendChild(time);
+  let message = entry.text || "";
+  if (compact && message.length > 120) {
+    message = `${message.slice(0, 117)}…`;
+  }
+  text.textContent = message;
   line.appendChild(text);
   els.consoleList.appendChild(line);
 
@@ -1747,9 +1755,18 @@ function updateTabLabels(compact) {
   });
 }
 
+function setCompactDom(compact) {
+  document.documentElement.classList.toggle("compact-view", compact);
+  document.body.classList.toggle("compact-view", compact);
+  document.documentElement.dataset.display = compact ? "compact" : "full";
+  if (els.displayModeBadge) {
+    els.displayModeBadge.classList.toggle("hidden", !compact);
+  }
+}
+
 function applyDisplayView(view) {
   const compact = view === "compact";
-  document.documentElement.classList.toggle("compact-view", compact);
+  setCompactDom(compact);
   try {
     localStorage.setItem(DISPLAY_VIEW_KEY, compact ? "compact" : "regular");
   } catch (_) {}
@@ -1761,30 +1778,26 @@ function applyDisplayView(view) {
     label.classList.toggle("active", mode === (compact ? "compact" : "full"));
   });
   updateTabLabels(compact);
+  refreshConsole().catch(() => {});
 }
 
 let displayFormDirty = false;
+let displaySaveTimer = null;
 
 function renderDisplaySettingsPanel(display) {
-  if (!els.displayCompact || !display || display.compactView === undefined) {
+  if (!display || display.compactView === undefined) {
     return;
   }
-  const compact = Boolean(display.compactView);
-  els.displayCompact.checked = compact;
-  document.querySelectorAll(".display-mode-label").forEach((label) => {
-    const mode = label.getAttribute("data-mode");
-    label.classList.toggle("active", mode === (compact ? "compact" : "full"));
-  });
-  document.documentElement.classList.toggle("compact-view", compact);
-  updateTabLabels(compact);
-  try {
-    localStorage.setItem(DISPLAY_VIEW_KEY, compact ? "compact" : "regular");
-  } catch (_) {}
+  if (displayFormDirty) {
+    return;
+  }
+  applyDisplayView(display.compactView ? "compact" : "regular");
 }
 
 async function saveDisplaySettings(compact) {
+  displayFormDirty = true;
+  clearTimeout(displaySaveTimer);
   applyDisplayView(compact ? "compact" : "regular");
-  displayFormDirty = false;
   try {
     await api("/api/display-settings", {
       method: "POST",
@@ -1792,14 +1805,16 @@ async function saveDisplaySettings(compact) {
     });
   } catch (error) {
     showToast(error.message || "Could not save display setting");
+  } finally {
+    displaySaveTimer = setTimeout(() => {
+      displayFormDirty = false;
+    }, 1200);
   }
 }
 
 function setupDisplaySettings() {
-  applyDisplayView(getDisplayView());
   if (els.displayCompact) {
     els.displayCompact.addEventListener("change", () => {
-      displayFormDirty = true;
       saveDisplaySettings(Boolean(els.displayCompact.checked));
     });
   }
@@ -1860,6 +1875,12 @@ refreshConsole();
 
 api("/api/status")
   .then((data) => {
-    renderStatus(data.status || {});
+    const status = data.status || {};
+    if (status.display && status.display.compactView !== undefined) {
+      applyDisplayView(status.display.compactView ? "compact" : "regular");
+    } else {
+      applyDisplayView(getDisplayView());
+    }
+    renderStatus(status);
   })
   .catch(() => showToast("Could not reach dashboard API"));

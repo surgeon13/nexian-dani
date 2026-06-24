@@ -4,12 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Nexian Dashboard</title>
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=1.4.1" />
   <script>
     (function () {
       try {
         if (localStorage.getItem("nexian-dashboard-view") === "compact") {
           document.documentElement.classList.add("compact-view");
+          document.documentElement.dataset.display = "compact";
         }
       } catch (_) {}
     })();
@@ -22,6 +23,7 @@
       <p class="subtitle">Local automation dashboard</p>
     </div>
     <div class="header-meta">
+      <span id="display-mode-badge" class="display-mode-badge hidden">COMPACT</span>
       <span id="clock" class="clock">--:--:--</span>
       <span id="automation-pill" class="pill pill-running">RUNNING</span>
     </div>
@@ -196,6 +198,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=1.4.1"></script>
 </body>
 </html>

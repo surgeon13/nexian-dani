@@ -262,12 +262,26 @@ function printDivider(title) {
   console.log(color(line, ANSI.gray));
 }
 
+function isCompactDisplay(settings) {
+  return Boolean(settings && settings.dashboardCompactView);
+}
+
+let terminalUiSettings = null;
+
 function printSubDivider(title) {
   console.log("");
   console.log(color(`> ${title}`, ANSI.bold, ANSI.cyan));
 }
 
-function printKeyValueRows(rows) {
+function printKeyValueRows(rows, settings = terminalUiSettings) {
+  if (isCompactDisplay(settings)) {
+    rows.forEach((row) => {
+      const label = row.raw ? row.label : color(row.label, ANSI.gray);
+      const value = row.raw ? row.value : color(row.value, ANSI.bold);
+      console.log(`  ${label}: ${value}`);
+    });
+    return;
+  }
   const labelWidth = rows.reduce((max, row) => Math.max(max, row.label.length), 0);
   rows.forEach((row) => {
     const paddedLabel = row.label.padEnd(labelWidth, " ");
@@ -1764,6 +1778,18 @@ function printSettings(settings, villageState) {
   normalizeDelayRange(settings);
   normalizeExpansionSettlementSettings(settings);
 
+  if (isCompactDisplay(settings)) {
+    printSubDivider("SETTINGS");
+    console.log(
+      `  ${color("display", ANSI.gray)}: ${color(
+        settings.dashboardCompactView ? "Compact view" : "Full view",
+        ANSI.bold,
+        ANSI.cyan
+      )}  ${color("(D toggles)", ANSI.gray)}`
+    );
+    return;
+  }
+
   printSubDivider("SETTINGS");
   printKeyValueRows([
     { label: "browserMode", value: settings.headless ? "Headless" : "Full Browser" },
@@ -1856,10 +1882,16 @@ function printSettings(settings, villageState) {
 
 function printSettingsMenu(settings, villageState) {
   printSubDivider("SETTINGS MENU");
+  const compact = isCompactDisplay(settings);
   const onOff = (v) => v ? color("ON", ANSI.bold, ANSI.green) : color("OFF", ANSI.bold, ANSI.yellow);
   const val = (v) => color(v, ANSI.bold, ANSI.white);
   const dim = (v) => color(v, ANSI.gray);
   const section = (title) => console.log(`  ${color(title, ANSI.bold, ANSI.magenta)}`);
+  const gap = () => {
+    if (!compact) {
+      console.log();
+    }
+  };
   const tag = (label, value) => label
     ? `${dim("[")}${dim(label)} ${val(value)}${dim("]")}`
     : `${dim("[")}${val(value)}${dim("]")}`;
@@ -1882,7 +1914,7 @@ function printSettingsMenu(settings, villageState) {
   console.log(
     `  ${opt("D")}  Dashboard Display  ${tag("", settings.dashboardCompactView ? "Compact view" : "Full view")}`
   );
-  console.log();
+  gap();
 
   section("Session and Farm");
   console.log(
@@ -1894,7 +1926,7 @@ function printSettingsMenu(settings, villageState) {
   console.log(
     `  ${opt("7")}  Post-Farm Status   ${dim("[")}${onOff(settings.statusAfterFarmlistsEnabled)}${dim("]")}  ${tag("cd", `${settings.statusAfterFarmlistsCooldownMinutes}m`)}`
   );
-  console.log();
+  gap();
 
   section("Builder");
   console.log(
@@ -1918,7 +1950,7 @@ function printSettingsMenu(settings, villageState) {
   console.log(
     `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
   );
-  console.log();
+  gap();
 
   section("Troops and Defense");
   console.log(
@@ -1927,7 +1959,7 @@ function printSettingsMenu(settings, villageState) {
   console.log(
     `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
   );
-  console.log();
+  gap();
 
   section("Raid Evac");
   console.log(
@@ -1942,7 +1974,7 @@ function printSettingsMenu(settings, villageState) {
       formatPivotVillageLabelsForSettings(settings, villageState && villageState.villages)
     )}`
   );
-  console.log();
+  gap();
 
   section("Expansion");
   console.log(
@@ -1959,7 +1991,7 @@ function printSettingsMenu(settings, villageState) {
       "]"
     )}`
   );
-  console.log();
+  gap();
   section("Navigation");
   console.log(`  ${opt("B")}  Back`);
   console.log(`  ${opt("Q")}  Quit`);
@@ -4124,6 +4156,7 @@ async function readUnderAttackVillageIds(getPage, settings) {
 }
 
 async function runTerminalMenu(getPage, settings, runtimeControls) {
+  terminalUiSettings = settings;
   const dashboardMode = Boolean(runtimeControls.dashboardMode && runtimeControls.dashboardBridge);
   const dashboardBridge = runtimeControls.dashboardBridge || null;
   const dashboardPort = runtimeControls.dashboardPort || 3847;
