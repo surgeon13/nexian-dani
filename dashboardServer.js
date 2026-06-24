@@ -392,6 +392,24 @@ function startDashboardServer({
         return;
       }
 
+      if (req.method === "POST" && pathname === "/api/display-settings") {
+        const body = await readJsonBody(req);
+        if (typeof bridge.updateDisplaySettings !== "function") {
+          sendJson(res, 503, { ok: false, error: "Display settings unavailable" });
+          return;
+        }
+        try {
+          const display = await bridge.updateDisplaySettings(body || {});
+          sendJson(res, 200, { ok: true, display });
+        } catch (error) {
+          sendJson(res, 400, {
+            ok: false,
+            error: error && error.message ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/events") {
         res.writeHead(200, {
           "Content-Type": "text/event-stream",

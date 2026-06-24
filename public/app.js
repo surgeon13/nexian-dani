@@ -199,6 +199,9 @@ function renderStatus(status) {
       }
     }
   }
+  if (status.display && !displayFormDirty) {
+    renderDisplaySettingsPanel(status.display);
+  }
   if (activeTab === "troops") {
     applyTroopLiveUpdates(status.troopTemplates || null);
   }
@@ -1760,11 +1763,44 @@ function applyDisplayView(view) {
   updateTabLabels(compact);
 }
 
+let displayFormDirty = false;
+
+function renderDisplaySettingsPanel(display) {
+  if (!els.displayCompact || !display || display.compactView === undefined) {
+    return;
+  }
+  const compact = Boolean(display.compactView);
+  els.displayCompact.checked = compact;
+  document.querySelectorAll(".display-mode-label").forEach((label) => {
+    const mode = label.getAttribute("data-mode");
+    label.classList.toggle("active", mode === (compact ? "compact" : "full"));
+  });
+  document.documentElement.classList.toggle("compact-view", compact);
+  updateTabLabels(compact);
+  try {
+    localStorage.setItem(DISPLAY_VIEW_KEY, compact ? "compact" : "regular");
+  } catch (_) {}
+}
+
+async function saveDisplaySettings(compact) {
+  applyDisplayView(compact ? "compact" : "regular");
+  displayFormDirty = false;
+  try {
+    await api("/api/display-settings", {
+      method: "POST",
+      body: JSON.stringify({ compactView: compact })
+    });
+  } catch (error) {
+    showToast(error.message || "Could not save display setting");
+  }
+}
+
 function setupDisplaySettings() {
   applyDisplayView(getDisplayView());
   if (els.displayCompact) {
     els.displayCompact.addEventListener("change", () => {
-      applyDisplayView(els.displayCompact.checked ? "compact" : "regular");
+      displayFormDirty = true;
+      saveDisplaySettings(Boolean(els.displayCompact.checked));
     });
   }
 }
@@ -1795,6 +1831,9 @@ function setupTabs() {
           renderActivitySettingsPanel(latestStatus.activitySimulation);
         } else {
           renderActivitySettingsPanel(null);
+        }
+        if (latestStatus && latestStatus.display) {
+          renderDisplaySettingsPanel(latestStatus.display);
         }
       }
     });

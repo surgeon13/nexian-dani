@@ -1769,6 +1769,7 @@ function printSettings(settings, villageState) {
     { label: "browserMode", value: settings.headless ? "Headless" : "Full Browser" },
     { label: "randomDelayMs", value: `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}` },
     { label: "pauseAutoUnpauseMinutes", value: `${settings.manualPauseAutoUnpauseMinutes || 5}` },
+    { label: "dashboardDisplay", value: settings.dashboardCompactView ? "Compact view" : "Full view" },
     { label: "farmlistUrl", value: settings.farmlistUrl },
     { label: "villageBuilderUrl", value: settings.villageBuilderUrl },
     { label: "troopTrainerUrl", value: settings.troopTrainerUrl },
@@ -1873,46 +1874,49 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("2")}  Random Delay       ${tag("", `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}ms`)}`
   );
   console.log(
-    `  ${opt("8")}  Pause Auto-Unpause ${tag("after", `${settings.manualPauseAutoUnpauseMinutes || 5}m`)}`
+    `  ${opt("3")}  Pause Auto-Unpause ${tag("after", `${settings.manualPauseAutoUnpauseMinutes || 5}m`)}`
   );
   console.log(
-    `  ${opt("N")}  Activity Simulation ${dim("[")}${onOff(settings.activitySimulationEnabled)}${dim("]")}  ${tag("every", `${settings.activitySimulationLoopMinMinutes}-${settings.activitySimulationLoopMaxMinutes}m`)}`
+    `  ${opt("4")}  Activity Simulation ${dim("[")}${onOff(settings.activitySimulationEnabled)}${dim("]")}  ${tag("every", `${settings.activitySimulationLoopMinMinutes}-${settings.activitySimulationLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("D")}  Dashboard Display  ${tag("", settings.dashboardCompactView ? "Compact view" : "Full view")}`
   );
   console.log();
 
   section("Session and Farm");
   console.log(
-    `  ${opt("3")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}`
+    `  ${opt("5")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}`
   );
   console.log(
-    `  ${opt("4")}  Farmlist Loop      ${dim("[")}${onOff(settings.farmlistLoopEnabled)}${dim("]")}  ${tag("every", `${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes}m`)}`
+    `  ${opt("6")}  Farmlist Loop      ${dim("[")}${onOff(settings.farmlistLoopEnabled)}${dim("]")}  ${tag("every", `${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes}m`)}`
   );
   console.log(
-    `  ${opt("9")}  Post-Farm Status   ${dim("[")}${onOff(settings.statusAfterFarmlistsEnabled)}${dim("]")}  ${tag("cd", `${settings.statusAfterFarmlistsCooldownMinutes}m`)}`
+    `  ${opt("7")}  Post-Farm Status   ${dim("[")}${onOff(settings.statusAfterFarmlistsEnabled)}${dim("]")}  ${tag("cd", `${settings.statusAfterFarmlistsCooldownMinutes}m`)}`
   );
   console.log();
 
   section("Builder");
   console.log(
-    `  ${opt("5")}  Gold Complete      ${dim("[")}${onOff(settings.builderGoldCompleteEnabled)}${dim("]")}  ${tag("max", `${settings.builderGoldCompleteMax}/run`)}`
+    `  ${opt("G")}  Gold Complete      ${dim("[")}${onOff(settings.builderGoldCompleteEnabled)}${dim("]")}  ${tag("max", `${settings.builderGoldCompleteMax}/run`)}`
   );
   console.log(
-  `  ${opt("6")}  Builder Loop        ${dim("[")}${onOff(settings.builderLoopEnabled)}${dim("]")}  ${tag("every", `${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes}m`)}`
+    `  ${opt("BL")}  Builder Loop        ${dim("[")}${onOff(settings.builderLoopEnabled)}${dim("]")}  ${tag("every", `${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes}m`)}`
   );
   console.log(
-    `  ${opt("0")}  Builder RR          ${dim("[")}${onOff(settings.builderRoundRobinEnabled)}${dim("]")}`
+    `  ${opt("BR")}  Builder RR          ${dim("[")}${onOff(settings.builderRoundRobinEnabled)}${dim("]")}`
   );
   console.log(
-    `  ${opt("Y")}  Builder RR Exclusion ${tag(
+    `  ${opt("X")}  Builder RR Exclusion ${tag(
       "count",
       `${parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds).size}`
     )}`
   );
   console.log(
-    `  ${opt("7")}  Master Builder      ${dim("[")}${onOff(settings.builderMasterBuilderEnabled)}${dim("]")}`
+    `  ${opt("M")}  Master Builder      ${dim("[")}${onOff(settings.builderMasterBuilderEnabled)}${dim("]")}`
   );
   console.log(
-    `  ${opt("U")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
+    `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
   );
   console.log();
 
@@ -1945,7 +1949,7 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("A")}  Planned Targets    ${dim("[")}${onOff(settings.expansionUsePlannedTargets)}${dim("]")}`
   );
   console.log(
-  `  ${opt("D")}  Auto Dispatch       ${dim("[")}${onOff(settings.expansionAutoDispatchEnabled)}${dim("]")}`
+  `  ${opt("W")}  Auto Dispatch       ${dim("[")}${onOff(settings.expansionAutoDispatchEnabled)}${dim("]")}`
   );
   console.log(
     `  ${opt("P")}  Targets File       ${tag("file", settings.expansionPlannedTargetsFile)}`
@@ -2350,57 +2354,6 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
     }
 
     if (input === "3") {
-      const enabledText = (
-        await askQuestion(rl, "Enable repeating session loop? (Y/N, Enter keep): ")
-      ).trim().toUpperCase();
-
-      let nextEnabled = settings.sessionLoopEnabled;
-      if (enabledText === "Y") {
-        nextEnabled = true;
-      } else if (enabledText === "N") {
-        nextEnabled = false;
-      }
-
-      const nextPlayMinText = (
-        await askQuestion(rl, "Play MIN minutes (Enter keep): ")
-      ).trim();
-      const nextPlayMaxText = (
-        await askQuestion(rl, "Play MAX minutes (Enter keep): ")
-      ).trim();
-      const nextRestMinText = (
-        await askQuestion(rl, "Rest MIN minutes (Enter keep): ")
-      ).trim();
-      const nextRestMaxText = (
-        await askQuestion(rl, "Rest MAX minutes (Enter keep): ")
-      ).trim();
-
-      const nextConfig = {
-        enabled: nextEnabled,
-        playMinMinutes: nextPlayMinText ? Number(nextPlayMinText) : settings.playMinMinutes,
-        playMaxMinutes: nextPlayMaxText ? Number(nextPlayMaxText) : settings.playMaxMinutes,
-        restMinMinutes: nextRestMinText ? Number(nextRestMinText) : settings.restMinMinutes,
-        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes
-      };
-
-      try {
-        const applied = await runtimeControls.updateSessionLoopConfig(nextConfig);
-        settings.sessionLoopEnabled = applied.enabled;
-        settings.playMinMinutes = applied.playMinMinutes;
-        settings.playMaxMinutes = applied.playMaxMinutes;
-        settings.restMinMinutes = applied.restMinMinutes;
-        settings.restMaxMinutes = applied.restMaxMinutes;
-
-        logSuccess(
-          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m.`
-        );
-      } catch (error) {
-        logError(`Failed to update session loop: ${error.message || error}`);
-      }
-
-      continue;
-    }
-
-    if (input === "8") {
       const typed = (
         await askQuestion(rl, "Pause auto-unpause MINUTES (1-120, Enter keep): ")
       ).trim();
@@ -2425,47 +2378,6 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
     }
 
     if (input === "4") {
-      const enabledText = (
-        await askQuestion(rl, "Enable farmlist loop? (Y/N, Enter keep): ")
-      ).trim().toUpperCase();
-
-      let nextEnabled = settings.farmlistLoopEnabled;
-      if (enabledText === "Y") {
-        nextEnabled = true;
-      } else if (enabledText === "N") {
-        nextEnabled = false;
-      }
-
-      const nextMinText = (
-        await askQuestion(rl, "Farmlist loop MIN minutes (Enter keep): ")
-      ).trim();
-      const nextMaxText = (
-        await askQuestion(rl, "Farmlist loop MAX minutes (Enter keep): ")
-      ).trim();
-
-      const nextConfig = {
-        enabled: nextEnabled,
-        minMinutes: nextMinText ? Number(nextMinText) : settings.farmlistLoopMinMinutes,
-        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.farmlistLoopMaxMinutes
-      };
-
-      try {
-        const applied = await runtimeControls.updateFarmlistLoopConfig(nextConfig);
-        settings.farmlistLoopEnabled = applied.enabled;
-        settings.farmlistLoopMinMinutes = applied.minMinutes;
-        settings.farmlistLoopMaxMinutes = applied.maxMinutes;
-
-        logSuccess(
-          `Farmlist loop updated: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m.`
-        );
-      } catch (error) {
-        logError(`Failed to update farmlist loop: ${error.message || error}`);
-      }
-
-      continue;
-    }
-
-    if (input === "N") {
       const enabledText = (
         await askQuestion(rl, "Enable activity simulation? (Y/N, Enter keep): ")
       ).trim().toUpperCase();
@@ -2520,12 +2432,163 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "D") {
+      settings.dashboardCompactView = !settings.dashboardCompactView;
+      try {
+        if (runtimeControls.updateDashboardDisplayConfig) {
+          await runtimeControls.updateDashboardDisplayConfig({
+            compactView: settings.dashboardCompactView
+          });
+        } else if (runtimeControls.persistSettings) {
+          await runtimeControls.persistSettings(["DASHBOARD_COMPACT_VIEW"]);
+        }
+        logSuccess(
+          `Dashboard display: ${settings.dashboardCompactView ? "Compact view" : "Full view"}`
+        );
+      } catch (error) {
+        logError(`Failed to update dashboard display: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (input === "5") {
+      const enabledText = (
+        await askQuestion(rl, "Enable repeating session loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.sessionLoopEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextPlayMinText = (
+        await askQuestion(rl, "Play MIN minutes (Enter keep): ")
+      ).trim();
+      const nextPlayMaxText = (
+        await askQuestion(rl, "Play MAX minutes (Enter keep): ")
+      ).trim();
+      const nextRestMinText = (
+        await askQuestion(rl, "Rest MIN minutes (Enter keep): ")
+      ).trim();
+      const nextRestMaxText = (
+        await askQuestion(rl, "Rest MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        playMinMinutes: nextPlayMinText ? Number(nextPlayMinText) : settings.playMinMinutes,
+        playMaxMinutes: nextPlayMaxText ? Number(nextPlayMaxText) : settings.playMaxMinutes,
+        restMinMinutes: nextRestMinText ? Number(nextRestMinText) : settings.restMinMinutes,
+        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes
+      };
+
+      try {
+        const applied = await runtimeControls.updateSessionLoopConfig(nextConfig);
+        settings.sessionLoopEnabled = applied.enabled;
+        settings.playMinMinutes = applied.playMinMinutes;
+        settings.playMaxMinutes = applied.playMaxMinutes;
+        settings.restMinMinutes = applied.restMinMinutes;
+        settings.restMaxMinutes = applied.restMaxMinutes;
+
+        logSuccess(
+          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m.`
+        );
+      } catch (error) {
+        logError(`Failed to update session loop: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "6") {
+      const enabledText = (
+        await askQuestion(rl, "Enable farmlist loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.farmlistLoopEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Farmlist loop MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Farmlist loop MAX minutes (Enter keep): ")
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        minMinutes: nextMinText ? Number(nextMinText) : settings.farmlistLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.farmlistLoopMaxMinutes
+      };
+
+      try {
+        const applied = await runtimeControls.updateFarmlistLoopConfig(nextConfig);
+        settings.farmlistLoopEnabled = applied.enabled;
+        settings.farmlistLoopMinMinutes = applied.minMinutes;
+        settings.farmlistLoopMaxMinutes = applied.maxMinutes;
+
+        logSuccess(
+          `Farmlist loop updated: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m.`
+        );
+      } catch (error) {
+        logError(`Failed to update farmlist loop: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "7") {
+      const enabledText = (
+        await askQuestion(rl, "Enable status print after farmlists? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      if (enabledText === "Y") {
+        settings.statusAfterFarmlistsEnabled = true;
+      } else if (enabledText === "N") {
+        settings.statusAfterFarmlistsEnabled = false;
+      }
+
+      const cooldownText = (
+        await askQuestion(rl, "Status print cooldown MINUTES (Enter keep): ")
+      ).trim();
+      if (cooldownText) {
+        const parsed = Number(cooldownText);
+        if (Number.isFinite(parsed) && parsed >= 1) {
+          settings.statusAfterFarmlistsCooldownMinutes = Math.floor(parsed);
+        } else {
+          logWarn("Invalid cooldown value. Keeping previous value.");
+        }
+      }
+
+      if (!Number.isFinite(settings.statusAfterFarmlistsCooldownMinutes) || settings.statusAfterFarmlistsCooldownMinutes < 1) {
+        settings.statusAfterFarmlistsCooldownMinutes = 15;
+      }
+
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "STATUS_AFTER_FARMLISTS_ENABLED",
+          "STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES"
+        ]);
+      }
+
+      logSuccess(
+        `Status after farmlists: ${settings.statusAfterFarmlistsEnabled ? "ON" : "OFF"}, cooldown ${settings.statusAfterFarmlistsCooldownMinutes} minute(s).`
+      );
+      continue;
+    }
+
     if (input === "B") {
       done = true;
       continue;
     }
 
-    if (input === "5") {
+    if (input === "G") {
       settings.builderGoldCompleteEnabled = !settings.builderGoldCompleteEnabled;
       if (runtimeControls.persistSettings) {
         await runtimeControls.persistSettings([
@@ -2538,7 +2601,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "6") {
+    if (input === "BL") {
       const enabledText = (
         await askQuestion(rl, "Enable builder loop? (Y/N, Enter keep): ")
       ).trim().toUpperCase();
@@ -2579,7 +2642,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "7") {
+    if (input === "M") {
       settings.builderMasterBuilderEnabled = !settings.builderMasterBuilderEnabled;
       if (runtimeControls.persistSettings) {
         await runtimeControls.persistSettings([
@@ -2588,46 +2651,6 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       }
       logSuccess(
         `Builder master builder usage: ${settings.builderMasterBuilderEnabled ? "ON" : "OFF"}`
-      );
-      continue;
-    }
-
-    if (input === "9") {
-      const enabledText = (
-        await askQuestion(rl, "Enable status print after farmlists? (Y/N, Enter keep): ")
-      ).trim().toUpperCase();
-
-      if (enabledText === "Y") {
-        settings.statusAfterFarmlistsEnabled = true;
-      } else if (enabledText === "N") {
-        settings.statusAfterFarmlistsEnabled = false;
-      }
-
-      const cooldownText = (
-        await askQuestion(rl, "Status print cooldown MINUTES (Enter keep): ")
-      ).trim();
-      if (cooldownText) {
-        const parsed = Number(cooldownText);
-        if (Number.isFinite(parsed) && parsed >= 1) {
-          settings.statusAfterFarmlistsCooldownMinutes = Math.floor(parsed);
-        } else {
-          logWarn("Invalid cooldown value. Keeping previous value.");
-        }
-      }
-
-      if (!Number.isFinite(settings.statusAfterFarmlistsCooldownMinutes) || settings.statusAfterFarmlistsCooldownMinutes < 1) {
-        settings.statusAfterFarmlistsCooldownMinutes = 15;
-      }
-
-      if (runtimeControls.persistSettings) {
-        await runtimeControls.persistSettings([
-          "STATUS_AFTER_FARMLISTS_ENABLED",
-          "STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES"
-        ]);
-      }
-
-      logSuccess(
-        `Status after farmlists: ${settings.statusAfterFarmlistsEnabled ? "ON" : "OFF"}, cooldown ${settings.statusAfterFarmlistsCooldownMinutes} minute(s).`
       );
       continue;
     }
@@ -2685,7 +2708,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "0") {
+    if (input === "BR") {
       settings.builderRoundRobinEnabled = !settings.builderRoundRobinEnabled;
       if (runtimeControls.persistSettings) {
         await runtimeControls.persistSettings([
@@ -2698,7 +2721,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "Y") {
+    if (input === "X") {
       await runBuilderRrExclusionMenu(rl, settings, runtimeControls);
       continue;
     }
@@ -2835,7 +2858,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "D") {
+    if (input === "W") {
       settings.expansionAutoDispatchEnabled = !settings.expansionAutoDispatchEnabled;
       if (runtimeControls.persistSettings) {
         await runtimeControls.persistSettings([
@@ -2848,7 +2871,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "U") {
+    if (input === "R") {
       settings.resourceCirculationEnabled = !settings.resourceCirculationEnabled;
       if (runtimeControls.persistSettings) {
         await runtimeControls.persistSettings(["RESOURCE_CIRCULATION_ENABLED"]);
@@ -2870,7 +2893,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 0-9, T, I, Y, A, D, U, V, E, H, K, P, or B.");
+    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, T, I, W, A, E, K, H, P, V, B, or Q.");
   }
 }
 
@@ -5145,7 +5168,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const enabled = settlement ? settings.resourceCirculationExpansionEnabled : settings.resourceCirculationEnabled;
       if (!enabled) {
-        const hint = settlement ? "Settings [V]" : "Settings [U]";
+        const hint = settlement ? "Settings [V]" : "Settings [R]";
         const logPrefix =
           source === "manual"
             ? settlement
@@ -6721,6 +6744,22 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return buildActivitySimulationPayload();
     };
 
+    const applyDisplaySettingsPatch = async (patch) => {
+      if (!runtimeControls.updateDashboardDisplayConfig) {
+        throw new Error("Display settings are not available");
+      }
+      const compactView =
+        patch && patch.compactView !== undefined
+          ? Boolean(patch.compactView)
+          : settings.dashboardCompactView;
+      const applied = await runtimeControls.updateDashboardDisplayConfig({ compactView });
+      settings.dashboardCompactView = applied.compactView;
+      if (dashboardBridge) {
+        dashboardBridge.publishSnapshot();
+      }
+      return { compactView: settings.dashboardCompactView };
+    };
+
     const scheduleActivitySimulationLoop = () => {
       cancelActivitySimulationLoopTimer();
 
@@ -7078,6 +7117,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           activity: activityLoopStatus
         },
         activitySimulation: buildActivitySimulationPayload(),
+        display: {
+          compactView: Boolean(settings.dashboardCompactView)
+        },
         villages: villageState.villages.slice(),
         selectedVillageId: villageState.selectedVillageId,
         activeVillageId: villageState.activeVillageId,
@@ -7096,6 +7138,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       dashboardBridge.setTroopSettingsProvider(() => buildFullTroopDashboardPayload());
       dashboardBridge.setTroopSettingsUpdater(applyTroopSettingsPatch);
       dashboardBridge.setActivitySettingsUpdater(applyActivitySettingsPatch);
+      dashboardBridge.setDisplaySettingsUpdater(applyDisplaySettingsPatch);
     }
 
     const printInteractiveMenu = () => {
@@ -7987,6 +8030,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       dashboardBridge.setTroopSettingsProvider(null);
       dashboardBridge.setTroopSettingsUpdater(null);
       dashboardBridge.setActivitySettingsUpdater(null);
+      dashboardBridge.setDisplaySettingsUpdater(null);
     }
     if (sigintHandler) {
       process.removeListener("SIGINT", sigintHandler);

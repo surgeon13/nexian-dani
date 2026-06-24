@@ -11,6 +11,7 @@ function createDashboardBridge() {
   let troopSettingsProvider = null;
   let troopSettingsUpdater = null;
   let activitySettingsUpdater = null;
+  let displaySettingsUpdater = null;
 
   function setQuitHandler(fn) {
     quitHandler = typeof fn === "function" ? fn : null;
@@ -48,6 +49,17 @@ function createDashboardBridge() {
       throw new Error("Activity settings are not available");
     }
     return activitySettingsUpdater(patch || {});
+  }
+
+  function setDisplaySettingsUpdater(fn) {
+    displaySettingsUpdater = typeof fn === "function" ? fn : null;
+  }
+
+  async function updateDisplaySettings(patch) {
+    if (!displaySettingsUpdater) {
+      throw new Error("Display settings are not available");
+    }
+    return displaySettingsUpdater(patch || {});
   }
 
   function publishEvent(type, data) {
@@ -216,6 +228,8 @@ function createDashboardBridge() {
     updateTroopSettings,
     setActivitySettingsUpdater,
     updateActivitySettings,
+    setDisplaySettingsUpdater,
+    updateDisplaySettings,
     ask,
     answerPrompt,
     clearPendingPrompt,

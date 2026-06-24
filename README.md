@@ -178,7 +178,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **PowerShell blocks `npm`:** use `npm.cmd`, or adjust execution policy (`RemoteSigned` for CurrentUser), or run `node login.js` directly.
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
 - **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow.
-- **Builder stuck on resources:** enable **Settings [U]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
+- **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 
 ---
 

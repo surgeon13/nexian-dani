@@ -151,6 +151,8 @@ const dashboardPort = Math.max(
 );
 const dashboardOpenBrowser =
   String(process.env.DASHBOARD_OPEN_BROWSER ?? "true").toLowerCase() !== "false";
+const dashboardCompactView =
+  String(process.env.DASHBOARD_COMPACT_VIEW || "false").toLowerCase() === "true";
 
 function numberEnv(name, fallback) {
   const parsed = Number(process.env[name]);
@@ -264,6 +266,7 @@ const settings = {
   ),
   activitySimulationDwellMinMs: numberEnv("ACTIVITY_SIMULATION_DWELL_MIN_MS", 2000),
   activitySimulationDwellMaxMs: numberEnv("ACTIVITY_SIMULATION_DWELL_MAX_MS", 6000),
+  dashboardCompactView,
   expansionAutoDispatchEnabled:
     String(process.env.EXPANSION_AUTO_DISPATCH_ENABLED || "false").toLowerCase() === "true",
   expansionUsePlannedTargets:
@@ -403,6 +406,7 @@ function persistRuntimeSettings(selectedKeys) {
     ACTIVITY_SIMULATION_PATTERNS: String(settings.activitySimulationPatterns || ""),
     ACTIVITY_SIMULATION_DWELL_MIN_MS: String(settings.activitySimulationDwellMinMs),
     ACTIVITY_SIMULATION_DWELL_MAX_MS: String(settings.activitySimulationDwellMaxMs),
+    DASHBOARD_COMPACT_VIEW: settings.dashboardCompactView ? "true" : "false",
     EXPANSION_AUTO_DISPATCH_ENABLED: settings.expansionAutoDispatchEnabled ? "true" : "false",
     EXPANSION_USE_PLANNED_TARGETS: settings.expansionUsePlannedTargets ? "true" : "false",
     EXPANSION_PLANNED_TARGETS_FILE: String(settings.expansionPlannedTargetsFile || ""),
@@ -1044,6 +1048,17 @@ async function run() {
     };
   };
 
+  const updateDashboardDisplayConfig = async (nextConfig) => {
+    if (typeof nextConfig.compactView === "boolean") {
+      settings.dashboardCompactView = nextConfig.compactView;
+    }
+    persistRuntimeSettings(["DASHBOARD_COMPACT_VIEW"]);
+    if (dashboardBridge) {
+      dashboardBridge.publishSnapshot();
+    }
+    return { compactView: settings.dashboardCompactView };
+  };
+
   const updateCrannyDefenseLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.crannyDefenseRoundRobinEnabled = nextConfig.enabled;
@@ -1124,6 +1139,7 @@ async function run() {
           updateTroopTrainingLoopConfig,
           updateCrannyDefenseLoopConfig,
           updateActivitySimulationLoopConfig,
+          updateDashboardDisplayConfig,
           async persistSettings(selectedKeys) {
             persistRuntimeSettings(selectedKeys);
           },
