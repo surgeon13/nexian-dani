@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.2] — 2026-06-18
+
+### Fixed
+
+- **Village selector (V)** waits up to 2 minutes for the current action to finish before opening the village list or switching villages (dashboard select too). Avoids navigation errors when builder/farmlist/etc. is still using the browser.
+
+---
+
 ## [1.5.1] — 2026-06-18
 
 ### Fixed

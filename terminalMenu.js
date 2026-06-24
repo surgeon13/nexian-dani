@@ -4887,6 +4887,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     };
 
     const runVillageSelectorMenu = async () => {
+      if (!(await waitForActionIdle("Village selector"))) {
+        return;
+      }
       await refreshVillageState({ navigateToStatusPage: true, silent: true });
 
       if (!villageState.villages.length) {
@@ -4924,6 +4927,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         villageState.selectedVillageId = nextVillage.id;
         const page = getPage();
         if (page && !page.isClosed()) {
+          if (!(await waitForActionIdle("Village select"))) {
+            logWarn("Could not switch village — session still busy.");
+            continue;
+          }
           await safeGotoWithRetry(
             page,
             withVillageId(settings.villageStatusUrl, nextVillage.id)
@@ -5104,6 +5111,38 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     };
 
     let runRaidGuardPriorityCheck = async () => false;
+
+    const waitForActionIdle = async (label = "command", options = {}) => {
+      const maxWaitMs = Number.isFinite(Number(options.maxWaitMs))
+        ? Math.max(0, Number(options.maxWaitMs))
+        : 120000;
+      const pollMs = Number.isFinite(Number(options.pollMs))
+        ? Math.max(50, Number(options.pollMs))
+        : 400;
+      if (!actionInProgress) {
+        return true;
+      }
+      logInfo(
+        `[${label}] Waiting for ${currentActionLabel || "current action"} to finish…`
+      );
+      let waited = 0;
+      let lastNoticeAt = 0;
+      while (actionInProgress && waited < maxWaitMs) {
+        await sleep(pollMs);
+        waited += pollMs;
+        if (waited - lastNoticeAt >= 10000) {
+          lastNoticeAt = waited;
+          logInfo(`[${label}] Still waiting (${Math.round(waited / 1000)}s)…`);
+        }
+      }
+      if (actionInProgress) {
+        logWarn(
+          `[${label}] Timed out after ${Math.round(maxWaitMs / 1000)}s — ${currentActionLabel || "action"} still running.`
+        );
+        return false;
+      }
+      return true;
+    };
 
     const runAction = async (label, fn, options = {}) => {
       const allowWhilePaused = Boolean(options && options.allowWhilePaused);
@@ -7344,6 +7383,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const target = villageState.villages.find((v) => Number(v.id) === vid);
         if (!target) {
           logWarn(`[Dashboard] Unknown village id: ${vid}`);
+          continue;
+        }
+        if (!(await waitForActionIdle("Dashboard village select"))) {
           continue;
         }
         villageState.selectedVillageId = target.id;
