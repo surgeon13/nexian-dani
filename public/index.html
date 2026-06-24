@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Nexian Dashboard</title>
   <link rel="stylesheet" href="/style.css" />
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("nexian-dashboard-view") === "compact") {
+          document.documentElement.classList.add("compact-view");
+        }
+      } catch (_) {}
+    })();
+  </script>
 </head>
 <body>
   <header class="header">
@@ -13,15 +22,19 @@
       <p class="subtitle">Local automation dashboard</p>
     </div>
     <div class="header-meta">
+      <div class="view-switch" role="radiogroup" aria-label="Display density">
+        <button type="button" class="view-switch-btn active" data-view="regular" title="Regular layout">Regular</button>
+        <button type="button" class="view-switch-btn" data-view="compact" title="Compact layout for small screens">Compact</button>
+      </div>
       <span id="clock" class="clock">--:--:--</span>
       <span id="automation-pill" class="pill pill-running">RUNNING</span>
     </div>
   </header>
 
   <nav class="tabs">
-    <button type="button" class="tab-btn active" data-tab="dashboard">Dashboard</button>
-    <button type="button" class="tab-btn" data-tab="settings">Settings</button>
-    <button type="button" class="tab-btn" data-tab="troops">Troop Templates</button>
+    <button type="button" class="tab-btn active" data-tab="dashboard" data-label-full="Dashboard" data-label-short="Dash">Dashboard</button>
+    <button type="button" class="tab-btn" data-tab="settings" data-label-full="Settings" data-label-short="Set">Settings</button>
+    <button type="button" class="tab-btn" data-tab="troops" data-label-full="Troop Templates" data-label-short="Troops">Troop Templates</button>
   </nav>
 
   <main id="tab-dashboard" class="layout tab-view active">
@@ -55,6 +68,25 @@
     <section class="panel settings-panel">
       <div class="panel-head">
         <h2>Settings</h2>
+      </div>
+
+      <div id="display-panel" class="display-settings-panel">
+        <div class="display-settings-head">
+          <h3 class="subsection-title">Display</h3>
+        </div>
+        <p class="hint display-hint">
+          Compact view reduces spacing and font sizes so more fits on small screens (e.g. Raspberry Pi display).
+        </p>
+        <div class="display-view-toggle" role="radiogroup" aria-label="Dashboard display density">
+          <label class="display-view-option">
+            <input type="radio" name="display-view" value="regular" checked />
+            <span>Regular</span>
+          </label>
+          <label class="display-view-option">
+            <input type="radio" name="display-view" value="compact" />
+            <span>Compact</span>
+          </label>
+        </div>
       </div>
 
       <div id="activity-panel" class="troop-rr-panel activity-panel">

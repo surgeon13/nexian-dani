@@ -1,3 +1,5 @@
+const DISPLAY_VIEW_KEY = "nexian-dashboard-view";
+
 const ACTIONS = [
   { action: "status", key: "0", label: "Village status" },
   { action: "farmlist", key: "1", label: "Send farmlists" },
@@ -1726,6 +1728,52 @@ function setupTroopForm() {
   );
 }
 
+function getDisplayView() {
+  try {
+    return localStorage.getItem(DISPLAY_VIEW_KEY) === "compact" ? "compact" : "regular";
+  } catch (_) {
+    return "regular";
+  }
+}
+
+function updateTabLabels(compact) {
+  document.querySelectorAll(".tab-btn[data-label-short]").forEach((btn) => {
+    const full = btn.getAttribute("data-label-full") || btn.textContent.trim();
+    btn.textContent = compact ? btn.getAttribute("data-label-short") || full : full;
+  });
+}
+
+function applyDisplayView(view) {
+  const compact = view === "compact";
+  document.documentElement.classList.toggle("compact-view", compact);
+  try {
+    localStorage.setItem(DISPLAY_VIEW_KEY, compact ? "compact" : "regular");
+  } catch (_) {}
+  document.querySelectorAll('input[name="display-view"]').forEach((input) => {
+    input.checked = input.value === (compact ? "compact" : "regular");
+  });
+  document.querySelectorAll(".view-switch-btn[data-view]").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-view") === (compact ? "compact" : "regular"));
+  });
+  updateTabLabels(compact);
+}
+
+function setupDisplaySettings() {
+  applyDisplayView(getDisplayView());
+  document.querySelectorAll('input[name="display-view"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        applyDisplayView(input.value);
+      }
+    });
+  });
+  document.querySelectorAll(".view-switch-btn[data-view]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyDisplayView(btn.getAttribute("data-view") || "regular");
+    });
+  });
+}
+
 function setupTabs() {
   const buttons = Array.from(document.querySelectorAll(".tab-btn"));
   const views = {
@@ -1764,6 +1812,7 @@ function tickClock() {
 }
 
 renderActions(false);
+setupDisplaySettings();
 setupTabs();
 setupTroopForm();
 setupActivityForm();

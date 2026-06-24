@@ -85,7 +85,10 @@ function serveStatic(req, res, urlPath) {
     ".svg": "image/svg+xml",
     ".png": "image/png"
   };
-  res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
+  res.writeHead(200, {
+    "Content-Type": types[ext] || "application/octet-stream",
+    "Cache-Control": "no-store, no-cache, must-revalidate"
+  });
   fs.createReadStream(abs).pipe(res);
 }
 

@@ -49,6 +49,42 @@ body {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.view-switch-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.28rem 0.55rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.view-switch-btn.active {
+  background: rgba(88, 166, 255, 0.22);
+  color: var(--cyan);
+}
+
+.view-switch-btn:hover:not(.active) {
+  color: var(--text);
+}
+
+.view-switch-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .clock {
@@ -1659,4 +1695,458 @@ button.action-btn.danger:hover:not(:disabled) {
 .activity-pattern-item input {
   margin: 0;
   accent-color: var(--accent);
+}
+
+/* --- Display settings --- */
+.display-settings-panel {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.display-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.display-view-option {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.display-view-option input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.display-view-option span {
+  display: block;
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s;
+}
+
+.display-view-option:last-child span {
+  border-right: none;
+}
+
+.display-view-option input:checked + span {
+  background: rgba(88, 166, 255, 0.2);
+  color: var(--cyan);
+}
+
+.display-view-option input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* --- Compact view (small screens / Pi display) --- */
+html.compact-view {
+  font-size: 13px;
+}
+
+html.compact-view body {
+  line-height: 1.35;
+}
+
+html.compact-view .header {
+  padding: 0.45rem 0.65rem;
+}
+
+html.compact-view .header h1 {
+  font-size: 1.05rem;
+}
+
+html.compact-view .header-meta {
+  gap: 0.35rem;
+}
+
+html.compact-view .view-switch-btn {
+  font-size: 0.6rem;
+  padding: 0.2rem 0.4rem;
+}
+
+html.compact-view .subtitle,
+html.compact-view .display-hint,
+html.compact-view .activity-hint,
+html.compact-view #tab-troops > .panel > .hint,
+html.compact-view .troop-unit-building {
+  display: none;
+}
+
+html.compact-view .clock {
+  font-size: 0.85rem;
+}
+
+html.compact-view .pill {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.62rem;
+}
+
+html.compact-view .tabs {
+  padding: 0.35rem 0.55rem 0;
+  gap: 0.25rem;
+  max-width: 100%;
+}
+
+html.compact-view .tab-btn {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+  border-radius: 6px 6px 0 0;
+}
+
+html.compact-view .layout {
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem 0.85rem;
+  max-width: 100%;
+}
+
+html.compact-view .panel {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+}
+
+html.compact-view .panel h2 {
+  margin-bottom: 0.45rem;
+  font-size: 0.68rem;
+}
+
+html.compact-view .subsection-title {
+  margin: 0.55rem 0 0.35rem;
+  font-size: 0.64rem;
+}
+
+html.compact-view .account-strip {
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+html.compact-view .account-item {
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+}
+
+html.compact-view .account-label {
+  font-size: 0.58rem;
+}
+
+html.compact-view .account-value {
+  font-size: 0.78rem;
+  margin-top: 0.05rem;
+}
+
+html.compact-view .status-grid {
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 0.35rem;
+}
+
+html.compact-view .stat {
+  padding: 0.35rem 0.4rem;
+  border-radius: 6px;
+}
+
+html.compact-view .stat-label {
+  font-size: 0.58rem;
+}
+
+html.compact-view .stat-value {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+}
+
+html.compact-view .village-context {
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+html.compact-view .village-list {
+  gap: 0.25rem;
+  max-height: 7rem;
+}
+
+html.compact-view .village-item {
+  padding: 0.28rem 0.4rem;
+  font-size: 0.72rem;
+  border-radius: 5px;
+}
+
+html.compact-view .village-item button {
+  padding: 0.12rem 0.3rem;
+  font-size: 0.65rem;
+}
+
+html.compact-view .actions-panel {
+  max-width: none;
+}
+
+html.compact-view .action-grid {
+  grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+  gap: 0.3rem;
+}
+
+html.compact-view button.action-btn {
+  padding: 0.35rem 0.25rem;
+  font-size: 0.68rem;
+  border-radius: 6px;
+}
+
+html.compact-view button.action-btn .key {
+  display: inline;
+  font-size: 0.72rem;
+  margin: 0 0.2rem 0 0;
+}
+
+html.compact-view .console-list,
+html.compact-view .log-list {
+  max-height: 6.5rem;
+  font-size: 0.65rem;
+  padding: 0.35rem 0.4rem;
+}
+
+html.compact-view .console-time {
+  display: none;
+}
+
+html.compact-view .console-line {
+  gap: 0.25rem;
+}
+
+html.compact-view .log-entry {
+  padding: 0.2rem 0;
+}
+
+html.compact-view .busy-note {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+}
+
+html.compact-view .display-settings-panel {
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+html.compact-view .display-view-option span {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+html.compact-view .troop-rr-panel {
+  margin-bottom: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+}
+
+html.compact-view .troop-rr-head {
+  margin-bottom: 0.45rem;
+}
+
+html.compact-view .troop-rr-stats {
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
+html.compact-view .troop-rr-stat {
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+}
+
+html.compact-view .troop-rr-stat-label {
+  font-size: 0.58rem;
+  margin-bottom: 0.15rem;
+}
+
+html.compact-view .troop-rr-stat-value {
+  font-size: 0.78rem;
+}
+
+html.compact-view .troop-rr-next-value {
+  font-size: 0.95rem;
+}
+
+html.compact-view .troop-rr-form {
+  padding-top: 0.45rem;
+}
+
+html.compact-view .troop-rr-enable {
+  font-size: 0.75rem;
+  margin-bottom: 0.45rem;
+  gap: 0.4rem;
+}
+
+html.compact-view .troop-rr-range {
+  gap: 0.4rem;
+}
+
+html.compact-view .troop-rr-range .troop-field {
+  min-width: 5.5rem;
+}
+
+html.compact-view .primary-btn,
+html.compact-view .ghost-btn {
+  padding: 0.32rem 0.55rem;
+  font-size: 0.72rem;
+}
+
+html.compact-view .troop-matrix {
+  font-size: 0.72rem;
+}
+
+html.compact-view .troop-matrix th,
+html.compact-view .troop-matrix td {
+  padding: 0.25rem 0.3rem;
+}
+
+html.compact-view .troop-matrix th {
+  font-size: 0.6rem;
+}
+
+html.compact-view .troop-matrix th:not(:first-child),
+html.compact-view .troop-matrix td:not(:first-child) {
+  width: 5.5rem;
+}
+
+html.compact-view .troop-unit-qty {
+  width: 3rem;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.72rem;
+}
+
+html.compact-view .troop-switch-track {
+  width: 1.85rem;
+  height: 1rem;
+}
+
+html.compact-view .troop-switch-track::after {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+html.compact-view .troop-switch input:checked + .troop-switch-track::after {
+  transform: translateX(0.85rem);
+}
+
+html.compact-view .troop-village-card > summary {
+  padding: 0.45rem 0.55rem;
+}
+
+html.compact-view .troop-village-title {
+  font-size: 0.82rem;
+}
+
+html.compact-view .troop-village-meta {
+  font-size: 0.68rem;
+}
+
+html.compact-view .troop-badge {
+  font-size: 0.62rem;
+  padding: 0.1rem 0.35rem;
+}
+
+html.compact-view .troop-village-auto-panel {
+  padding: 0.45rem 0.55rem;
+}
+
+html.compact-view .troop-village-auto-title {
+  font-size: 0.72rem;
+}
+
+html.compact-view .troop-switch-slider {
+  width: 2rem;
+  height: 1.1rem;
+}
+
+html.compact-view .troop-switch-slider::after {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
+html.compact-view .troop-switch input:checked + .troop-switch-slider::after {
+  transform: translateX(0.88rem);
+}
+
+html.compact-view .troop-switch-label {
+  font-size: 0.68rem;
+  min-width: 1.4rem;
+}
+
+html.compact-view .troop-village-next-row {
+  font-size: 0.68rem;
+  margin-top: 0.25rem;
+}
+
+html.compact-view .troop-villages-list {
+  gap: 0.35rem;
+}
+
+html.compact-view .activity-patterns-grid {
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 0.3rem;
+}
+
+html.compact-view .activity-pattern-item {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.35rem;
+}
+
+html.compact-view .activity-last {
+  margin-bottom: 0.45rem;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.72rem;
+}
+
+html.compact-view .toast {
+  bottom: 0.65rem;
+  right: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.75rem;
+}
+
+@media (min-width: 480px) {
+  html.compact-view #tab-dashboard.layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+
+  html.compact-view #tab-dashboard .status-panel {
+    grid-column: 1;
+  }
+
+  html.compact-view #tab-dashboard .actions-panel {
+    grid-column: 2;
+  }
+
+  html.compact-view #tab-dashboard .console-panel,
+  html.compact-view #tab-dashboard .logs-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 479px) {
+  html.compact-view #tab-dashboard.layout,
+  html.compact-view #tab-settings.layout,
+  html.compact-view #tab-troops.layout {
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+
+  html.compact-view .action-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
