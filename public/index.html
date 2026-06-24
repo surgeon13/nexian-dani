@@ -4,13 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Nexian Dashboard</title>
-  <link rel="stylesheet" href="/style.css?v=1.4.4" />
+  <link rel="stylesheet" href="/style.css?v=1.5.0" />
   <script>
     (function () {
       try {
         if (localStorage.getItem("nexian-dashboard-view") === "compact") {
           document.documentElement.classList.add("compact-view");
           document.documentElement.dataset.display = "compact";
+          document.addEventListener("DOMContentLoaded", function () {
+            document.body.classList.add("compact-view");
+          });
         }
       } catch (_) {}
     })();
@@ -41,8 +44,10 @@
       <div id="account-strip" class="account-strip"></div>
       <div id="status-grid" class="status-grid"></div>
       <div id="village-context" class="village-context"></div>
-      <h3 class="subsection-title">Village selector</h3>
-      <div id="village-list" class="village-list"></div>
+      <details id="village-picker" class="village-picker-details" open>
+        <summary class="subsection-title village-picker-summary">Villages</summary>
+        <div id="village-list" class="village-list"></div>
+      </details>
     </section>
 
     <section class="panel actions-panel">
@@ -198,6 +203,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=1.4.3"></script>
+  <script src="/app.js?v=1.5.0"></script>
 </body>
 </html>

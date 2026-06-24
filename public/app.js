@@ -1,19 +1,19 @@
 const DISPLAY_VIEW_KEY = "nexian-dashboard-view";
 
 const ACTIONS = [
-  { action: "status", key: "0", label: "Village status" },
-  { action: "farmlist", key: "1", label: "Send farmlists" },
-  { action: "village-builder", key: "2", label: "Village builder" },
-  { action: "resource-builder", key: "3", label: "Resource builder" },
-  { action: "troops", key: "4", label: "Troop trainer" },
-  { action: "cranny", key: "C", label: "Cranny defense" },
-  { action: "expansion", key: "5", label: "Expansion" },
-  { action: "pause", key: "P", label: "Pause / resume" },
-  { action: "relogin", key: "r", label: "Relogin" },
-  { action: "relogin-status", key: "R", label: "Relogin + status" },
-  { action: "logs", key: "L", label: "Log summary" },
-  { action: "stop-builder", key: "X", label: "Stop builder", danger: true },
-  { action: "quit", key: "Q", label: "Quit", danger: true }
+  { action: "status", key: "0", label: "Village status", shortLabel: "Status" },
+  { action: "farmlist", key: "1", label: "Send farmlists", shortLabel: "Farm" },
+  { action: "village-builder", key: "2", label: "Village builder", shortLabel: "V.Bld" },
+  { action: "resource-builder", key: "3", label: "Resource builder", shortLabel: "R.Bld" },
+  { action: "troops", key: "4", label: "Troop trainer", shortLabel: "Troop" },
+  { action: "cranny", key: "C", label: "Cranny defense", shortLabel: "Cranny" },
+  { action: "expansion", key: "5", label: "Expansion", shortLabel: "Exp" },
+  { action: "pause", key: "P", label: "Pause / resume", shortLabel: "Pause" },
+  { action: "relogin", key: "r", label: "Relogin", shortLabel: "Relog" },
+  { action: "relogin-status", key: "R", label: "Relogin + status", shortLabel: "R+St" },
+  { action: "logs", key: "L", label: "Log summary", shortLabel: "Log" },
+  { action: "stop-builder", key: "X", label: "Stop builder", shortLabel: "Stop", danger: true },
+  { action: "quit", key: "Q", label: "Quit", shortLabel: "Quit", danger: true }
 ];
 
 const els = {
@@ -52,6 +52,7 @@ const els = {
   activityPatterns: document.getElementById("activity-patterns"),
   displayCompact: document.getElementById("display-compact"),
   displayModeBadge: document.getElementById("display-mode-badge"),
+  villagePicker: document.getElementById("village-picker"),
   toast: document.getElementById("toast")
 };
 
@@ -77,18 +78,45 @@ async function api(path, options = {}) {
   return data;
 }
 
+function isCompactView() {
+  return document.body.classList.contains("compact-view");
+}
+
+function isMicroView() {
+  if (!isCompactView()) {
+    return false;
+  }
+  try {
+    return window.matchMedia("(max-width: 480px), (max-height: 400px)").matches;
+  } catch (_) {
+    return false;
+  }
+}
+
 function renderActions(busy) {
   els.actionGrid.innerHTML = "";
+  const compact = isCompactView();
   ACTIONS.forEach((item) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `action-btn${item.danger ? " danger" : ""}`;
     btn.disabled = busy;
-    btn.innerHTML = `<span class="key">${item.key}</span>${item.label}`;
+    const label = compact && item.shortLabel ? item.shortLabel : item.label;
+    btn.innerHTML = `<span class="key">${item.key}</span>${label}`;
     btn.addEventListener("click", () => runAction(item.action, item.label));
     els.actionGrid.appendChild(btn);
   });
   els.busyNote.classList.toggle("hidden", !busy);
+}
+
+function loopLabelShort(loop) {
+  if (!loop || !loop.enabled) {
+    return "off";
+  }
+  if (Number.isFinite(loop.nextInMinutes)) {
+    return `${loop.nextInMinutes}m`;
+  }
+  return "on";
 }
 
 function loopLabel(loop) {
@@ -128,6 +156,17 @@ function renderAccountStrip(account) {
     return;
   }
 
+  if (isCompactView()) {
+    const user = account.username || "—";
+    const server = account.gameHost || "—";
+    const browser = account.browserMode === "Headless" ? "headless" : "headed";
+    els.accountStrip.innerHTML = `
+    <div class="account-item account-compact-line">
+      <div class="account-value">${escapeHtml(user)} · ${escapeHtml(server)} · ${escapeHtml(browser)}</div>
+    </div>`;
+    return;
+  }
+
   const items = [
     { label: "Username", value: account.username || "—" },
     { label: "IP address", value: formatIpList(account) },
@@ -156,7 +195,20 @@ function renderStatus(status) {
 
   renderAccountStrip(status.account);
 
-  const stats = [
+  const compact = isCompactView();
+  const stats = compact
+    ? [
+        { label: "Farm", value: loopLabelShort(status.loops && status.loops.farmlist) },
+        { label: "Builder", value: loopLabelShort(status.loops && status.loops.builder) },
+        { label: "Troop", value: loopLabelShort(status.loops && status.loops.troop) },
+        { label: "Cranny", value: loopLabelShort(status.loops && status.loops.cranny) },
+        { label: "Activity", value: loopLabelShort(status.loops && status.loops.activity) },
+        {
+          label: "Now",
+          value: status.actionInProgress ? status.currentActionLabel || "…" : "Idle"
+        }
+      ]
+    : [
     { label: "Automation", value: paused ? `Paused (${status.automation.reason})` : "Online" },
     { label: "Session loop", value: loopLabel(status.sessionLoop) },
     { label: "Farmlist", value: loopLabel(status.loops && status.loops.farmlist) },
@@ -182,11 +234,16 @@ function renderStatus(status) {
 
   const sel = status.selectedVillage;
   const act = status.activeVillage;
-  els.villageContext.innerHTML = `
+  if (compact) {
+    els.villageContext.innerHTML = `
+    <div class="village-context-compact">${escapeHtml(formatVillage(sel, true))} → ${escapeHtml(formatVillage(act, true))} · ${escapeHtml(status.builderPlanMode || "resource")}</div>`;
+  } else {
+    els.villageContext.innerHTML = `
     <div><strong>Selected:</strong> ${escapeHtml(formatVillage(sel))}</div>
     <div><strong>Active:</strong> ${escapeHtml(formatVillage(act))}</div>
     <div><strong>Builder plan:</strong> ${escapeHtml(status.builderPlanMode || "resource")}</div>
   `;
+  }
 
   renderVillages(status.villages || [], status.selectedVillageId, status.activeVillageId);
   renderActions(Boolean(status.actionInProgress));
@@ -208,10 +265,14 @@ function renderStatus(status) {
   }
 }
 
-function formatVillage(v) {
+function formatVillage(v, short = false) {
   if (!v) return "—";
-  const coords = v.coordsText || (v.x != null && v.y != null ? `(${v.x}|${v.y})` : "");
-  return `${v.name || "?"} ${coords} (vid=${v.id})`;
+  const coords = v.coordsText || (v.x != null && v.y != null ? (short ? `${v.x}|${v.y}` : `(${v.x}|${v.y})`) : "");
+  const name = v.name || "?";
+  if (short) {
+    return `${name} ${coords}`.trim();
+  }
+  return `${name} ${coords} (vid=${v.id})`;
 }
 
 function escapeHtml(text) {
@@ -235,8 +296,8 @@ function renderVillages(villages, selectedId, activeId) {
     if (Number(v.id) === Number(activeId)) classes.push("active");
     row.className = classes.join(" ");
     row.innerHTML = `
-      <span>${escapeHtml(formatVillage(v))}${v.underAttack ? " ⚠" : ""}</span>
-      <button type="button">Select</button>
+      <span>${escapeHtml(formatVillage(v, isCompactView()))}${v.underAttack ? " ⚠" : ""}</span>
+      <button type="button">${isCompactView() ? "Sel" : "Select"}</button>
     `;
     row.querySelector("button").addEventListener("click", () => selectVillage(v.id));
     els.villageList.appendChild(row);
@@ -300,6 +361,7 @@ function appendConsoleEntry(entry, atBottomBeforeAdd) {
     lastConsoleId = entry.id;
   }
   const compact = document.body.classList.contains("compact-view");
+  const micro = compact && isMicroView();
   const line = document.createElement("div");
   line.className = `console-line console-${entry.level || "log"}`;
   if (!compact) {
@@ -311,8 +373,9 @@ function appendConsoleEntry(entry, atBottomBeforeAdd) {
   const text = document.createElement("span");
   text.className = "console-text";
   let message = entry.text || "";
-  if (compact && message.length > 120) {
-    message = `${message.slice(0, 117)}…`;
+  const maxLen = micro ? 72 : compact ? 100 : Infinity;
+  if (Number.isFinite(maxLen) && message.length > maxLen) {
+    message = `${message.slice(0, maxLen - 1)}…`;
   }
   text.textContent = message;
   line.appendChild(text);
@@ -1762,6 +1825,9 @@ function setCompactDom(compact) {
   if (els.displayModeBadge) {
     els.displayModeBadge.classList.toggle("hidden", !compact);
   }
+  if (els.villagePicker) {
+    els.villagePicker.open = !compact;
+  }
 }
 
 function applyDisplayView(view) {
@@ -1779,6 +1845,11 @@ function applyDisplayView(view) {
   });
   updateTabLabels(compact);
   refreshConsole().catch(() => {});
+  if (latestStatus) {
+    renderStatus(latestStatus);
+  } else {
+    renderActions(false);
+  }
 }
 
 let displayFormDirty = false;

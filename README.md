@@ -12,6 +12,8 @@ Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
 |------|----------|
 | **Login / session** | Saves browser storage to `storageState.json` so you can skip full login after the first run. |
 | **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker. |
+| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, troop templates, activity settings. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
+| **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, session play/rest windows, raid-guard heartbeat. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
@@ -35,7 +37,9 @@ Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
 | File / folder | Role |
 |---------------|------|
 | `login.js` | Entry: env, browser lifecycle, persists selected settings keys to `.env`. |
-| `terminalMenu.js` | Menus, village list, timers, raid guard hook, audit logging helpers. |
+| `terminalMenu.js` | Menus, village list, timers, raid guard hook, audit logging helpers, compact terminal UI. |
+| `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
+| `public/` | Dashboard HTML, CSS, and client JS. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers). |
 | `templates/` | Build templates; `templates/index.json` lists available plans. |
@@ -101,16 +105,59 @@ Opens after login. Typical keys include:
 - **`1`** — Send farmlists (all villages)
 - **`2`** — One **village stage** builder step
 - **`3`** — One **resource fields** builder step
-- **`T`** — Troop trainer (selected village)
-- **`4`** — Troop templates (preset lines, tribe, batch size)
+- **`4`** — Troop trainer (selected village)
+- **`C`** — Cranny defense (selected village)
+- **`T`** — Troop templates (preset lines, tribe, batch size)
 - **`5`** — Expansion / residence check
 - **`V`** — Pick active village context
-- **`S`** — Settings submenu (loops, gold complete, raid toggle, expansion options, …)
+- **`S`** — Settings submenu (loops, gold complete, **D = compact UI**, raid toggle, expansion options, …)
 - **`L`** — Log summary (`log.jsonl`)
-- **`P`** — Pause or resume automation loops (farmlist, builder, troop, cranny, raid guard). Optional auto-resume: `MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES` (Settings **8**).
+- **`P`** — Pause or resume automation loops (farmlist, builder, troop, cranny, raid guard). Optional auto-resume: `MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES` (Settings **3**).
 - **`Q`** — Quit menu / session teardown per `login.js` flow
 
-Exact labels are printed each run—use those as source of truth if keys change.
+Exact labels are printed each run—use those as source of truth if keys change. With **compact UI** enabled, the main menu collapses to two short rows (same keys).
+
+---
+
+## Raspberry Pi (3.5″ display)
+
+Typical Waveshare / GPIO TFT panels are **480×320** landscape. The dashboard **compact view** is tuned for this size.
+
+### Recommended `.env` on the Pi
+
+```env
+DASHBOARD_ENABLED=true
+DASHBOARD_COMPACT_VIEW=true
+DASHBOARD_OPEN_BROWSER=true
+BUILDER_DEFAULT_PLAN_MODE=resource
+```
+
+### Run
+
+```bash
+git pull
+npm install
+npm run dashboard:nexian:headless
+```
+
+Open **`http://127.0.0.1:3847`** on the Pi (or tunnel from another machine). Enable compact view via **Settings → Display** if it is not already on.
+
+### What compact view does
+
+| Surface | Behavior |
+|---------|----------|
+| **Web dashboard** | Single-column layout: status → action grid → live console → recent log. Smaller fonts, collapsed village list, short action labels. |
+| **Terminal (SSH/CMD)** | Shorter menus and one-line loop status (**S → D** toggles both). |
+
+### Optional: fullscreen browser (kiosk)
+
+After the bot is running:
+
+```bash
+chromium-browser --kiosk --app=http://127.0.0.1:3847
+```
+
+Use **Ctrl+F5** once after updates to refresh cached CSS/JS.
 
 ---
 
@@ -134,7 +181,8 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 **High-signal variables**
 
 - **Loops:** `FARMLIST_LOOP_*`, `BUILDER_LOOP_*`, `SESSION_LOOP_*`, `TROOP_TRAINING_ROUND_ROBIN_ENABLED`
-- **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`
+- **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
+- **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
 - **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
 

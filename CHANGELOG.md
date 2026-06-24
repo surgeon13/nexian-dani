@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.0] — 2026-06-18
+
+### Added
+
+- **Pi 3.5″ compact dashboard** — layout and typography tuned for ~480×320 TFT (Raspberry Pi). Flex viewport fit, 4-column action grid, collapsed village picker, abbreviated loop stats, shorter console lines.
+- **Compact terminal UI** — shorter main menu, one-line loop status, compact village context, and settings summary when `DASHBOARD_COMPACT_VIEW=true` or terminal **S → D**.
+- **`BUILDER_DEFAULT_PLAN_MODE`** — auto builder loop defaults to **resource fields** (`resource`); set `village` for village-stage plans.
+
+### Changed
+
+- Compact view syncs web + terminal from one setting (`DASHBOARD_COMPACT_VIEW` / Settings **[D]**).
+- Dashboard re-renders actions and status immediately when toggling compact (no stale long labels).
+- Village selector on dashboard is a collapsible `<details>` block (closed in compact view).
+- Cache-bust versions aligned (`v=1.5.0`).
+
+### Fixed
+
+- Duplicate variable declarations in `printSessionLoopStatus` (syntax error in full menu path).
+- Mismatched asset cache versions between `index.html` CSS and JS.
+
+---
+
 ## [1.4.0] — 2026-06-18
 
 ### Added
@@ -78,6 +100,7 @@ High-value follow-ups (not committed work):
 1. **Automated tests** — parsing helpers, template / progress validation, and small unit tests around env normalization.
 2. **Builder loop telemetry** — optional verbose timing logs per village to tune cooldowns and RR fairness.
 3. **Headless stability** — broader retry wrappers for other `page.goto` hot paths (status, builder) where transient aborts still surface.
-4. **Documentation** — keep `README.md` feature table in sync when menu keys change; consider a generated “keys reference” from menu strings.
+4. **Pi polish** — optional dedicated `TERMINAL_COMPACT` vs `DASHBOARD_COMPACT` if independent toggles are needed; touch-target sizing pass on Troop Templates tab at 320px height.
+5. **Documentation** — generated “keys reference” from menu strings when the terminal menu changes.
 
 Ideas previously noted in `README.md` (meta defaults, raid tuning) remain optional product polish.
