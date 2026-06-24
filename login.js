@@ -249,6 +249,12 @@ const settings = {
     String(process.env.BUILDER_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   builderRoundRobinExcludedVillageIds:
     String(process.env.BUILDER_RR_EXCLUDED_VILLAGE_IDS || "").trim(),
+  builderDefaultPlanMode: (() => {
+    const raw = String(process.env.BUILDER_DEFAULT_PLAN_MODE || "resource")
+      .trim()
+      .toLowerCase();
+    return raw === "village" ? "village" : "resource";
+  })(),
   troopTrainingRoundRobinEnabled:
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   troopTrainingLoopMinMinutes: numberEnv("TROOP_TRAINING_LOOP_MIN_MINUTES", 5),
@@ -394,6 +400,7 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_LOOP_MAX_MINUTES: String(settings.builderLoopMaxMinutes),
     BUILDER_ROUND_ROBIN_ENABLED: settings.builderRoundRobinEnabled ? "true" : "false",
     BUILDER_RR_EXCLUDED_VILLAGE_IDS: String(settings.builderRoundRobinExcludedVillageIds || ""),
+    BUILDER_DEFAULT_PLAN_MODE: settings.builderDefaultPlanMode === "village" ? "village" : "resource",
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),
@@ -452,6 +459,11 @@ function applySessionLoopDefaults() {
   );
   settings.builderLoopMinMinutes = builderLoop.min;
   settings.builderLoopMaxMinutes = builderLoop.max;
+
+  settings.builderDefaultPlanMode =
+    String(settings.builderDefaultPlanMode || "resource").toLowerCase() === "village"
+      ? "village"
+      : "resource";
 
   const troopTrainingLoop = normalizeRange(
     settings.troopTrainingLoopMinMinutes,

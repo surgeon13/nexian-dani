@@ -9,6 +9,9 @@
   --yellow: #d4a72c;
   --red: #f85149;
   --accent: #58a6ff;
+  --dash-edge-x: 1.35rem;
+  --dash-edge-top: 1rem;
+  --dash-edge-bottom: 2rem;
 }
 
 * {
@@ -21,13 +24,15 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1.5rem;
+  padding: var(--dash-edge-top) var(--dash-edge-x);
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, #15202b 0%, var(--bg) 100%);
 }
@@ -93,9 +98,10 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 1rem;
-  padding: 1rem 1.5rem 2rem;
+  padding: var(--dash-edge-top) var(--dash-edge-x) var(--dash-edge-bottom);
   max-width: 920px;
   margin: 0 auto;
+  width: 100%;
 }
 
 .panel {
@@ -285,17 +291,19 @@ button.action-btn.danger:hover:not(:disabled) {
 }
 
 .log-list {
-  max-height: 280px;
+  max-height: 200px;
   overflow-y: auto;
+  overflow-x: hidden;
   font-family: Consolas, "Courier New", monospace;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
 }
 
 .console-list {
-  max-height: 260px;
+  max-height: 200px;
   overflow-y: auto;
+  overflow-x: hidden;
   font-family: Consolas, "Courier New", monospace;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   line-height: 1.4;
   background: #0b0f14;
   border: 1px solid var(--border);
@@ -419,9 +427,10 @@ button.action-btn.danger:hover:not(:disabled) {
   display: flex;
   gap: 0.5rem;
   justify-content: center;
-  padding: 0.75rem 1.5rem 0;
+  padding: 0.75rem var(--dash-edge-x) 0;
   max-width: 920px;
   margin: 0 auto;
+  width: 100%;
 }
 
 .tab-btn {
@@ -1720,16 +1729,19 @@ button.action-btn.danger:hover:not(:disabled) {
 
 /* --- Compact view (small screens / Pi display) --- */
 :is(html, body).compact-view {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 body.compact-view {
-  font-size: 12px;
-  line-height: 1.3;
+  font-size: 14px;
+  line-height: 1.35;
+  --dash-edge-x: 1rem;
+  --dash-edge-top: 0.65rem;
+  --dash-edge-bottom: 1.25rem;
 }
 
 :is(html, body).compact-view .header {
-  padding: 0.45rem 0.65rem;
+  padding: var(--dash-edge-top) var(--dash-edge-x);
 }
 
 :is(html, body).compact-view .header h1 {
@@ -1758,20 +1770,20 @@ body.compact-view {
 }
 
 :is(html, body).compact-view .tabs {
-  padding: 0.35rem 0.55rem 0;
+  padding: 0.5rem var(--dash-edge-x) 0;
   gap: 0.25rem;
   max-width: 100%;
 }
 
 :is(html, body).compact-view .tab-btn {
-  padding: 0.35rem 0.55rem;
-  font-size: 0.75rem;
+  padding: 0.38rem 0.6rem;
+  font-size: 0.82rem;
   border-radius: 6px 6px 0 0;
 }
 
 :is(html, body).compact-view .layout {
   gap: 0.45rem;
-  padding: 0.45rem 0.55rem 0.85rem;
+  padding: var(--dash-edge-top) var(--dash-edge-x) var(--dash-edge-bottom);
   max-width: 100%;
 }
 
@@ -1807,7 +1819,7 @@ body.compact-view {
 }
 
 :is(html, body).compact-view .account-value {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   margin-top: 0.05rem;
 }
 
@@ -1822,12 +1834,12 @@ body.compact-view {
 }
 
 :is(html, body).compact-view .stat-label {
-  font-size: 0.58rem;
+  font-size: 0.64rem;
 }
 
 :is(html, body).compact-view .stat-value {
   margin-top: 0.1rem;
-  font-size: 0.78rem;
+  font-size: 0.85rem;
 }
 
 :is(html, body).compact-view .village-context {
@@ -1863,23 +1875,25 @@ body.compact-view {
 }
 
 :is(html, body).compact-view button.action-btn {
-  padding: 0.35rem 0.25rem;
-  font-size: 0.68rem;
+  padding: 0.38rem 0.28rem;
+  font-size: 0.74rem;
   border-radius: 6px;
 }
 
 :is(html, body).compact-view button.action-btn .key {
   display: inline;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   margin: 0 0.2rem 0 0;
 }
 
 :is(html, body).compact-view .console-list,
 :is(html, body).compact-view .log-list {
-  max-height: 5rem;
-  font-size: 0.62rem;
-  line-height: 1.25;
-  padding: 0.25rem 0.35rem;
+  max-height: 5.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  padding: 0.3rem 0.4rem;
 }
 
 :is(html, body).compact-view .console-panel,
@@ -2106,8 +2120,9 @@ body.compact-view {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  min-height: calc(100dvh - 6.25rem);
-  padding-bottom: 0.5rem;
+  gap: 0.45rem;
+  min-height: 0;
+  padding: var(--dash-edge-top) var(--dash-edge-x) var(--dash-edge-bottom);
 }
 
 :is(html, body).compact-view #tab-dashboard .status-panel {
@@ -2123,34 +2138,37 @@ body.compact-view {
 
 :is(html, body).compact-view #tab-dashboard .console-panel {
   order: 3;
-  flex: 1 1 auto;
-  min-height: 4.5rem;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
 }
 
 :is(html, body).compact-view #tab-dashboard .console-panel .console-list {
-  flex: 1 1 auto;
-  min-height: 3.5rem;
-  max-height: none;
+  flex: 0 0 auto;
+  max-height: 5.5rem;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 :is(html, body).compact-view #tab-dashboard .logs-panel {
   order: 4;
   flex: 0 0 auto;
-  margin-top: auto;
+  margin-top: 0;
 }
 
 :is(html, body).compact-view #tab-dashboard .logs-panel .log-list {
-  max-height: 4.5rem;
+  max-height: 3.75rem;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 @media (max-width: 479px) {
-  :is(html, body).compact-view #tab-dashboard.layout,
-  :is(html, body).compact-view #tab-settings.layout,
-  :is(html, body).compact-view #tab-troops.layout {
-    padding-left: 0.35rem;
-    padding-right: 0.35rem;
+  :root {
+    --dash-edge-x: 1.1rem;
+  }
+
+  body.compact-view {
+    --dash-edge-x: 0.9rem;
   }
 
   :is(html, body).compact-view .action-grid {

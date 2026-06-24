@@ -185,7 +185,7 @@ function renderStatus(status) {
   els.villageContext.innerHTML = `
     <div><strong>Selected:</strong> ${escapeHtml(formatVillage(sel))}</div>
     <div><strong>Active:</strong> ${escapeHtml(formatVillage(act))}</div>
-    <div><strong>Builder plan:</strong> ${escapeHtml(status.builderPlanMode || "village")}</div>
+    <div><strong>Builder plan:</strong> ${escapeHtml(status.builderPlanMode || "resource")}</div>
   `;
 
   renderVillages(status.villages || [], status.selectedVillageId, status.activeVillageId);

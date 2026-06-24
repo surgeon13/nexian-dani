@@ -1186,6 +1186,18 @@ function printVillageContextStatus(villageState, settings) {
   const selectedExcluded = selected && excludedSet.has(Number(selected.id));
   const activeExcluded = active && excludedSet.has(Number(active.id));
 
+  if (isCompactDisplay(settings)) {
+    console.log("");
+    const sel = villageDisplayName(selected);
+    const act = villageDisplayName(active);
+    let line = `  ${color("Villages:", ANSI.gray)} ${color(String(total), ANSI.bold, ANSI.cyan)}  ${color("Sel:", ANSI.gray)} ${color(sel, ANSI.bold, ANSI.yellow)}  ${color("Act:", ANSI.gray)} ${color(act, ANSI.bold, ANSI.green)}`;
+    if (selectedExcluded || activeExcluded) {
+      line += color("  RR excl", ANSI.bold, ANSI.yellow);
+    }
+    console.log(line);
+    return;
+  }
+
   console.log("");
   console.log(`  ${color("Villages:", ANSI.gray)} ${color(String(total), ANSI.bold, ANSI.cyan)}`);
   console.log(
@@ -1275,8 +1287,7 @@ function printBuilderRrExclusionSheet(snapshot, excludedIdSet) {
   console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
 }
 
-function printMainMenu(automationStatus) {
-  printDivider("NEXIAN");
+function printMainMenu(automationStatus, settings = terminalUiSettings) {
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
   const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -1284,14 +1295,26 @@ function printMainMenu(automationStatus) {
   const hh = String(now.getHours()).padStart(2, "0");
   const min = String(now.getMinutes()).padStart(2, "0");
   const ss = String(now.getSeconds()).padStart(2, "0");
-  console.log(`  ${color("Date:", ANSI.gray)} ${color(`${dd} ${mm} ${yyyy}`, ANSI.bold, ANSI.cyan)}`);
-  console.log(`  ${color("Time:", ANSI.gray)} ${color(`${hh}:${min}:${ss}`, ANSI.bold, ANSI.cyan)}`);
   const paused = Boolean(automationStatus && automationStatus.paused);
   const reason = String((automationStatus && automationStatus.reason) || "online");
   const pauseLabel = paused ? "PAUSED" : "RUNNING";
   const pauseColor = paused ? ANSI.yellow : ANSI.green;
-  console.log(`  ${color("Automation:", ANSI.gray)} ${color(pauseLabel, ANSI.bold, pauseColor)} ${color(`(${reason})`, ANSI.gray)}`);
-  console.log("");
+
+  if (isCompactDisplay(settings)) {
+    printDivider("NEXIAN");
+    console.log(
+      `  ${color(`${hh}:${min}:${ss}`, ANSI.bold, ANSI.cyan)}  ${color(pauseLabel, ANSI.bold, pauseColor)} ${color(`(${reason})`, ANSI.gray)}`
+    );
+    console.log(
+      `  ${color("0", ANSI.bold, ANSI.cyan)} Status  ${color("1", ANSI.bold, ANSI.cyan)} Farm  ${color("2", ANSI.bold, ANSI.cyan)} V.Bld  ${color("3", ANSI.bold, ANSI.cyan)} R.Bld  ${color("4", ANSI.bold, ANSI.cyan)} Troop  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("T", ANSI.bold, ANSI.cyan)} Tpl`
+    );
+    console.log(
+      `  ${color("5", ANSI.bold, ANSI.cyan)} Exp  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
+    );
+    return;
+  }
+
+  printDivider("NEXIAN");
   console.log(`  ${color("0", ANSI.bold, ANSI.cyan)}  Village Status`);
   console.log(`  ${color("1", ANSI.bold, ANSI.cyan)}  Send Farmlists`);
   console.log(`  ${color("2", ANSI.bold, ANSI.cyan)}  Village Stage Builder`);
@@ -1663,6 +1686,67 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
   const farmlistStatus = runtimeStatus && runtimeStatus.farmlistLoop
     ? runtimeStatus.farmlistLoop
     : { enabled: settings.farmlistLoopEnabled, nextInMinutes: null };
+  const builderStatus = runtimeStatus && runtimeStatus.builderLoop
+    ? runtimeStatus.builderLoop
+    : { enabled: settings.builderLoopEnabled, nextInMinutes: null };
+  const troopStatus = runtimeStatus && runtimeStatus.troopLoop
+    ? runtimeStatus.troopLoop
+    : { enabled: settings.troopTrainingRoundRobinEnabled, nextInMinutes: null };
+  const crannyStatus = runtimeStatus && runtimeStatus.crannyLoop
+    ? runtimeStatus.crannyLoop
+    : { enabled: settings.crannyDefenseRoundRobinEnabled, nextInMinutes: null };
+  const builderPlanLabel = String(builderPlanMode || "village").toLowerCase() === "resource"
+    ? "resource"
+    : "village";
+
+  if (isCompactDisplay(settings)) {
+    const fmtLoop = (label, enabled, min, max, nextMin) => {
+      const on = enabled ? color("ON", ANSI.bold, ANSI.green) : color("OFF", ANSI.bold, ANSI.yellow);
+      const next = enabled && Number.isFinite(nextMin) ? color(`→${nextMin}m`, ANSI.bold, ANSI.cyan) : "";
+      return `${label} ${on}(${min}-${max}m)${next ? ` ${next}` : ""}`;
+    };
+    const parts = [
+      fmtLoop(
+        "Farm",
+        settings.farmlistLoopEnabled,
+        settings.farmlistLoopMinMinutes,
+        settings.farmlistLoopMaxMinutes,
+        farmlistStatus.nextInMinutes
+      ),
+      fmtLoop(
+        "Bld",
+        settings.builderLoopEnabled,
+        settings.builderLoopMinMinutes,
+        settings.builderLoopMaxMinutes,
+        builderStatus.nextInMinutes
+      ) + color(`/${builderPlanLabel}`, ANSI.gray),
+      fmtLoop(
+        "Troop",
+        settings.troopTrainingRoundRobinEnabled,
+        settings.troopTrainingLoopMinMinutes,
+        settings.troopTrainingLoopMaxMinutes,
+        troopStatus.nextInMinutes
+      ),
+      fmtLoop(
+        "Cranny",
+        settings.crannyDefenseRoundRobinEnabled,
+        settings.crannyDefenseLoopMinMinutes,
+        settings.crannyDefenseLoopMaxMinutes,
+        crannyStatus.nextInMinutes
+      )
+    ];
+    console.log("");
+    console.log(`  ${color("Loops:", ANSI.gray)} ${parts.join(color(" | ", ANSI.gray))}`);
+    if (settings.sessionLoopEnabled) {
+      const nextSessionText = Number.isFinite(sessionStatus.nextInMinutes)
+        ? `${sessionStatus.nextInMinutes}m`
+        : "—";
+      console.log(
+        `  ${color("Session:", ANSI.gray)} ${color("ON", ANSI.bold, ANSI.green)} play ${settings.playMinMinutes}-${settings.playMaxMinutes}m rest ${settings.restMinMinutes}-${settings.restMaxMinutes}m next ${color(nextSessionText, ANSI.bold, ANSI.cyan)}`
+      );
+    }
+    return;
+  }
 
   const modeLabel = settings.sessionLoopEnabled ? "Repeating Session" : "One-Time Login";
   const modeColor = settings.sessionLoopEnabled ? ANSI.green : ANSI.yellow;
@@ -1700,17 +1784,8 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
     );
   }
 
-  const builderStatus = runtimeStatus && runtimeStatus.builderLoop
-    ? runtimeStatus.builderLoop
-    : { enabled: settings.builderLoopEnabled, nextInMinutes: null };
-  const troopStatus = runtimeStatus && runtimeStatus.troopLoop
-    ? runtimeStatus.troopLoop
-    : { enabled: settings.troopTrainingRoundRobinEnabled, nextInMinutes: null };
   const builderModeLabel = settings.builderLoopEnabled ? "ON" : "OFF";
   const builderModeColor = settings.builderLoopEnabled ? ANSI.green : ANSI.yellow;
-  const builderPlanLabel = String(builderPlanMode || "village").toLowerCase() === "resource"
-    ? "resource"
-    : "village";
   console.log(
     `  ${color("Builder Loop:", ANSI.gray)} ${color(builderModeLabel, ANSI.bold, builderModeColor)} ${color(`(${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes} min)`, ANSI.bold)} ${color(`[plan: ${builderPlanLabel}]`, ANSI.gray)}`
   );
@@ -1756,9 +1831,6 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
     }
   }
 
-  const crannyStatus = runtimeStatus && runtimeStatus.crannyLoop
-    ? runtimeStatus.crannyLoop
-    : { enabled: settings.crannyDefenseRoundRobinEnabled, nextInMinutes: null };
   const crannyModeLabel = settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF";
   const crannyModeColor = settings.crannyDefenseRoundRobinEnabled ? ANSI.green : ANSI.yellow;
   console.log(
@@ -1821,6 +1893,10 @@ function printSettings(settings, villageState) {
     { label: "tplCavalryDef", value: String(settings.troopTemplateCavalryDefensive || "").trim() || "(defaults)" },
     { label: "farmlistLoop", value: `${settings.farmlistLoopEnabled ? "ON" : "OFF"} (${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes} min)` },
     { label: "builderLoop", value: `${settings.builderLoopEnabled ? "ON" : "OFF"} (${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes} min)` },
+    {
+      label: "builderDefaultPlan",
+      value: settings.builderDefaultPlanMode === "resource" ? "resource fields" : "village stage"
+    },
     { label: "villageStatusUrl", value: settings.villageStatusUrl },
     { label: "selectAllSelector", value: settings.selectAllSelector },
     { label: "sendButtonSelector", value: settings.sendButtonSelector },
@@ -1912,7 +1988,7 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("4")}  Activity Simulation ${dim("[")}${onOff(settings.activitySimulationEnabled)}${dim("]")}  ${tag("every", `${settings.activitySimulationLoopMinMinutes}-${settings.activitySimulationLoopMaxMinutes}m`)}`
   );
   console.log(
-    `  ${opt("D")}  Dashboard Display  ${tag("", settings.dashboardCompactView ? "Compact view" : "Full view")}`
+    `  ${opt("D")}  Compact UI           ${tag("", settings.dashboardCompactView ? "Compact view" : "Full view")}`
   );
   gap();
 
@@ -2475,8 +2551,11 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
           await runtimeControls.persistSettings(["DASHBOARD_COMPACT_VIEW"]);
         }
         logSuccess(
-          `Dashboard display: ${settings.dashboardCompactView ? "Compact view" : "Full view"}`
+          `Compact UI: ${settings.dashboardCompactView ? "ON" : "OFF"} (web dashboard + terminal menus).`
         );
+        if (settings.dashboardCompactView && runtimeControls.dashboardPort) {
+          logInfo(`[Dashboard] Open http://127.0.0.1:${runtimeControls.dashboardPort} for compact web UI.`);
+        }
       } catch (error) {
         logError(`Failed to update dashboard display: ${error.message || error}`);
       }
@@ -4269,7 +4348,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let builderTemplateDeferredForCrannyLogged = false;
     let builderVillageWaitLastLogAt = null;
     let lastAutoFarmlistStatusPrintedAt = null;
-    let activeBuilderPlanMode = "village";
+    let activeBuilderPlanMode =
+      String(settings.builderDefaultPlanMode || "resource").toLowerCase() === "village"
+        ? "village"
+        : "resource";
     let roundRobinIndex = 0;
     const realignStreakByKey = new Map();
     let crannyRoundRobinIndex = 0;
@@ -4756,7 +4838,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     };
 
     const normalizeBuilderPlanMode = (planMode) =>
-      String(planMode || "village").toLowerCase() === "resource" ? "resource" : "village";
+      String(planMode || settings.builderDefaultPlanMode || "resource").toLowerCase() === "resource"
+        ? "resource"
+        : "village";
 
     const isBuilderPlanFullyComplete = (village, planMode) => {
       try {
@@ -7219,7 +7303,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     if (dashboardBridge) {
       dashboardBridge.setSnapshotProvider(buildDashboardSnapshot);
-      logInfo(`[Dashboard] Web UI + terminal — open http://127.0.0.1:${dashboardPort}`);
+      const compactNote = settings.dashboardCompactView ? " compact UI" : "";
+      logInfo(`[Dashboard] Web UI${compactNote} — open http://127.0.0.1:${dashboardPort}`);
     }
 
     while (!done) {
