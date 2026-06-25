@@ -163,7 +163,7 @@ Use **Ctrl+F5** once after updates to refresh cached CSS/JS.
 
 Dashboard OOM crashes were a **software bug** (fixed in v1.5.5+), not limited to Raspberry Pi — they could happen on a strong PC after the bot ran for hours. Causes included loading entire `log.jsonl` files into RAM, sending full troop payloads over SSE every few seconds, and rebuilding status snapshots on every loop tick.
 
-After `git pull`, restart the dashboard. If `log.jsonl` is very large, run `npm run clean:runtime` or archive/delete the log file. Prefer one dashboard browser tab. Launcher scripts set `NODE_OPTIONS=--max-old-space-size=512` when unset (optional safety margin, not a substitute for the fixes above).
+After `git pull`, restart the dashboard. Log rotation (v1.5.7+) keeps `log.jsonl` small automatically; older logs live in `log-archive/`. You can still run `npm run clean:runtime` to wipe the active session files. Prefer one dashboard browser tab.
 
 ---
 
@@ -201,6 +201,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 ## Logging
 
 - **File:** `log.jsonl` (or `NEXIAN_ACTION_LOG_FILE`)
+- **Rotation:** When the log exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), it is renamed into `log-archive/` and logging continues in a new empty file.
 - **Format:** one JSON object per line, append-only
 - **Summary menu** counts farmlists, troops, upgrades, gold autocomplete, merchant-transfer history (mostly historical), evacuation history (mostly historical).
 

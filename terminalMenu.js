@@ -7,6 +7,7 @@ const resourceCirculation = require("./resourceCirculation");
 const troopVillagePreferences = require("./troopVillagePreferences");
 const activitySimulation = require("./activitySimulation");
 const { forEachLogLine } = require("./logTail");
+const { appendActionLogLine, listArchivedLogs, resolveArchiveDir, maybeRotateActionLog } = require("./actionLog");
 
 const USE_COLORS =
   process.env.NO_COLOR !== "1" &&
@@ -5288,12 +5289,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     const writeAuditEvent = (event) => {
       try {
-        const dir = path.dirname(logFilePath);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
+        const rotation = appendActionLogLine(logFilePath, `${JSON.stringify(event)}\n`);
+        if (rotation && rotation.rotated) {
+          logInfo(
+            `[Log] Rotated — archived to ${path.basename(rotation.archivePath)} (${Math.round((rotation.archivedBytes || 0) / 1024 / 1024)} MB), started fresh ${path.basename(logFilePath)}`
+          );
         }
-        // Append-only audit log so historical events remain across runs.
-        fs.appendFileSync(logFilePath, `${JSON.stringify(event)}\n`, "utf8");
       } catch (error) {
         logWarn(`Failed to write action log: ${error.message || error}`);
       }
@@ -5732,10 +5733,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     const showLogSummary = async () => {
       const summary = await summarizeActions();
+      const archives = listArchivedLogs(logFilePath);
       printDivider("ACTION LOG SUMMARY");
       printKeyValueRows([
         { label: "Log file", value: logFilePath },
-        { label: "Retention", value: "Append-only (no auto-delete)" },
+        { label: "Archive folder", value: resolveArchiveDir(logFilePath) },
+        { label: "Archived files", value: archives.length ? String(archives.length) : "none" },
+        { label: "Retention", value: "Current log rotates when over size limit; old files kept in archive" },
         { label: "Total actions", value: String(summary.totalActions) },
         { label: "This session", value: String(summary.thisSessionActions) },
         { label: "Successful", value: String(summary.successfulActions) },
@@ -5771,6 +5775,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     };
 
     logInfo(`[Log] ${path.basename(logFilePath)}`);
+    try {
+      const startupRotation = maybeRotateActionLog(logFilePath);
+      if (startupRotation.rotated) {
+        logInfo(
+          `[Log] Rotated on startup — archived to ${path.basename(startupRotation.archivePath)} (${Math.round((startupRotation.archivedBytes || 0) / 1024 / 1024)} MB), fresh ${path.basename(logFilePath)}`
+        );
+      }
+    } catch (error) {
+      logWarn(`[Log] Startup rotation check failed: ${error.message || error}`);
+    }
 
     try {
       await refreshVillageState({ navigateToStatusPage: true, silent: false });

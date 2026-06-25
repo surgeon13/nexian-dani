@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.7] — 2026-06-18
+
+### Added
+
+- **Action log rotation** — when `log.jsonl` exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), the file is moved to `log-archive/` with a timestamp and a fresh log starts. Terminal log summary (**L**) shows archive folder and file count.
+
+---
+
 ## [1.5.6] — 2026-06-18
 
 ### Fixed
