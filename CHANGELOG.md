@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.4] — 2026-06-18
+
+### Changed
+
+- **Compact terminal menu layout** — session line first, then loops (Cranny on its own row), then two-row action keys (`0–5` / `T C V…`), then village context at the bottom.
+
+---
+
 ## [1.5.3] — 2026-06-18
 
 ### Fixed

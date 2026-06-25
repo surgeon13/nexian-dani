@@ -1226,6 +1226,7 @@ function printVillageContextStatus(villageState, settings) {
 
   if (isCompactDisplay(settings)) {
     console.log("");
+    console.log("");
     const sel = villageDisplayName(selected);
     const act = villageDisplayName(active);
     let line = `  ${color("Villages:", ANSI.gray)} ${color(String(total), ANSI.bold, ANSI.cyan)}  ${color("Sel:", ANSI.gray)} ${color(sel, ANSI.bold, ANSI.yellow)}  ${color("Act:", ANSI.gray)} ${color(act, ANSI.bold, ANSI.green)}`;
@@ -1342,12 +1343,6 @@ function printMainMenu(automationStatus, settings = terminalUiSettings) {
     printDivider("NEXIAN");
     console.log(
       `  ${color(`${hh}:${min}:${ss}`, ANSI.bold, ANSI.cyan)}  ${color(pauseLabel, ANSI.bold, pauseColor)} ${color(`(${reason})`, ANSI.gray)}`
-    );
-    console.log(
-      `  ${color("0", ANSI.bold, ANSI.cyan)} Status  ${color("1", ANSI.bold, ANSI.cyan)} Farm  ${color("2", ANSI.bold, ANSI.cyan)} V.Bld  ${color("3", ANSI.bold, ANSI.cyan)} R.Bld  ${color("4", ANSI.bold, ANSI.cyan)} Troop  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("T", ANSI.bold, ANSI.cyan)} Tpl`
-    );
-    console.log(
-      `  ${color("5", ANSI.bold, ANSI.cyan)} Exp  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
     );
     return;
   }
@@ -1717,6 +1712,19 @@ function getBranchTroopListPlain(settings, strategyMode, branch) {
 
 const TROOP_TRIBE_MENU_CYCLE = ["auto", "teuton", "roman", "gaul"];
 
+function printCompactMenuKeys(settings = terminalUiSettings) {
+  if (!isCompactDisplay(settings)) {
+    return;
+  }
+  console.log("");
+  console.log(
+    `  ${color("0", ANSI.bold, ANSI.cyan)} Status  ${color("1", ANSI.bold, ANSI.cyan)} Farm  ${color("2", ANSI.bold, ANSI.cyan)} V.Bld  ${color("3", ANSI.bold, ANSI.cyan)} R.Bld  ${color("4", ANSI.bold, ANSI.cyan)} Troop  ${color("5", ANSI.bold, ANSI.cyan)} Exp`
+  );
+  console.log(
+    `  ${color("T", ANSI.bold, ANSI.cyan)} Tpl  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
+  );
+}
+
 function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "village") {
   const sessionStatus = runtimeStatus && runtimeStatus.sessionLoop
     ? runtimeStatus.sessionLoop
@@ -1738,12 +1746,23 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
     : "village";
 
   if (isCompactDisplay(settings)) {
-    const fmtLoop = (label, enabled, min, max, nextMin) => {
+    const fmtLoop = (label, enabled, min, max, nextMin, nextSuffix = "") => {
       const on = enabled ? color("ON", ANSI.bold, ANSI.green) : color("OFF", ANSI.bold, ANSI.yellow);
-      const next = enabled && Number.isFinite(nextMin) ? color(`→${nextMin}m`, ANSI.bold, ANSI.cyan) : "";
+      const next =
+        enabled && Number.isFinite(nextMin)
+          ? color(`→${nextMin}m${nextSuffix}`, ANSI.bold, ANSI.cyan)
+          : "";
       return `${label} ${on}(${min}-${max}m)${next ? ` ${next}` : ""}`;
     };
-    const parts = [
+    if (settings.sessionLoopEnabled) {
+      const nextSessionText = Number.isFinite(sessionStatus.nextInMinutes)
+        ? `${sessionStatus.nextInMinutes}m`
+        : "—";
+      console.log(
+        `  ${color("Session:", ANSI.gray)} ${color("ON", ANSI.bold, ANSI.green)} play ${settings.playMinMinutes}-${settings.playMaxMinutes}m rest ${settings.restMinMinutes}-${settings.restMaxMinutes}m next ${color(nextSessionText, ANSI.bold, ANSI.cyan)}`
+      );
+    }
+    const mainLoops = [
       fmtLoop(
         "Farm",
         settings.farmlistLoopEnabled,
@@ -1756,33 +1775,27 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
         settings.builderLoopEnabled,
         settings.builderLoopMinMinutes,
         settings.builderLoopMaxMinutes,
-        builderStatus.nextInMinutes
-      ) + color(`/${builderPlanLabel}`, ANSI.gray),
+        builderStatus.nextInMinutes,
+        `/${builderPlanLabel}`
+      ),
       fmtLoop(
         "Troop",
         settings.troopTrainingRoundRobinEnabled,
         settings.troopTrainingLoopMinMinutes,
         settings.troopTrainingLoopMaxMinutes,
         troopStatus.nextInMinutes
-      ),
-      fmtLoop(
+      )
+    ].join(color(" | ", ANSI.gray));
+    console.log(`  ${color("Loops:", ANSI.gray)} ${mainLoops}`);
+    console.log(
+      ` ${fmtLoop(
         "Cranny",
         settings.crannyDefenseRoundRobinEnabled,
         settings.crannyDefenseLoopMinMinutes,
         settings.crannyDefenseLoopMaxMinutes,
         crannyStatus.nextInMinutes
-      )
-    ];
-    console.log("");
-    console.log(`  ${color("Loops:", ANSI.gray)} ${parts.join(color(" | ", ANSI.gray))}`);
-    if (settings.sessionLoopEnabled) {
-      const nextSessionText = Number.isFinite(sessionStatus.nextInMinutes)
-        ? `${sessionStatus.nextInMinutes}m`
-        : "—";
-      console.log(
-        `  ${color("Session:", ANSI.gray)} ${color("ON", ANSI.bold, ANSI.green)} play ${settings.playMinMinutes}-${settings.playMaxMinutes}m rest ${settings.restMinMinutes}-${settings.restMaxMinutes}m next ${color(nextSessionText, ANSI.bold, ANSI.cyan)}`
-      );
-    }
+      )}`
+    );
     return;
   }
 
@@ -7341,6 +7354,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         troopLoop: troopLoopStatus,
         crannyLoop: crannyLoopStatus
       }, activeBuilderPlanMode);
+      printCompactMenuKeys(settings);
       printVillageContextStatus(villageState, settings);
     };
 
