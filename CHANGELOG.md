@@ -2,11 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.6] — 2026-06-18
+
+### Fixed
+
+- Throttled dashboard snapshots no longer rebuild full state on every loop tick (cached object returned instead).
+- Removed redundant snapshot publish when scheduling each per-village troop timer.
+
+---
+
 ## [1.5.5] — 2026-06-18
 
 ### Fixed
 
-- **Dashboard out-of-memory crashes** — throttle SSE status snapshots, skip heartbeat when no browser connected, send lightweight `troopLive` instead of full troop templates every tick, cap console buffer/text, tail `log.jsonl` from the end of the file (512KB max), stream log summaries without loading the whole file.
+- **Dashboard out-of-memory crashes** — affects any hardware (including strong PCs) after long runs; caused by unbounded log reads and oversized/frequent SSE snapshots, not insufficient RAM.
 
 ### Changed
 

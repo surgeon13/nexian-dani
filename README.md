@@ -159,9 +159,11 @@ chromium-browser --kiosk --app=http://127.0.0.1:3847
 
 Use **Ctrl+F5** once after updates to refresh cached CSS/JS.
 
-### Low memory (Pi / long runs)
+### Low memory / long-running dashboard
 
-If the dashboard exits with **out of memory**, pull v1.5.5+ and restart. The web UI now sends smaller SSE updates and reads logs efficiently. For very tight RAM (e.g. Pi 3B + Chromium), prefer headless mode and close other browser tabs; the launcher scripts set `NODE_OPTIONS=--max-old-space-size=512` when not already set.
+Dashboard OOM crashes were a **software bug** (fixed in v1.5.5+), not limited to Raspberry Pi — they could happen on a strong PC after the bot ran for hours. Causes included loading entire `log.jsonl` files into RAM, sending full troop payloads over SSE every few seconds, and rebuilding status snapshots on every loop tick.
+
+After `git pull`, restart the dashboard. If `log.jsonl` is very large, run `npm run clean:runtime` or archive/delete the log file. Prefer one dashboard browser tab. Launcher scripts set `NODE_OPTIONS=--max-old-space-size=512` when unset (optional safety margin, not a substitute for the fixes above).
 
 ---
 

@@ -16,6 +16,7 @@ function createDashboardBridge() {
   let activitySettingsUpdater = null;
   let displaySettingsUpdater = null;
   let lastSnapshotJson = null;
+  let lastSnapshotObj = null;
   let lastSnapshotAt = 0;
   let snapshotFlushTimer = null;
 
@@ -85,6 +86,7 @@ function createDashboardBridge() {
   function setSnapshotProvider(fn) {
     snapshotProvider = typeof fn === "function" ? fn : () => ({});
     lastSnapshotJson = null;
+    lastSnapshotObj = null;
     lastSnapshotAt = 0;
   }
 
@@ -99,6 +101,7 @@ function createDashboardBridge() {
   function flushSnapshot(force = false) {
     snapshotFlushTimer = null;
     const snap = getSnapshot();
+    lastSnapshotObj = snap;
     let payload;
     try {
       payload = JSON.stringify(snap);
@@ -135,8 +138,11 @@ function createDashboardBridge() {
         snapshotFlushTimer = setTimeout(() => {
           flushSnapshot(true);
         }, SNAPSHOT_MIN_INTERVAL_MS - (now - lastSnapshotAt));
+        if (typeof snapshotFlushTimer.unref === "function") {
+          snapshotFlushTimer.unref();
+        }
       }
-      return getSnapshot();
+      return lastSnapshotObj;
     }
     if (snapshotFlushTimer) {
       clearTimeout(snapshotFlushTimer);

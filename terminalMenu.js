@@ -6559,9 +6559,6 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       };
 
       state.timer = setTimeout(() => void runTroopVillageScheduledTick(), minutes * 60 * 1000);
-      if (dashboardBridge) {
-        dashboardBridge.publishSnapshot();
-      }
     };
 
     const syncAllTroopVillageLoops = () => {
