@@ -3,7 +3,10 @@ function createDashboardBridge() {
   const commandWaiters = [];
   const sseClients = new Set();
   const consoleBuffer = [];
-  const CONSOLE_BUFFER_LIMIT = 400;
+  const CONSOLE_BUFFER_LIMIT = 250;
+  const MAX_CONSOLE_TEXT_CHARS = 1200;
+  const COMMAND_QUEUE_LIMIT = 32;
+  const SNAPSHOT_MIN_INTERVAL_MS = 1200;
   let consoleSeq = 0;
   let snapshotProvider = () => ({ updatedAt: new Date().toISOString() });
   let pendingPrompt = null;
@@ -12,6 +15,9 @@ function createDashboardBridge() {
   let troopSettingsUpdater = null;
   let activitySettingsUpdater = null;
   let displaySettingsUpdater = null;
+  let lastSnapshotJson = null;
+  let lastSnapshotAt = 0;
+  let snapshotFlushTimer = null;
 
   function setQuitHandler(fn) {
     quitHandler = typeof fn === "function" ? fn : null;
@@ -63,6 +69,9 @@ function createDashboardBridge() {
   }
 
   function publishEvent(type, data) {
+    if (!sseClients.size) {
+      return;
+    }
     const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of sseClients) {
       try {
@@ -75,6 +84,8 @@ function createDashboardBridge() {
 
   function setSnapshotProvider(fn) {
     snapshotProvider = typeof fn === "function" ? fn : () => ({});
+    lastSnapshotJson = null;
+    lastSnapshotAt = 0;
   }
 
   function getSnapshot() {
@@ -85,10 +96,53 @@ function createDashboardBridge() {
     }
   }
 
-  function publishSnapshot() {
+  function flushSnapshot(force = false) {
+    snapshotFlushTimer = null;
     const snap = getSnapshot();
-    publishEvent("status", snap);
+    let payload;
+    try {
+      payload = JSON.stringify(snap);
+    } catch (_error) {
+      payload = JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        error: "snapshot_stringify_failed"
+      });
+    }
+    if (!force && payload === lastSnapshotJson) {
+      lastSnapshotAt = Date.now();
+      return snap;
+    }
+    lastSnapshotJson = payload;
+    lastSnapshotAt = Date.now();
+    if (sseClients.size) {
+      const message = `event: status\ndata: ${payload}\n\n`;
+      for (const client of sseClients) {
+        try {
+          client.write(message);
+        } catch (_error) {
+          sseClients.delete(client);
+        }
+      }
+    }
     return snap;
+  }
+
+  function publishSnapshot(options = {}) {
+    const force = Boolean(options && options.force);
+    const now = Date.now();
+    if (!force && now - lastSnapshotAt < SNAPSHOT_MIN_INTERVAL_MS) {
+      if (!snapshotFlushTimer) {
+        snapshotFlushTimer = setTimeout(() => {
+          flushSnapshot(true);
+        }, SNAPSHOT_MIN_INTERVAL_MS - (now - lastSnapshotAt));
+      }
+      return getSnapshot();
+    }
+    if (snapshotFlushTimer) {
+      clearTimeout(snapshotFlushTimer);
+      snapshotFlushTimer = null;
+    }
+    return flushSnapshot(force);
   }
 
   function enqueueCommand(command) {
@@ -103,6 +157,9 @@ function createDashboardBridge() {
       commandWaiters.shift().resolve(normalized);
     } else {
       commandQueue.push(normalized);
+      if (commandQueue.length > COMMAND_QUEUE_LIMIT) {
+        commandQueue.splice(0, commandQueue.length - COMMAND_QUEUE_LIMIT);
+      }
     }
     publishEvent("command", { command: normalized, at: Date.now() });
     return true;
@@ -148,7 +205,7 @@ function createDashboardBridge() {
     return new Promise((resolve) => {
       pendingPrompt = { message: String(message || ""), resolve };
       publishEvent("prompt", { message: pendingPrompt.message, at: Date.now() });
-      publishSnapshot();
+      publishSnapshot({ force: true });
     });
   }
 
@@ -158,7 +215,7 @@ function createDashboardBridge() {
     }
     pendingPrompt = null;
     publishEvent("prompt_dismiss", { at: Date.now() });
-    publishSnapshot();
+    publishSnapshot({ force: true });
     return true;
   }
 
@@ -171,7 +228,7 @@ function createDashboardBridge() {
     resolve(String(answer ?? ""));
     publishEvent("prompt_answer", { answer: String(answer ?? ""), at: Date.now() });
     publishEvent("prompt_dismiss", { at: Date.now() });
-    publishSnapshot();
+    publishSnapshot({ force: true });
     return true;
   }
 
@@ -184,9 +241,12 @@ function createDashboardBridge() {
   }
 
   function pushConsole(level, text) {
-    const message = String(text == null ? "" : text);
+    let message = String(text == null ? "" : text);
     if (!message) {
       return;
+    }
+    if (message.length > MAX_CONSOLE_TEXT_CHARS) {
+      message = `${message.slice(0, MAX_CONSOLE_TEXT_CHARS - 1)}…`;
     }
     const entry = {
       id: ++consoleSeq,

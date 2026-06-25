@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.5] — 2026-06-18
+
+### Fixed
+
+- **Dashboard out-of-memory crashes** — throttle SSE status snapshots, skip heartbeat when no browser connected, send lightweight `troopLive` instead of full troop templates every tick, cap console buffer/text, tail `log.jsonl` from the end of the file (512KB max), stream log summaries without loading the whole file.
+
+### Changed
+
+- Dashboard launcher sets `NODE_OPTIONS=--max-old-space-size=512` when unset (helps on Pi / low-RAM hosts).
+
+---
+
 ## [1.5.4] — 2026-06-18
 
 ### Changed

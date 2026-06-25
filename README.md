@@ -159,6 +159,10 @@ chromium-browser --kiosk --app=http://127.0.0.1:3847
 
 Use **Ctrl+F5** once after updates to refresh cached CSS/JS.
 
+### Low memory (Pi / long runs)
+
+If the dashboard exits with **out of memory**, pull v1.5.5+ and restart. The web UI now sends smaller SSE updates and reads logs efficiently. For very tight RAM (e.g. Pi 3B + Chromium), prefer headless mode and close other browser tabs; the launcher scripts set `NODE_OPTIONS=--max-old-space-size=512` when not already set.
+
 ---
 
 ## Builder and resources

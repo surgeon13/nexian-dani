@@ -6,6 +6,7 @@ const villageExpansion = require("./villageExpansion");
 const resourceCirculation = require("./resourceCirculation");
 const troopVillagePreferences = require("./troopVillagePreferences");
 const activitySimulation = require("./activitySimulation");
+const { forEachLogLine } = require("./logTail");
 
 const USE_COLORS =
   process.env.NO_COLOR !== "1" &&
@@ -5650,7 +5651,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return Boolean(result && result.handledNearImpact);
     };
 
-    const summarizeActions = () => {
+    const summarizeActions = async () => {
       const summary = {
         totalActions: 0,
         successfulActions: 0,
@@ -5679,62 +5680,58 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         return summary;
       }
 
-      const raw = fs.readFileSync(logFilePath, "utf8");
-      const lines = raw.split(/\r?\n/).filter(Boolean);
-
-      lines.forEach((line) => {
-        try {
-          const event = JSON.parse(line);
-          summary.totalActions += 1;
-          if (event.status === "success") {
-            summary.successfulActions += 1;
-          }
-          if (event.status === "failed") {
-            summary.failedActions += 1;
-          }
-          if (event.actionType === "building.upgrade" && event.status === "failed") {
-            summary.buildingUpgradeFails += 1;
-          }
-          if (event.sessionId === sessionId) {
-            summary.thisSessionActions += 1;
-          }
-          if (event.actionType && Object.prototype.hasOwnProperty.call(summary.byType, event.actionType)) {
-            summary.byType[event.actionType] += 1;
-          }
-          if (event.actionType === "building.gold_complete" && event.status === "success") {
-            summary.totals.goldCompletions += Number((event.details && event.details.completions) || 0);
-            summary.totals.goldSpent += Number((event.details && event.details.goldSpent) || 0);
-          }
-          if (event.actionType === "resource.transfer" && event.status === "success") {
-            summary.totals.transferShipments += Number((event.details && event.details.shipmentCount) || 0);
-          }
-          if (event.actionType === "resource.evacuation" && event.status === "success") {
-            summary.totals.evacuationSends += 1;
-          }
-          if (
-            (event.actionType === "building.upgrade" || event.actionType === "building.gold_complete") &&
-            event.status === "success"
-          ) {
-            summary.recentBuilds.push({
-              timestamp: event.timestamp,
-              building: (event.details && event.details.building) || "?",
-              slot: (event.details && event.details.slot) || "?",
-              fromLevel: (event.details && event.details.fromLevel) || "?",
-              toLevel: (event.details && event.details.toLevel) || "?",
-              village: (event.details && event.details.villageName) || "?",
-              type: event.actionType
-            });
-          }
-        } catch (_error) {
-          // Ignore malformed lines to keep summary resilient.
+      const ingestEvent = (event) => {
+        summary.totalActions += 1;
+        if (event.status === "success") {
+          summary.successfulActions += 1;
         }
-      });
+        if (event.status === "failed") {
+          summary.failedActions += 1;
+        }
+        if (event.actionType === "building.upgrade" && event.status === "failed") {
+          summary.buildingUpgradeFails += 1;
+        }
+        if (event.sessionId === sessionId) {
+          summary.thisSessionActions += 1;
+        }
+        if (event.actionType && Object.prototype.hasOwnProperty.call(summary.byType, event.actionType)) {
+          summary.byType[event.actionType] += 1;
+        }
+        if (event.actionType === "building.gold_complete" && event.status === "success") {
+          summary.totals.goldCompletions += Number((event.details && event.details.completions) || 0);
+          summary.totals.goldSpent += Number((event.details && event.details.goldSpent) || 0);
+        }
+        if (event.actionType === "resource.transfer" && event.status === "success") {
+          summary.totals.transferShipments += Number((event.details && event.details.shipmentCount) || 0);
+        }
+        if (event.actionType === "resource.evacuation" && event.status === "success") {
+          summary.totals.evacuationSends += 1;
+        }
+        if (
+          (event.actionType === "building.upgrade" || event.actionType === "building.gold_complete") &&
+          event.status === "success"
+        ) {
+          summary.recentBuilds.push({
+            timestamp: event.timestamp,
+            building: (event.details && event.details.building) || "?",
+            slot: (event.details && event.details.slot) || "?",
+            fromLevel: (event.details && event.details.fromLevel) || "?",
+            toLevel: (event.details && event.details.toLevel) || "?",
+            village: (event.details && event.details.villageName) || "?",
+            type: event.actionType
+          });
+          if (summary.recentBuilds.length > 40) {
+            summary.recentBuilds.splice(0, summary.recentBuilds.length - 40);
+          }
+        }
+      };
 
+      await forEachLogLine(logFilePath, ingestEvent);
       return summary;
     };
 
-    const showLogSummary = () => {
-      const summary = summarizeActions();
+    const showLogSummary = async () => {
+      const summary = await summarizeActions();
       printDivider("ACTION LOG SUMMARY");
       printKeyValueRows([
         { label: "Log file", value: logFilePath },
@@ -7084,6 +7081,38 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     scheduleActivitySimulationLoop();
     scheduleRaidEvacuationLoop();
 
+    const buildTroopLiveSummary = () => {
+      const allVillages = villageState.villages;
+      const rrVillages = troopVillagePreferences.filterRoundRobinVillages(allVillages);
+      return {
+        troopLoop: {
+          enabled: settings.troopTrainingRoundRobinEnabled,
+          minMinutes: settings.troopTrainingLoopMinMinutes,
+          maxMinutes: settings.troopTrainingLoopMaxMinutes,
+          nextInMinutes: getSoonestTroopVillageNextInMinutes(),
+          enabledVillageCount: rrVillages.length,
+          totalVillageCount: allVillages.length
+        },
+        selectedVillageId: villageState.selectedVillageId,
+        activeVillageId: villageState.activeVillageId,
+        villages: allVillages.map((v) => {
+          const loopInterval = troopVillagePreferences.resolveLoopInterval(v, settings);
+          return {
+            villageId: v.id,
+            name: v.name,
+            isCapital: Boolean(v.isCapital),
+            underAttack: Boolean(v.underAttack),
+            hasCustom: troopVillagePreferences.hasCustomTroopSettings(v),
+            roundRobinEnabled: troopVillagePreferences.resolveRoundRobinEnabled(v, false),
+            loopMinMinutes: loopInterval.min,
+            loopMaxMinutes: loopInterval.max,
+            loopUsesGlobalDefault: loopInterval.usesGlobalDefault,
+            nextInMinutes: getVillageNextInMinutes(v)
+          };
+        })
+      };
+    };
+
     const buildFullTroopDashboardPayload = () => {
       const allVillages = villageState.villages;
       const rrVillages = troopVillagePreferences.filterRoundRobinVillages(allVillages);
@@ -7303,7 +7332,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         builderPlanMode: activeBuilderPlanMode,
         envFile: runtimeControls.dashboardEnvLabel || null,
         pendingPrompt: dashboardBridge ? dashboardBridge.getPendingPrompt() : null,
-        troopTemplates: buildFullTroopDashboardPayload()
+        troopLive: buildTroopLiveSummary()
       };
     };
 
@@ -8150,7 +8179,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (input === "L") {
-        showLogSummary();
+        await showLogSummary().catch((error) => {
+          logError(`Log summary failed: ${error.message || error}`);
+        });
         continue;
       }
 

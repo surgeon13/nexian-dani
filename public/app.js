@@ -261,7 +261,7 @@ function renderStatus(status) {
     renderDisplaySettingsPanel(status.display);
   }
   if (activeTab === "troops") {
-    applyTroopLiveUpdates(status.troopTemplates || null);
+    applyTroopLiveUpdates(status.troopLive || status.troopTemplates || null);
   }
 }
 
@@ -728,6 +728,29 @@ function syncVillageCardChrome(data) {
   });
 }
 
+function mergeTroopLivePayload(data) {
+  if (!data) {
+    return null;
+  }
+  if (data.globalDefaults || data.defaults) {
+    return data;
+  }
+  if (!latestTroopData) {
+    return data;
+  }
+  const liveById = new Map((data.villages || []).map((v) => [Number(v.villageId), v]));
+  return {
+    ...latestTroopData,
+    troopLoop: data.troopLoop || latestTroopData.troopLoop,
+    selectedVillageId: data.selectedVillageId ?? latestTroopData.selectedVillageId,
+    activeVillageId: data.activeVillageId ?? latestTroopData.activeVillageId,
+    villages: (latestTroopData.villages || []).map((v) => {
+      const live = liveById.get(Number(v.villageId));
+      return live ? { ...v, ...live } : v;
+    })
+  };
+}
+
 function applyTroopLiveUpdates(data) {
   if (!els.troopGlobalForm) {
     return;
@@ -739,11 +762,31 @@ function applyTroopLiveUpdates(data) {
     return;
   }
 
-  latestTroopData = data;
+  const merged = mergeTroopLivePayload(data);
+  const isFullPayload = Boolean(data.globalDefaults || data.defaults);
+  if (isFullPayload) {
+    latestTroopData = merged;
+  } else if (merged && latestTroopData) {
+    latestTroopData = merged;
+  }
+  data = merged || data;
+
   renderTroopLoopPanel(data.troopLoop || (data.globalDefaults && data.globalDefaults.troopLoop));
   syncVillageLoopCountdowns(data.villages);
 
+  if (!isFullPayload && !latestTroopData) {
+    return;
+  }
+
   if (shouldFreezeTroopDom()) {
+    if (!isFullPayload && latestTroopData) {
+      syncVillageCardChrome(data);
+    }
+    return;
+  }
+
+  if (!isFullPayload) {
+    syncVillageCardChrome(data);
     return;
   }
 
@@ -1940,7 +1983,7 @@ connectEvents();
 startLoopCountdownTicker();
 tickClock();
 setInterval(tickClock, 1000);
-setInterval(refreshLogs, 8000);
+setInterval(refreshLogs, 20000);
 refreshLogs();
 refreshConsole();
 

@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
+const { tailLogFile } = require("./logTail");
 let villageBuilder = null;
 try {
   villageBuilder = require("./villageBuilder");
@@ -90,20 +91,6 @@ function serveStatic(req, res, urlPath) {
     "Cache-Control": "no-store, no-cache, must-revalidate"
   });
   fs.createReadStream(abs).pipe(res);
-}
-
-function tailLogFile(logFilePath, limit = 50) {
-  if (!logFilePath || !fs.existsSync(logFilePath)) {
-    return [];
-  }
-  const lines = fs.readFileSync(logFilePath, "utf8").split(/\r?\n/).filter(Boolean);
-  return lines.slice(-Math.max(1, Math.min(limit, 200))).map((line) => {
-    try {
-      return JSON.parse(line);
-    } catch (_error) {
-      return { raw: line };
-    }
-  });
 }
 
 function resolveActionCommand(body) {
@@ -514,8 +501,11 @@ function startDashboardServer({
   });
 
   const heartbeat = setInterval(() => {
+    if (typeof bridge.hasSseClients === "function" && !bridge.hasSseClients()) {
+      return;
+    }
     bridge.publishSnapshot();
-  }, 2000);
+  }, 5000);
 
   server.on("close", () => clearInterval(heartbeat));
 

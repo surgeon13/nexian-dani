@@ -25,20 +25,23 @@ function mirrorConsoleToDashboard(bridge) {
   }
   consoleMirrorInstalled = true;
 
-  const format = (args) =>
-    args
+  const format = (args) => {
+    const text = args
       .map((arg) => {
         if (typeof arg === "string") {
           return arg;
         }
         try {
-          return require("util").inspect(arg, { depth: 2, colors: false });
+          return require("util").inspect(arg, { depth: 1, maxArrayLength: 20, breakLength: 120 });
         } catch (_error) {
           return String(arg);
         }
       })
       .join(" ")
       .replace(ANSI_PATTERN, "");
+    const MAX = 1200;
+    return text.length > MAX ? `${text.slice(0, MAX - 1)}…` : text;
+  };
 
   const wrap = (method, level) => {
     const original = console[method].bind(console);
