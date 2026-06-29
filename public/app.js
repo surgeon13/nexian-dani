@@ -93,20 +93,51 @@ function isMicroView() {
   }
 }
 
-function renderActions(busy) {
-  els.actionGrid.innerHTML = "";
+let clientActionPending = false;
+let pendingClientActionLabel = "";
+let lastVillageRenderKey = "";
+let lastActionRenderKey = "";
+let lastStatusGridKey = "";
+let lastVillageContextKey = "";
+let pendingStatusPayload = null;
+let statusRenderTimer = null;
+const STATUS_RENDER_MS = 350;
+
+function renderActions(busy, force = false) {
   const compact = isCompactView();
+  const effectiveBusy = busy || clientActionPending;
+  const renderKey = `${effectiveBusy}|${compact}`;
+  if (!force && renderKey === lastActionRenderKey && els.actionGrid.childElementCount) {
+    els.busyNote.classList.toggle("hidden", !effectiveBusy);
+    if (effectiveBusy) {
+      els.busyNote.textContent = clientActionPending && pendingClientActionLabel && !busy
+        ? `Queued: ${pendingClientActionLabel}…`
+        : latestStatus && latestStatus.currentActionLabel
+          ? `Running: ${latestStatus.currentActionLabel}…`
+          : "Action in progress…";
+    }
+    return;
+  }
+  lastActionRenderKey = renderKey;
+  els.actionGrid.innerHTML = "";
   ACTIONS.forEach((item) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `action-btn${item.danger ? " danger" : ""}`;
-    btn.disabled = busy;
+    btn.disabled = effectiveBusy;
     const label = compact && item.shortLabel ? item.shortLabel : item.label;
     btn.innerHTML = `<span class="key">${item.key}</span>${label}`;
     btn.addEventListener("click", () => runAction(item.action, item.label));
     els.actionGrid.appendChild(btn);
   });
-  els.busyNote.classList.toggle("hidden", !busy);
+  els.busyNote.classList.toggle("hidden", !effectiveBusy);
+  if (effectiveBusy) {
+    els.busyNote.textContent = clientActionPending && pendingClientActionLabel && !busy
+      ? `Queued: ${pendingClientActionLabel}…`
+      : latestStatus && latestStatus.currentActionLabel
+        ? `Running: ${latestStatus.currentActionLabel}…`
+        : "Action in progress…";
+  }
 }
 
 function loopLabelShort(loop) {
@@ -185,9 +216,34 @@ function renderAccountStrip(account) {
     .join("");
 }
 
+function scheduleRenderStatus(status) {
+  pendingStatusPayload = status;
+  if (statusRenderTimer) {
+    return;
+  }
+  statusRenderTimer = setTimeout(() => {
+    statusRenderTimer = null;
+    if (pendingStatusPayload) {
+      const next = pendingStatusPayload;
+      pendingStatusPayload = null;
+      renderStatusNow(next);
+    }
+  }, STATUS_RENDER_MS);
+}
+
 function renderStatus(status) {
+  scheduleRenderStatus(status);
+}
+
+function renderStatusNow(status) {
   latestStatus = status;
   if (!status) return;
+
+  if (!status.actionInProgress) {
+    clientActionPending = false;
+    pendingClientActionLabel = "";
+    lastActionRenderKey = "";
+  }
 
   const paused = Boolean(status.automation && status.automation.paused);
   els.automationPill.textContent = paused ? "PAUSED" : "RUNNING";
@@ -222,34 +278,44 @@ function renderStatus(status) {
     }
   ];
 
-  els.statusGrid.innerHTML = stats
-    .map(
-      (s) => `
+  const gridKey = `${compact}|${paused}|${stats.map((s) => s.value).join(";")}`;
+  if (gridKey !== lastStatusGridKey) {
+    lastStatusGridKey = gridKey;
+    els.statusGrid.innerHTML = stats
+      .map(
+        (s) => `
     <div class="stat">
       <div class="stat-label">${s.label}</div>
       <div class="stat-value">${escapeHtml(String(s.value))}</div>
     </div>`
-    )
-    .join("");
+      )
+      .join("");
+  }
 
   const sel = status.selectedVillage;
   const act = status.activeVillage;
-  if (compact) {
-    els.villageContext.innerHTML = `
+  const ctxKey = `${compact}|${formatVillage(sel, true)}|${formatVillage(act, true)}|${status.builderPlanMode || "resource"}`;
+  if (ctxKey !== lastVillageContextKey) {
+    lastVillageContextKey = ctxKey;
+    if (compact) {
+      els.villageContext.innerHTML = `
     <div class="village-context-compact">${escapeHtml(formatVillage(sel, true))} → ${escapeHtml(formatVillage(act, true))} · ${escapeHtml(status.builderPlanMode || "resource")}</div>`;
-  } else {
-    els.villageContext.innerHTML = `
+    } else {
+      els.villageContext.innerHTML = `
     <div><strong>Selected:</strong> ${escapeHtml(formatVillage(sel))}</div>
     <div><strong>Active:</strong> ${escapeHtml(formatVillage(act))}</div>
     <div><strong>Builder plan:</strong> ${escapeHtml(status.builderPlanMode || "resource")}</div>
   `;
+    }
   }
 
   renderVillages(status.villages || [], status.selectedVillageId, status.activeVillageId);
   renderActions(Boolean(status.actionInProgress));
   if (status.activitySimulation) {
     if (activeTab === "settings" && !activityFormDirty) {
-      renderActivitySettingsPanel(status.activitySimulation);
+      if (Array.isArray(status.activitySimulation.patterns)) {
+        renderActivitySettingsPanel(status.activitySimulation);
+      }
     } else {
       syncActivityCountdown(status.activitySimulation);
       if (activeTab === "settings") {
@@ -260,8 +326,8 @@ function renderStatus(status) {
   if (status.display && !displayFormDirty) {
     renderDisplaySettingsPanel(status.display);
   }
-  if (activeTab === "troops") {
-    applyTroopLiveUpdates(status.troopLive || status.troopTemplates || null);
+  if (activeTab === "troops" && status.loops && status.loops.troop) {
+    renderTroopLoopPanel(status.loops.troop);
   }
 }
 
@@ -283,7 +349,20 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
-function renderVillages(villages, selectedId, activeId) {
+function villageListKey(villages, selectedId, activeId) {
+  const compact = isCompactView();
+  const body = villages
+    .map((v) => `${v.id}:${v.underAttack ? 1 : 0}:${v.name || ""}:${v.x}:${v.y}`)
+    .join(",");
+  return `${compact}|${selectedId}|${activeId}|${body}`;
+}
+
+function renderVillages(villages, selectedId, activeId, force = false) {
+  const key = villageListKey(villages, selectedId, activeId);
+  if (!force && key === lastVillageRenderKey && els.villageList.childElementCount) {
+    return;
+  }
+  lastVillageRenderKey = key;
   els.villageList.innerHTML = "";
   if (!villages.length) {
     els.villageList.innerHTML = '<div class="log-entry">No villages loaded yet.</div>';
@@ -305,6 +384,10 @@ function renderVillages(villages, selectedId, activeId) {
 }
 
 async function runAction(action, label) {
+  clientActionPending = true;
+  pendingClientActionLabel = label;
+  lastActionRenderKey = "";
+  renderActions(false, true);
   try {
     await api("/api/action", {
       method: "POST",
@@ -312,11 +395,19 @@ async function runAction(action, label) {
     });
     showToast(`Queued: ${label}`);
   } catch (error) {
+    clientActionPending = false;
+    pendingClientActionLabel = "";
+    lastActionRenderKey = "";
+    renderActions(Boolean(latestStatus && latestStatus.actionInProgress), true);
     showToast(error.message || "Action failed");
   }
 }
 
 async function selectVillage(id) {
+  clientActionPending = true;
+  pendingClientActionLabel = `Village ${id}`;
+  lastActionRenderKey = "";
+  renderActions(Boolean(latestStatus && latestStatus.actionInProgress), true);
   try {
     await api("/api/village", {
       method: "POST",
@@ -324,6 +415,10 @@ async function selectVillage(id) {
     });
     showToast(`Selecting village ${id}`);
   } catch (error) {
+    clientActionPending = false;
+    pendingClientActionLabel = "";
+    lastActionRenderKey = "";
+    renderActions(Boolean(latestStatus && latestStatus.actionInProgress), true);
     showToast(error.message || "Select failed");
   }
 }
@@ -444,6 +539,39 @@ function connectEvents() {
   source.onerror = () => {
     /* EventSource reconnects automatically */
   };
+}
+
+async function refreshActivitySettingsPanel() {
+  try {
+    const data = await api("/api/activity-settings");
+    if (data && data.activitySimulation) {
+      renderActivitySettingsPanel(data.activitySimulation);
+      if (latestStatus) {
+        latestStatus.activitySimulation = {
+          ...(latestStatus.activitySimulation || {}),
+          ...data.activitySimulation
+        };
+      }
+    }
+  } catch (_error) {
+    if (latestStatus && latestStatus.activitySimulation) {
+      renderActivitySettingsPanel(latestStatus.activitySimulation);
+    }
+  }
+}
+
+function startHeavyTabPolling() {
+  setInterval(() => {
+    if (activeTab === "troops") {
+      api("/api/troop-templates")
+        .then((data) => {
+          if (data && data.troop) {
+            applyTroopLiveUpdates(data.troop);
+          }
+        })
+        .catch(() => {});
+    }
+  }, 12000);
 }
 
 // --- Troop Templates tab ---------------------------------------------------
@@ -1888,10 +2016,14 @@ function applyDisplayView(view) {
   });
   updateTabLabels(compact);
   refreshConsole().catch(() => {});
+  lastVillageRenderKey = "";
+  lastActionRenderKey = "";
+  lastStatusGridKey = "";
+  lastVillageContextKey = "";
   if (latestStatus) {
-    renderStatus(latestStatus);
+    renderStatusNow(latestStatus);
   } else {
-    renderActions(false);
+    renderActions(false, true);
   }
 }
 
@@ -1956,11 +2088,7 @@ function setupTabs() {
         refreshTroopForm();
       }
       if (tab === "settings") {
-        if (latestStatus && latestStatus.activitySimulation) {
-          renderActivitySettingsPanel(latestStatus.activitySimulation);
-        } else {
-          renderActivitySettingsPanel(null);
-        }
+        refreshActivitySettingsPanel();
         if (latestStatus && latestStatus.display) {
           renderDisplaySettingsPanel(latestStatus.display);
         }
@@ -1980,6 +2108,7 @@ setupTabs();
 setupTroopForm();
 setupActivityForm();
 connectEvents();
+startHeavyTabPolling();
 startLoopCountdownTicker();
 tickClock();
 setInterval(tickClock, 1000);
@@ -1995,6 +2124,6 @@ api("/api/status")
     } else {
       applyDisplayView(getDisplayView());
     }
-    renderStatus(status);
+    renderStatusNow(status);
   })
   .catch(() => showToast("Could not reach dashboard API"));

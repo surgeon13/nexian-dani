@@ -6,7 +6,7 @@ function createDashboardBridge() {
   const CONSOLE_BUFFER_LIMIT = 250;
   const MAX_CONSOLE_TEXT_CHARS = 1200;
   const COMMAND_QUEUE_LIMIT = 32;
-  const SNAPSHOT_MIN_INTERVAL_MS = 1200;
+  const SNAPSHOT_MIN_INTERVAL_MS = 3000;
   let consoleSeq = 0;
   let snapshotProvider = () => ({ updatedAt: new Date().toISOString() });
   let pendingPrompt = null;
@@ -14,6 +14,7 @@ function createDashboardBridge() {
   let troopSettingsProvider = null;
   let troopSettingsUpdater = null;
   let activitySettingsUpdater = null;
+  let activitySettingsProvider = null;
   let displaySettingsUpdater = null;
   let lastSnapshotJson = null;
   let lastSnapshotObj = null;
@@ -49,6 +50,18 @@ function createDashboardBridge() {
 
   function setActivitySettingsUpdater(fn) {
     activitySettingsUpdater = typeof fn === "function" ? fn : null;
+  }
+
+  function setActivitySettingsProvider(fn) {
+    activitySettingsProvider = typeof fn === "function" ? fn : null;
+  }
+
+  function getActivitySettings() {
+    try {
+      return activitySettingsProvider ? activitySettingsProvider() : null;
+    } catch (_error) {
+      return null;
+    }
   }
 
   async function updateActivitySettings(patch) {
@@ -100,6 +113,9 @@ function createDashboardBridge() {
 
   function flushSnapshot(force = false) {
     snapshotFlushTimer = null;
+    if (!force && !sseClients.size) {
+      return lastSnapshotObj || { updatedAt: new Date().toISOString() };
+    }
     const snap = getSnapshot();
     lastSnapshotObj = snap;
     let payload;
@@ -132,6 +148,9 @@ function createDashboardBridge() {
 
   function publishSnapshot(options = {}) {
     const force = Boolean(options && options.force);
+    if (!force && !sseClients.size) {
+      return lastSnapshotObj || { updatedAt: new Date().toISOString() };
+    }
     const now = Date.now();
     if (!force && now - lastSnapshotAt < SNAPSHOT_MIN_INTERVAL_MS) {
       if (!snapshotFlushTimer) {
@@ -264,7 +283,9 @@ function createDashboardBridge() {
     if (consoleBuffer.length > CONSOLE_BUFFER_LIMIT) {
       consoleBuffer.splice(0, consoleBuffer.length - CONSOLE_BUFFER_LIMIT);
     }
-    publishEvent("console", entry);
+    if (sseClients.size) {
+      publishEvent("console", entry);
+    }
   }
 
   function getConsole(limit = 120) {
@@ -278,6 +299,15 @@ function createDashboardBridge() {
 
   function removeSseClient(res) {
     sseClients.delete(res);
+    if (!sseClients.size) {
+      lastSnapshotJson = null;
+      lastSnapshotObj = null;
+      lastSnapshotAt = 0;
+      if (snapshotFlushTimer) {
+        clearTimeout(snapshotFlushTimer);
+        snapshotFlushTimer = null;
+      }
+    }
   }
 
   return {
@@ -293,6 +323,8 @@ function createDashboardBridge() {
     getTroopSettings,
     updateTroopSettings,
     setActivitySettingsUpdater,
+    setActivitySettingsProvider,
+    getActivitySettings,
     updateActivitySettings,
     setDisplaySettingsUpdater,
     updateDisplaySettings,

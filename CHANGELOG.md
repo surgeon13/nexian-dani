@@ -2,6 +2,49 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.12] — 2026-06-18
+
+### Fixed
+
+- **High RAM use (~4 GB)** — lighter SSE snapshots (no troop payloads on every tick), drop duplicated tribe defaults in troop API, cap Node heap via npm scripts, slower heartbeat, release snapshot cache when the dashboard tab closes, Chromium `--disable-dev-shm-usage`.
+
+---
+
+## [1.5.11] — 2026-06-18
+
+### Fixed
+
+- **Farmlist auto-send skipped after raid guard or errors** — raid evacuation no longer cancels the send; loop waits for idle, retries twice after 2 minutes on skip/failure, and still sends after a successful raid guard check.
+
+---
+
+## [1.5.10] — 2026-06-18
+
+### Fixed
+
+- **Slow terminal / sluggish CLI** — stop redrawing the full menu after every action (compact status line instead); skip dashboard snapshot work when no browser tab is connected; cache snapshot builds; skip console→SSE mirroring when the web UI is closed; less frequent dashboard heartbeat.
+
+---
+
+## [1.5.9] — 2026-06-18
+
+### Fixed
+
+- **Portal login timeout on “Enter Realm”** — submit via DOM click instead of Playwright navigation wait; poll for realm redirect up to 90s (portal redirects often exceed 15s or never reach `networkidle`).
+
+---
+
+## [1.5.8] — 2026-06-18
+
+### Fixed
+
+- **Web dashboard felt stuck / frozen** — throttled status DOM updates, skip rebuilding villages and action buttons when unchanged, optimistic “Queued…” feedback on click.
+- **Web commands lost during automation** — dashboard waits for the current action to finish before running a queued command (same as terminal **V**).
+- **Console flood in dashboard mode** — terminal menu is no longer printed every loop tick when the web UI is active.
+- **Stale busy state** — snapshot is force-published when an action starts and when it finishes.
+
+---
+
 ## [1.5.7] — 2026-06-18
 
 ### Added

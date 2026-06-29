@@ -1521,7 +1521,6 @@ function buildTroopSettingsPayload(settings, extras = {}) {
       cavalryOffensive: getBranchTroopListPlain(settings, "offensive", "cavalry"),
       cavalryDefensive: getBranchTroopListPlain(settings, "defensive", "cavalry")
     },
-    defaults: TRIBE_DEFAULT_TEMPLATES,
     troopLoop: extras.troopLoop || null
   };
 }
@@ -1724,6 +1723,33 @@ function printCompactMenuKeys(settings = terminalUiSettings) {
   );
   console.log(
     `  ${color("T", ANSI.bold, ANSI.cyan)} Tpl  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
+  );
+}
+
+function printCompactPromptStatus(settings, bits = {}) {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  const paused = Boolean(bits.paused);
+  const reason = String(bits.reason || "online");
+  const pauseLabel = paused
+    ? color(`PAUSED (${reason})`, ANSI.bold, ANSI.yellow)
+    : color("RUNNING", ANSI.bold, ANSI.green);
+  const state = bits.busy
+    ? color(bits.busyLabel || "Busy", ANSI.bold, ANSI.yellow)
+    : color("Ready", ANSI.bold, ANSI.green);
+  const hints = [];
+  if (Number.isFinite(bits.farmlistNext)) {
+    hints.push(color(`Farm ${bits.farmlistNext}m`, ANSI.cyan));
+  }
+  if (Number.isFinite(bits.builderNext)) {
+    hints.push(color(`Bld ${bits.builderNext}m`, ANSI.cyan));
+  }
+  const hintText = hints.length ? `  ${hints.join(color(" · ", ANSI.gray))}` : "";
+  console.log("");
+  console.log(
+    `  ${color(`${hh}:${min}:${ss}`, ANSI.bold, ANSI.cyan)}  ${pauseLabel}  ${state}${hintText}  ${color("(S settings · V villages · ? keys above)", ANSI.gray)}`
   );
 }
 
@@ -4357,6 +4383,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     }
     let lastFarmlistDelayMinutes = null;
     let farmlistResumeWaitLogged = false;
+    let farmlistShortRetriesLeft = 0;
+    const FARMLIST_SHORT_RETRY_MS = 120000;
     let nextBuilderRunAt = null;
     let lastBuilderDelayMinutes = null;
     let nextCrannyDefenseRunAt = null;
@@ -5202,15 +5230,21 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (raidGuardPriority) {
-        const raidHandled = await runRaidGuardPriorityCheck();
-        if (raidHandled) {
-          return false;
+        try {
+          await runRaidGuardPriorityCheck();
+        } catch (error) {
+          logWarn(
+            `[Raid guard] Pre-action check failed: ${error && error.message ? error.message : error}`
+          );
         }
       }
 
       actionInProgress = true;
       currentActionLabel = label;
       cancelRequested = false;
+      if (dashboardBridge) {
+        dashboardBridge.publishSnapshot({ force: true });
+      }
       try {
         await fn();
         if (cancelRequested) {
@@ -5227,6 +5261,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         actionInProgress = false;
         currentActionLabel = "";
         cancelRequested = false;
+        if (dashboardBridge) {
+          dashboardBridge.publishSnapshot({ force: true });
+        }
       }
     };
 
@@ -5821,8 +5858,40 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.farmlistLoopMaxMinutes
       );
       farmlistResumeWaitLogged = false;
+      farmlistShortRetriesLeft = 2;
       nextFarmlistRunAt = Date.now() + minutes * 60 * 1000;
       logInfo(`[Farmlist Loop] Next auto-send in ${minutes} minute(s).`);
+
+      const scheduleFarmlistShortRetry = (reason) => {
+        const delayMs = FARMLIST_SHORT_RETRY_MS;
+        nextFarmlistRunAt = Date.now() + delayMs;
+        if (farmlistShortRetriesLeft > 0) {
+          farmlistShortRetriesLeft -= 1;
+          logWarn(
+            `[Farmlist Loop] ${reason} Retrying in ${Math.round(delayMs / 60000)} minute(s) (${farmlistShortRetriesLeft} short retries left).`
+          );
+          farmlistLoopTimer = setTimeout(() => void runFarmlistScheduledTick(), delayMs);
+          return;
+        }
+        logWarn(`[Farmlist Loop] ${reason} Short retries exhausted — scheduling normal interval.`);
+        scheduleFarmlistLoop();
+      };
+
+      const runFarmlistSendCore = async (attemptLabel) => {
+        const startedAt = Date.now();
+        const executed = await runAction(attemptLabel, async () => {
+          logInfo("[Farmlist Loop] Auto-send starting...");
+          await runWithRandomDelay(
+            settings,
+            "Auto Send Farmlists",
+            () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
+            () => cancelRequested
+          );
+          logSuccess("[Farmlist Loop] Auto-send completed.");
+          await maybePrintAutoFarmlistStatus("Farmlist Loop");
+        }, { raidGuardPriority: true });
+        return { executed, startedAt };
+      };
 
       const runFarmlistScheduledTick = async () => {
         if (done || !settings.farmlistLoopEnabled) {
@@ -5851,33 +5920,30 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return;
         }
 
+        if (!(await waitForActionIdle("Farmlist Loop", { maxWaitMs: 180000 }))) {
+          scheduleFarmlistShortRetry("Session still busy after waiting.");
+          return;
+        }
+
         let farmlistExecuted = false;
         try {
-          const startedAt = Date.now();
-          farmlistExecuted = await runAction("auto-send farmlists", async () => {
-            logInfo("[Farmlist Loop] Auto-send starting...");
-            await runWithRandomDelay(
-              settings,
-              "Auto Send Farmlists",
-              () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
-              () => cancelRequested
-            );
-            logSuccess("[Farmlist Loop] Auto-send completed.");
-            await maybePrintAutoFarmlistStatus("Farmlist Loop");
-          }, { raidGuardPriority: true });
-          if (farmlistExecuted) {
-            recordAction({
-              actionType: "farmlist.send",
-              status: "success",
-              durationMs: Date.now() - startedAt,
-              details: {
-                source: "auto-loop",
-                minMinutes: settings.farmlistLoopMinMinutes,
-                maxMinutes: settings.farmlistLoopMaxMinutes,
-                ...getVillageMeta("all")
-              }
-            });
+          const { executed, startedAt } = await runFarmlistSendCore("auto-send farmlists");
+          farmlistExecuted = executed;
+          if (!farmlistExecuted) {
+            scheduleFarmlistShortRetry("Auto-send skipped.");
+            return;
           }
+          recordAction({
+            actionType: "farmlist.send",
+            status: "success",
+            durationMs: Date.now() - startedAt,
+            details: {
+              source: "auto-loop",
+              minMinutes: settings.farmlistLoopMinMinutes,
+              maxMinutes: settings.farmlistLoopMaxMinutes,
+              ...getVillageMeta("all")
+            }
+          });
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
           const isTransientSessionState =
@@ -5896,11 +5962,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               logSuccess("[Farmlist Loop] Re-login complete. Retrying auto-send now...");
 
               const retryStartedAt = Date.now();
-              const retryExecuted = await runAction("auto-send farmlists retry", async () => {
-                await sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() });
-                logSuccess("[Farmlist Loop] Auto-send completed after re-login.");
-                await maybePrintAutoFarmlistStatus("Farmlist Loop");
-              }, { raidGuardPriority: true });
+              const { executed: retryExecuted } = await runFarmlistSendCore("auto-send farmlists retry");
 
               if (retryExecuted) {
                 recordAction({
@@ -5914,9 +5976,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                     ...getVillageMeta("all")
                   }
                 });
+                farmlistExecuted = true;
               }
 
-              scheduleFarmlistLoop();
+              if (farmlistExecuted) {
+                await restoreSelectedVillageContext("Farmlist Loop");
+                scheduleFarmlistLoop();
+                return;
+              }
+              scheduleFarmlistShortRetry("Auto-send failed after re-login.");
               return;
             } catch (reloginError) {
               const reloginMessage =
@@ -5932,6 +6000,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 errorMessage: `${message} | relogin failed: ${reloginMessage}`
               });
               logError(`[Farmlist Loop] Re-login/retry failed: ${reloginMessage}`);
+              scheduleFarmlistShortRetry(`Re-login failed: ${reloginMessage}`);
+              return;
             }
           } else {
             recordAction({
@@ -5945,10 +6015,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               errorMessage: message
             });
             if (isTransientSessionState) {
-              logWarn(`[Farmlist Loop] Auto-send skipped: ${message}`);
+              logWarn(`[Farmlist Loop] Auto-send failed (transient): ${message}`);
             } else {
               logError(`[Farmlist Loop] Auto-send failed: ${message}`);
             }
+            scheduleFarmlistShortRetry(`Send failed: ${message}`);
+            return;
           }
         }
 
@@ -6893,6 +6965,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       lastAction: lastActivitySimulationAction
     });
 
+    const buildActivitySimulationStatus = () => ({
+      enabled: settings.activitySimulationEnabled,
+      minMinutes: settings.activitySimulationLoopMinMinutes,
+      maxMinutes: settings.activitySimulationLoopMaxMinutes,
+      nextInMinutes: nextActivitySimulationRunAt
+        ? Math.max(0, Math.ceil((nextActivitySimulationRunAt - Date.now()) / 60000))
+        : null,
+      completedCount: activitySimulationCompletedCount,
+      lastAction: lastActivitySimulationAction
+    });
+
+    const snapshotVillageList = () =>
+      villageState.villages.map((v) => ({
+        id: v.id,
+        name: v.name,
+        x: v.x,
+        y: v.y,
+        coordsText: v.coordsText,
+        isCapital: Boolean(v.isCapital),
+        underAttack: Boolean(v.underAttack)
+      }));
+
     const applyActivitySettingsPatch = async (patch) => {
       if (!runtimeControls.updateActivitySimulationLoopConfig) {
         throw new Error("Activity settings are not available");
@@ -7248,10 +7342,66 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return buildFullTroopDashboardPayload();
     };
 
+    let cachedDashboardSnapshot = null;
+    let cachedDashboardSnapshotKey = "";
+    let cachedDashboardSnapshotAt = 0;
+
     const buildDashboardSnapshot = () => {
       const automationStatus = runtimeControls.getAutomationStatus
         ? runtimeControls.getAutomationStatus()
         : { paused: false, reason: "online" };
+      const farmlistNextInMinutes = nextFarmlistRunAt
+        ? Math.max(0, Math.ceil((nextFarmlistRunAt - Date.now()) / 60000))
+        : null;
+      const builderNextInMinutes = nextBuilderRunAt
+        ? Math.max(0, Math.ceil((nextBuilderRunAt - Date.now()) / 60000))
+        : null;
+      const crannyNextInMinutes = nextCrannyDefenseRunAt
+        ? Math.max(0, Math.ceil((nextCrannyDefenseRunAt - Date.now()) / 60000))
+        : null;
+      const activityNextInMinutes = nextActivitySimulationRunAt
+        ? Math.max(0, Math.ceil((nextActivitySimulationRunAt - Date.now()) / 60000))
+        : null;
+
+      const cacheKey = [
+        automationStatus.paused,
+        automationStatus.reason,
+        settings.sessionLoopEnabled,
+        settings.farmlistLoopEnabled,
+        settings.builderLoopEnabled,
+        settings.troopTrainingRoundRobinEnabled,
+        settings.crannyDefenseRoundRobinEnabled,
+        settings.activitySimulationEnabled,
+        villageState.selectedVillageId,
+        villageState.activeVillageId,
+        villageState.villages.length,
+        actionInProgress,
+        currentActionLabel,
+        activeBuilderPlanMode,
+        settings.dashboardCompactView
+      ].join("|");
+
+      const now = Date.now();
+      if (
+        cachedDashboardSnapshot &&
+        cachedDashboardSnapshotKey === cacheKey &&
+        now - cachedDashboardSnapshotAt < 1500
+      ) {
+        const snap = cachedDashboardSnapshot;
+        snap.updatedAt = new Date().toISOString();
+        if (snap.loops) {
+          if (snap.loops.farmlist) snap.loops.farmlist.nextInMinutes = farmlistNextInMinutes;
+          if (snap.loops.builder) snap.loops.builder.nextInMinutes = builderNextInMinutes;
+          if (snap.loops.troop) snap.loops.troop.nextInMinutes = getSoonestTroopVillageNextInMinutes();
+          if (snap.loops.cranny) snap.loops.cranny.nextInMinutes = crannyNextInMinutes;
+          if (snap.loops.activity) snap.loops.activity.nextInMinutes = activityNextInMinutes;
+        }
+        if (runtimeControls.getSessionLoopStatus) {
+          snap.sessionLoop = runtimeControls.getSessionLoopStatus();
+        }
+        return snap;
+      }
+
       const sessionLoopStatus = runtimeControls.getSessionLoopStatus
         ? runtimeControls.getSessionLoopStatus()
         : { enabled: settings.sessionLoopEnabled, nextInMinutes: null };
@@ -7259,17 +7409,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         enabled: settings.farmlistLoopEnabled,
         minMinutes: settings.farmlistLoopMinMinutes,
         maxMinutes: settings.farmlistLoopMaxMinutes,
-        nextInMinutes: nextFarmlistRunAt
-          ? Math.max(0, Math.ceil((nextFarmlistRunAt - Date.now()) / 60000))
-          : null
+        nextInMinutes: farmlistNextInMinutes
       };
       const builderLoopStatus = {
         enabled: settings.builderLoopEnabled,
         minMinutes: settings.builderLoopMinMinutes,
         maxMinutes: settings.builderLoopMaxMinutes,
-        nextInMinutes: nextBuilderRunAt
-          ? Math.max(0, Math.ceil((nextBuilderRunAt - Date.now()) / 60000))
-          : null,
+        nextInMinutes: builderNextInMinutes,
         roundRobinProgress: settings.builderRoundRobinEnabled
           ? getRoundRobinProgress(villageState.villages, activeBuilderPlanMode)
           : null
@@ -7284,17 +7430,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         enabled: settings.crannyDefenseRoundRobinEnabled,
         minMinutes: settings.crannyDefenseLoopMinMinutes,
         maxMinutes: settings.crannyDefenseLoopMaxMinutes,
-        nextInMinutes: nextCrannyDefenseRunAt
-          ? Math.max(0, Math.ceil((nextCrannyDefenseRunAt - Date.now()) / 60000))
-          : null
+        nextInMinutes: crannyNextInMinutes
       };
       const activityLoopStatus = {
         enabled: settings.activitySimulationEnabled,
         minMinutes: settings.activitySimulationLoopMinMinutes,
         maxMinutes: settings.activitySimulationLoopMaxMinutes,
-        nextInMinutes: nextActivitySimulationRunAt
-          ? Math.max(0, Math.ceil((nextActivitySimulationRunAt - Date.now()) / 60000))
-          : null,
+        nextInMinutes: activityNextInMinutes,
         completedCount: activitySimulationCompletedCount
       };
       const selectedVillage =
@@ -7309,7 +7451,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         gameHost = null;
       }
 
-      return {
+      const snapshot = {
         updatedAt: new Date().toISOString(),
         account: {
           username: account.username || null,
@@ -7329,11 +7471,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           cranny: crannyLoopStatus,
           activity: activityLoopStatus
         },
-        activitySimulation: buildActivitySimulationPayload(),
+        activitySimulation: buildActivitySimulationStatus(),
         display: {
           compactView: Boolean(settings.dashboardCompactView)
         },
-        villages: villageState.villages.slice(),
+        villages: snapshotVillageList(),
         selectedVillageId: villageState.selectedVillageId,
         activeVillageId: villageState.activeVillageId,
         selectedVillage,
@@ -7342,14 +7484,19 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         currentActionLabel,
         builderPlanMode: activeBuilderPlanMode,
         envFile: runtimeControls.dashboardEnvLabel || null,
-        pendingPrompt: dashboardBridge ? dashboardBridge.getPendingPrompt() : null,
-        troopLive: buildTroopLiveSummary()
+        pendingPrompt: dashboardBridge ? dashboardBridge.getPendingPrompt() : null
       };
+
+      cachedDashboardSnapshot = snapshot;
+      cachedDashboardSnapshotKey = cacheKey;
+      cachedDashboardSnapshotAt = now;
+      return snapshot;
     };
 
     if (dashboardBridge) {
       dashboardBridge.setTroopSettingsProvider(() => buildFullTroopDashboardPayload());
       dashboardBridge.setTroopSettingsUpdater(applyTroopSettingsPatch);
+      dashboardBridge.setActivitySettingsProvider(() => buildActivitySimulationPayload());
       dashboardBridge.setActivitySettingsUpdater(applyActivitySettingsPatch);
       dashboardBridge.setDisplaySettingsUpdater(applyDisplaySettingsPatch);
     }
@@ -7404,18 +7551,46 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       logInfo(`[Dashboard] Web UI${compactNote} — open http://127.0.0.1:${dashboardPort}`);
     }
 
+    let menuNeedsFullRefresh = true;
+    let deferMenuFullRefresh = false;
+    const menuFullRefreshInputs = new Set(["S", "V", "T"]);
+
     while (!done) {
       let rawInput;
       let input;
 
-      printInteractiveMenu();
+      if (deferMenuFullRefresh) {
+        menuNeedsFullRefresh = true;
+        deferMenuFullRefresh = false;
+      }
 
       if (dashboardMode) {
         dashboardBridge.clearPendingPrompt();
         dashboardBridge.publishSnapshot();
-        process.stdout.write(
-          `\nChoose option (or use web UI http://127.0.0.1:${dashboardPort}): `
-        );
+      } else {
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+        if (menuNeedsFullRefresh) {
+          printInteractiveMenu();
+          menuNeedsFullRefresh = false;
+        } else {
+          printCompactPromptStatus(settings, {
+            paused: automationStatus.paused,
+            reason: automationStatus.reason,
+            busy: actionInProgress,
+            busyLabel: currentActionLabel,
+            farmlistNext: nextFarmlistRunAt
+              ? Math.max(0, Math.ceil((nextFarmlistRunAt - Date.now()) / 60000))
+              : null,
+            builderNext: nextBuilderRunAt
+              ? Math.max(0, Math.ceil((nextBuilderRunAt - Date.now()) / 60000))
+              : null
+          });
+        }
+      }
+
+      if (dashboardMode) {
         rawInput = null;
         while ((rawInput === null || rawInput === undefined) && !done && !menuSession.quitRequested) {
           const cmd = await dashboardBridge.waitForCommand(300);
@@ -7431,6 +7606,19 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         rawInput = (await askQuestion(menuRl, "Choose option: ")).trim();
       }
       input = rawInput.toUpperCase();
+      deferMenuFullRefresh = menuFullRefreshInputs.has(input);
+
+      const dashboardNoWait = new Set(["L", "P", "Q"]);
+      if (
+        dashboardMode &&
+        !dashboardNoWait.has(input) &&
+        !input.startsWith("@SELECT-VILLAGE ")
+      ) {
+        if (!(await waitForActionIdle("Dashboard command"))) {
+          logWarn(`[Dashboard] Command "${rawInput}" timed out — session still busy`);
+          continue;
+        }
+      }
 
       if (input.startsWith("@SELECT-VILLAGE ")) {
         const vid = Number(input.slice("@SELECT-VILLAGE ".length));

@@ -361,6 +361,17 @@ function startDashboardServer({
         return;
       }
 
+      if (req.method === "GET" && pathname === "/api/activity-settings") {
+        const activitySimulation =
+          typeof bridge.getActivitySettings === "function" ? bridge.getActivitySettings() : null;
+        if (!activitySimulation) {
+          sendJson(res, 503, { ok: false, error: "Activity settings unavailable" });
+          return;
+        }
+        sendJson(res, 200, { ok: true, activitySimulation });
+        return;
+      }
+
       if (req.method === "POST" && pathname === "/api/activity-settings") {
         const body = await readJsonBody(req);
         if (typeof bridge.updateActivitySettings !== "function") {
@@ -505,7 +516,7 @@ function startDashboardServer({
       return;
     }
     bridge.publishSnapshot();
-  }, 5000);
+  }, 12000);
 
   server.on("close", () => clearInterval(heartbeat));
 

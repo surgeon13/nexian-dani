@@ -48,6 +48,9 @@ function mirrorConsoleToDashboard(bridge) {
     console[method] = (...args) => {
       original(...args);
       try {
+        if (typeof bridge.hasSseClients === "function" && !bridge.hasSseClients()) {
+          return;
+        }
         bridge.pushConsole(level, format(args));
       } catch (_error) {
         /* never let mirroring break logging */
@@ -618,6 +621,97 @@ async function openNexianPortalLoginForm(page) {
   await portalUser.waitFor({ state: "visible", timeout: 30000 });
 }
 
+function isGameRealmHost(url) {
+  try {
+    return /^s\d+\.nexian\.world$/i.test(new URL(url).hostname);
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function waitForGameLogin(page, options = {}) {
+  const timeoutMs = Number.isFinite(Number(options.timeoutMs))
+    ? Math.max(1000, Number(options.timeoutMs))
+    : 90000;
+  const pollMs = Number.isFinite(Number(options.pollMs))
+    ? Math.max(100, Number(options.pollMs))
+    : 500;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    if (await isLoggedIntoGame(page)) {
+      return true;
+    }
+
+    if (isGameRealmHost(page.url())) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+      if (await isLoggedIntoGame(page)) {
+        return true;
+      }
+    }
+
+    await page.waitForTimeout(pollMs);
+  }
+
+  return false;
+}
+
+async function submitPortalLogin(page) {
+  const enterRealm = page.getByRole("button", { name: /Enter Realm/i });
+  await enterRealm.waitFor({ state: "visible", timeout: 30000 });
+
+  const navigationPromise = page
+    .waitForURL(
+      (url) => {
+        try {
+          const parsed = typeof url === "string" ? new URL(url) : url;
+          if (/^s\d+\.nexian\.world$/i.test(parsed.hostname)) {
+            return true;
+          }
+          return /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(parsed.pathname);
+        } catch (_error) {
+          return false;
+        }
+      },
+      { timeout: 90000, waitUntil: "domcontentloaded" }
+    )
+    .catch(() => null);
+
+  // Playwright's click waits for navigation to finish; portal redirects can exceed 15s
+  // or never reach networkidle, so submit via DOM click and poll separately.
+  await enterRealm.evaluate((button) => button.click());
+  await navigationPromise;
+  return waitForGameLogin(page, { timeoutMs: 30000 });
+}
+
+async function submitLegacyLogin(page) {
+  const submit = page.locator(
+    'form[name="login"] button[type="submit"], form[name="login"] input[type="submit"]'
+  );
+  await submit.waitFor({ state: "visible", timeout: 30000 });
+
+  const navigationPromise = page
+    .waitForURL(
+      (url) => {
+        try {
+          const parsed = typeof url === "string" ? new URL(url) : url;
+          if (/^s\d+\.nexian\.world$/i.test(parsed.hostname)) {
+            return true;
+          }
+          return /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(parsed.pathname);
+        } catch (_error) {
+          return false;
+        }
+      },
+      { timeout: 90000, waitUntil: "domcontentloaded" }
+    )
+    .catch(() => null);
+
+  await submit.evaluate((el) => el.click());
+  await navigationPromise;
+  return waitForGameLogin(page, { timeoutMs: 30000 });
+}
+
 async function isLoggedIntoGame(page) {
   const url = page.url();
   try {
@@ -665,20 +759,12 @@ async function loginToPage(page, context) {
   if (onLegacyLogin) {
     await page.fill('form[name="login"] input[name="name"]', USERNAME);
     await page.fill('form[name="login"] input[name="password"]', PASSWORD);
-    await Promise.all([
-      page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {}),
-      page.click('form[name="login"] button[type="submit"], form[name="login"] input[type="submit"]')
-    ]);
+    await submitLegacyLogin(page);
   } else {
     await openNexianPortalLoginForm(page);
     await page.locator('input[placeholder="Enter your username"]').fill(USERNAME);
     await page.locator('input[placeholder="Enter your password"]').fill(PASSWORD);
-    const enterRealm = page.getByRole("button", { name: /Enter Realm/i });
-    await Promise.all([
-      page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {}),
-      enterRealm.click({ timeout: 15000 })
-    ]);
-    await page.waitForTimeout(1500);
+    await submitPortalLogin(page);
   }
 
   if (await isLoggedIntoGame(page)) {
@@ -690,7 +776,10 @@ async function loginToPage(page, context) {
     await context.storageState({ path: "storageState.json" });
     console.log("  Session saved");
   } else {
-    console.warn("  Login FAILED — check credentials or portal UI changes.");
+    const stuckUrl = page.url();
+    throw new Error(
+      `Login did not reach the game (still at ${stuckUrl}). Check credentials or portal UI changes.`
+    );
   }
 }
 
@@ -698,23 +787,26 @@ async function createSession(headless) {
   let effectiveHeadless = headless;
   let browser;
   let browserLabel = headless ? "headless" : "headed";
+  const launchArgs = ["--disable-dev-shm-usage"];
+
+  const launchChromium = (options) => chromium.launch({ args: launchArgs, ...options });
 
   if (!effectiveHeadless) {
-    browser = await chromium.launch({ headless: false });
+    browser = await launchChromium({ headless: false });
   } else {
     try {
-      browser = await chromium.launch({ headless: true });
+      browser = await launchChromium({ headless: true });
     } catch (error) {
       if (!isHeadlessLaunchError(error)) {
         throw error;
       }
 
       try {
-        browser = await chromium.launch({ channel: "chrome", headless: true });
+        browser = await launchChromium({ channel: "chrome", headless: true });
         browserLabel = "headless (chrome channel)";
       } catch (chromeError) {
         effectiveHeadless = false;
-        browser = await chromium.launch({ headless: false });
+        browser = await launchChromium({ headless: false });
         browserLabel = "headed (fallback)";
       }
     }
