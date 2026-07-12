@@ -31,6 +31,9 @@ function shouldSkip(name, relPath) {
   if (exclude.has(name)) return true;
   if (name.startsWith(".env.")) return true;
   if (relPath === path.join("templates", "progress.json")) return true;
+  if (relPath === path.join("templates", "troop_plans.json")) return true;
+  if (relPath === path.join("templates", "proxy_list.json")) return true;
+  if (relPath === path.join("templates", "troop_village_preferences.json")) return true;
   if (/^(npm-debug\.log|yarn-error\.log|pnpm-debug\.log)$/i.test(name)) return true;
   return false;
 }
@@ -52,7 +55,7 @@ function copyDir(src, dest, rel) {
 
 console.log(`Zipping ${exportBase} v${version} -> ${zipPath}`);
 console.log(
-  "Excluding: .git, node_modules, .env files, storageState.json, log.jsonl, log-archive, templates/progress.json, debug logs\n"
+  "Excluding: .git, node_modules, .env files, storageState.json, log.jsonl, log-archive, templates/progress.json, templates/troop_plans.json, templates/proxy_list.json, debug logs\n"
 );
 
 copyDir(projectDir, stagedProjectDir, "");

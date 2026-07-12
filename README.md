@@ -1,8 +1,8 @@
 # Nexian Automation Helper
 
-Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, troop training, village expansion helpers, timed loops, and append-only action logging (`log.jsonl`).
+Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
+**Current version: 1.8.6** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -11,8 +11,8 @@ Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
 | Area | Behavior |
 |------|----------|
 | **Login / session** | Saves browser storage to `storageState.json` so you can skip full login after the first run. |
-| **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker. |
-| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, troop templates, activity settings. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
+| **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker, **proxy menu (`y`)**. |
+| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, session play/rest windows, raid-guard heartbeat. |
@@ -21,9 +21,17 @@ Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
 ### Automation modules
 
 - **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`U`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
-- **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), the app can send resources from a village toward a **pivot** village when an incoming attack is within the configured ETA window. Configure pivot IDs in Settings **[H]** or env. Disable if you prefer fully manual handling.
+- **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
+- **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
+- **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
 
----
+### What's new in 1.8.x (summary)
+
+- **Troop plans** replace the old per-village troop-template toggles (four building branches, per-plan timers).
+- **Proxy pool** with dashboard + terminal management; rotate proxy after session-loop rest.
+- **Reliability:** farmlist send uses `#btn_send_all` (not troop `#btn_train`), troop auto queue, Stable map discovery, `GAME_HOST`, `FARMLIST_VILLAGE_ID`.
+
+See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.6**) for full release notes.
 
 ## Requirements
 
@@ -36,14 +44,19 @@ Release notes and a concise TODO list: [CHANGELOG.md](CHANGELOG.md).
 
 | File / folder | Role |
 |---------------|------|
-| `login.js` | Entry: env, browser lifecycle, persists selected settings keys to `.env`. |
+| `login.js` | Entry: env, browser lifecycle, proxy, persists selected settings keys to `.env`. |
 | `terminalMenu.js` | Menus, village list, timers, raid guard hook, audit logging helpers, compact terminal UI. |
+| `troopPlans.js` | Troop plan + village assignment store (`templates/troop_plans.json`). |
+| `proxyPool.js` / `proxyConfig.js` | Proxy list parsing, pool file, dashboard/settings sync. |
+| `browserNavigation.js` | Shared transient navigation error detection and retry delays. |
 | `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
 | `public/` | Dashboard HTML, CSS, and client JS. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers). |
 | `templates/` | Build templates; `templates/index.json` lists available plans. |
 | `templates/progress.json` | Per-village builder progress (gitignored; safe to delete to reset). |
+| `templates/troop_plans.json` | Troop plans and village assignments (gitignored; created at runtime). |
+| `templates/proxy_list.json` | Saved proxy pool (gitignored). |
 | `templates/settlement_targets.json` | Planned expansion coordinates (JSON array of `{ "x", "y" }`; start with `[]` and add your own). |
 | `.env.example` | Commented baseline for copying to `.env`. |
 | `setup.js`, `*.cmd` | Install deps/browser and quick Windows launchers. |
@@ -66,7 +79,10 @@ node setup.js
 ```env
 NEXIAN_USERNAME=your_username_here
 NEXIAN_PASSWORD=your_password_here
+GAME_HOST=https://s1.nexian.world
 ```
+
+`GAME_HOST` must point at your **realm** (e.g. `s1.nexian.world`), not the `nexian.world` portal — otherwise farmlists, builder, and trainers navigate to the wrong host.
 
 3. **First browser run** (recommended headed):
 
@@ -105,9 +121,10 @@ Opens after login. Typical keys include:
 - **`1`** — Send farmlists (all villages)
 - **`2`** — One **village stage** builder step
 - **`3`** — One **resource fields** builder step
-- **`4`** — Troop trainer (selected village)
+- **`4`** — Troop trainer (selected village; uses assigned **troop plan**)
 - **`C`** — Cranny defense (selected village)
-- **`T`** — Troop templates (preset lines, tribe, batch size)
+- **`T`** — **Troop plans** — create/edit plans, assign villages, per-plan intervals
+- **`y`** — Proxy menu (paste pool, apply, rotate, disable)
 - **`5`** — Expansion / residence check
 - **`V`** — Pick active village context
 - **`S`** — Settings submenu (loops, gold complete, **D = compact UI**, raid toggle, expansion options, …)
@@ -187,6 +204,8 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 **High-signal variables**
 
 - **Loops:** `FARMLIST_LOOP_*`, `BUILDER_LOOP_*`, `SESSION_LOOP_*`, `TROOP_TRAINING_ROUND_ROBIN_ENABLED`
+- **Realm / farmlist:** `GAME_HOST`, `FARMLIST_VILLAGE_ID` (pin rally-point village for auto-send)
+- **Proxy:** `PROXY_SERVER`, `PROXY_USERNAME`, `PROXY_PASSWORD`, `PROXY_ROTATE_ON_SESSION_REST`
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
@@ -234,6 +253,8 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
 - **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow.
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
+- **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
+- **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
 
 ---
 

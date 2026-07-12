@@ -1073,6 +1073,35 @@ button.action-btn.danger:hover:not(:disabled) {
   background: rgba(88, 166, 255, 0.32);
 }
 
+.secondary-btn,
+.danger-btn {
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.secondary-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.secondary-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.danger-btn {
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.45);
+  color: #ffb4ae;
+}
+
+.danger-btn:hover {
+  background: rgba(248, 81, 73, 0.22);
+}
+
 .troop-loop-status {
   color: var(--muted);
   font-size: 0.82rem;
@@ -1725,6 +1754,48 @@ button.action-btn.danger:hover:not(:disabled) {
 
 .display-view-switch {
   flex-shrink: 0;
+}
+
+.proxy-panel {
+  margin-top: 1rem;
+}
+
+.proxy-field-full textarea,
+.proxy-field-full input {
+  width: 100%;
+}
+
+.proxy-field-full textarea {
+  min-height: 7rem;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.proxy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.proxy-list-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.proxy-list-item {
+  font-size: 0.82rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.proxy-list-item.active {
+  border-color: rgba(63, 185, 80, 0.55);
+  background: rgba(63, 185, 80, 0.12);
 }
 
 /* --- Compact view (small screens / Pi 3.5" display) --- */

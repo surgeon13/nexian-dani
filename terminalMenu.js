@@ -4,10 +4,17 @@ const path = require("path");
 const builder = require("./villageBuilder");
 const villageExpansion = require("./villageExpansion");
 const resourceCirculation = require("./resourceCirculation");
-const troopVillagePreferences = require("./troopVillagePreferences");
+const troopPlans = require("./troopPlans");
+const { version: APP_VERSION } = require("./package.json");
+const { formatProxyDisplay, normalizeProxyServer, buildProxySettingsPayload, proxyPool } = require("./proxyConfig");
 const activitySimulation = require("./activitySimulation");
 const { forEachLogLine } = require("./logTail");
 const { appendActionLogLine, listArchivedLogs, resolveArchiveDir, maybeRotateActionLog } = require("./actionLog");
+const {
+  isResourceExhaustionError,
+  isTransientNavigationError,
+  navigationRetryDelayMs
+} = require("./browserNavigation");
 
 const USE_COLORS =
   process.env.NO_COLOR !== "1" &&
@@ -410,6 +417,20 @@ function formatIsoClock(date) {
   return new Date(date).toLocaleTimeString("en-GB", { hour12: false });
 }
 
+/** Human-readable countdown, e.g. 7m 12s or 45s. */
+function formatDelayMs(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(ms) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0 && seconds > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return `${seconds}s`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -650,7 +671,192 @@ async function gotoFarmlistWithNewsEscape(page, farmlistUrl) {
 }
 
 /** Nexian / Travian farmlists usually require “select all” before Send is enabled. */
+async function inspectFarmlistSendState(page, sendSelector) {
+  return page
+    .evaluate((sel) => {
+      const isDisabled = (el) => {
+        if (!el || !(el instanceof HTMLElement)) {
+          return true;
+        }
+        if ("disabled" in el && el.disabled) {
+          return true;
+        }
+        if (el.getAttribute("aria-disabled") === "true") {
+          return true;
+        }
+        if (el.classList.contains("disabled") || el.classList.contains("btn_disabled")) {
+          return true;
+        }
+        return false;
+      };
+
+      const sendBtn = sel ? document.querySelector(sel) : null;
+      const sendDisabled = isDisabled(sendBtn);
+
+      const boxes = [];
+      const seen = new Set();
+      const addBox = (el) => {
+        if (!el || seen.has(el) || !(el instanceof HTMLInputElement)) {
+          return;
+        }
+        if (String(el.type || "").toLowerCase() !== "checkbox") {
+          return;
+        }
+        const id = String(el.id || "");
+        const name = String(el.name || "");
+        if (/selectall|markall|mark_all/i.test(id + name)) {
+          return;
+        }
+        seen.add(el);
+        boxes.push(el);
+      };
+
+      for (const el of document.querySelectorAll('input[type="checkbox"]')) {
+        const id = String(el.id || "");
+        const name = String(el.name || "");
+        if (/farmlist|fl_|farm/i.test(`${id} ${name}`)) {
+          addBox(el);
+        }
+      }
+
+      for (const table of document.querySelectorAll("table")) {
+        const text = String(table.textContent || "").toLowerCase();
+        if (text.includes("farm") && (text.includes("list") || text.includes("raid"))) {
+          for (const el of table.querySelectorAll('input[type="checkbox"]')) {
+            addBox(el);
+          }
+        }
+      }
+
+      let enabledLists = 0;
+      let checkedLists = 0;
+      for (const el of boxes) {
+        if (!el.disabled) {
+          enabledLists += 1;
+          if (el.checked) {
+            checkedLists += 1;
+          }
+        }
+      }
+
+      const pageText = String((document.body && document.body.innerText) || "").toLowerCase();
+      const hasFarmListUi = Boolean(
+        sendBtn ||
+          document.querySelector('[id*="farmlist"], [class*="farmlist"], [class*="farmList"]') ||
+          /farm\s*list/i.test(pageText)
+      );
+
+      const nothingToSend =
+        sendDisabled && hasFarmListUi && boxes.length > 0 && enabledLists === 0;
+      const noListsConfigured = hasFarmListUi && boxes.length === 0 && sendDisabled;
+
+      let message = "";
+      if (nothingToSend) {
+        message = `No farmlists ready to send (${boxes.length} list(s) on cooldown or inactive).`;
+      } else if (noListsConfigured) {
+        message = "Farmlist page loaded but no farmlists found (empty rally point or wrong village).";
+      }
+
+      return {
+        sendDisabled,
+        farmlistCount: boxes.length,
+        enabledLists,
+        checkedLists,
+        hasFarmListUi,
+        nothingToSend,
+        noListsConfigured,
+        message,
+        href: window.location.href
+      };
+    }, sendSelector)
+    .catch(() => ({
+      sendDisabled: true,
+      farmlistCount: 0,
+      enabledLists: 0,
+      checkedLists: 0,
+      hasFarmListUi: false,
+      nothingToSend: false,
+      noListsConfigured: false,
+      message: "",
+      href: ""
+    }));
+}
+
 async function ensureFarmlistSelectAllBeforeSend(page, settings) {
+  await page
+    .evaluate(() => {
+      const fireChange = (el) => {
+        try {
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        } catch (_err) {
+          /* ignore */
+        }
+      };
+
+      const listBoxes = [];
+      const seen = new Set();
+      const addListBox = (el) => {
+        if (!el || seen.has(el) || !(el instanceof HTMLInputElement)) {
+          return;
+        }
+        if (String(el.type || "").toLowerCase() !== "checkbox") {
+          return;
+        }
+        const id = String(el.id || "");
+        const name = String(el.name || "");
+        if (/selectall|markall|mark_all/i.test(id + name)) {
+          return;
+        }
+        if (!/farmlist|fl_|farm/i.test(`${id} ${name}`)) {
+          const table = el.closest("table");
+          const tableText = table ? String(table.textContent || "").toLowerCase() : "";
+          if (!(tableText.includes("farm") && (tableText.includes("list") || tableText.includes("raid")))) {
+            return;
+          }
+        }
+        seen.add(el);
+        listBoxes.push(el);
+      };
+
+      for (const el of document.querySelectorAll('input[type="checkbox"]')) {
+        addListBox(el);
+      }
+
+      let checkedLists = 0;
+      for (const el of listBoxes) {
+        if (el.disabled) {
+          continue;
+        }
+        if (!el.checked) {
+          el.checked = true;
+          fireChange(el);
+          checkedLists += 1;
+        }
+      }
+
+      const selectAllSelectors = [
+        'input[id*="farmlist_selectall"]',
+        'input[name="markAll"]',
+        'input[name="mark_all"]'
+      ];
+      for (const sel of selectAllSelectors) {
+        for (const el of document.querySelectorAll(sel)) {
+          if (el.disabled) {
+            continue;
+          }
+          if (!el.checked) {
+            el.checked = true;
+            fireChange(el);
+          }
+        }
+      }
+
+      return { listCount: listBoxes.length, checkedLists };
+    })
+    .catch(() => ({ listCount: 0, checkedLists: 0 }));
+
   const selectors = [
     settings && settings.selectAllSelector,
     'input[id^="farmlist_selectall_"]',
@@ -663,24 +869,28 @@ async function ensureFarmlistSelectAllBeforeSend(page, settings) {
       continue;
     }
     seen.add(sel);
-    const loc = page.locator(sel).first();
+    const loc = page.locator(sel);
     const n = await loc.count().catch(() => 0);
-    if (!n) {
-      continue;
-    }
-    const role = await loc.evaluate((el) => String(el.getAttribute("type") || "").toLowerCase()).catch(() => "");
-    const checked = await loc.isChecked().catch(() => false);
-    if (role === "checkbox" || role === "radio") {
-      if (!checked) {
-        await loc.check({ force: true }).catch(async () => {
-          await loc.click({ force: true }).catch(() => {});
-        });
+    for (let i = 0; i < n; i += 1) {
+      const item = loc.nth(i);
+      const role = await item
+        .evaluate((el) => String(el.getAttribute("type") || "").toLowerCase())
+        .catch(() => "");
+      const checked = await item.isChecked().catch(() => false);
+      if (role === "checkbox" || role === "radio") {
+        if (!checked) {
+          await item.check({ force: true }).catch(async () => {
+            await item.click({ force: true }).catch(() => {});
+          });
+        }
+      } else if (!checked) {
+        await item.click({ force: true }).catch(() => {});
       }
-    } else if (!checked) {
-      await loc.click({ force: true }).catch(() => {});
     }
   }
-  await page.waitForTimeout(450);
+
+  await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => {});
+  await page.waitForTimeout(650);
 }
 
 async function isSendControlDisabled(page, selector) {
@@ -777,6 +987,67 @@ async function activateFarmlistSendControl(page, chosenSendSelector) {
   }, chosenSendSelector).then((r) => Boolean(r && r.ok)).catch(() => false);
 }
 
+async function isLikelyFarmlistPage(page) {
+  const url = String(page.url() || "").toLowerCase();
+  if (/t=99/.test(url) && (/gid=16/.test(url) || /gid%3d16/.test(url))) {
+    return true;
+  }
+  if (/farmlist/i.test(url)) {
+    return true;
+  }
+  return page
+    .evaluate(() =>
+      Boolean(
+        document.querySelector(
+          '#btn_send_all, input[name="start_all_raids"], [id*="farmlist_selectall"], input[id*="farmlist"]'
+        )
+      )
+    )
+    .catch(() => false);
+}
+
+function isBlockedFarmlistSendSelector(selector) {
+  const normalized = String(selector || "").toLowerCase();
+  return (
+    /btn_train/.test(normalized) ||
+    /train_troop/.test(normalized) ||
+    /#btn_train/.test(normalized)
+  );
+}
+
+async function validateFarmlistSendSelector(page, selector) {
+  if (!selector || isBlockedFarmlistSendSelector(selector)) {
+    return false;
+  }
+  return page
+    .evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el || !(el instanceof HTMLElement)) {
+        return false;
+      }
+      const id = String(el.id || "").toLowerCase();
+      const name = String(el.getAttribute("name") || "").toLowerCase();
+      if (id === "btn_train" || /train/.test(id) || /train/.test(name)) {
+        return false;
+      }
+      if (
+        id.includes("send") ||
+        id.includes("sendall") ||
+        name.includes("start_all") ||
+        name.includes("raid") ||
+        name.includes("send")
+      ) {
+        return true;
+      }
+      const text = String(el.textContent || el.getAttribute("value") || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      return /\bsend\b/.test(text) || text.includes("start all") || text.includes("start raid");
+    }, selector)
+    .catch(() => false);
+}
+
 /** When CSS ids differ (e.g. Nexian), pick the best visible send / start-raids control and return a Playwright-safe selector. */
 async function discoverFarmlistSendSelectorFromDom(page) {
   return page.evaluate(() => {
@@ -799,6 +1070,12 @@ async function discoverFarmlistSendSelectorFromDom(page) {
       const typ = String(el.getAttribute("type") || "").toLowerCase();
       const val = String(el.getAttribute("value") || "").toLowerCase();
       const tx = textOf(el);
+      if (id === "btn_train" || (id.includes("train") && !id.includes("raid"))) {
+        return -100;
+      }
+      if (nm.includes("train") && !nm.includes("raid")) {
+        return -100;
+      }
       let s = 0;
       if (id.includes("btn_send") || id.includes("send_all") || id.includes("sendall")) {
         s += 8;
@@ -815,7 +1092,7 @@ async function discoverFarmlistSendSelectorFromDom(page) {
       if (el.tagName === "BUTTON" || typ === "submit" || typ === "button") {
         s += 1;
       }
-      if (id && /^send|^btn|^start|^raid|^farm/i.test(id)) {
+      if (id && /^btn_(send|start)/i.test(id)) {
         s += 2;
       }
       const oc = String(el.getAttribute("onclick") || "").toLowerCase();
@@ -833,7 +1110,7 @@ async function discoverFarmlistSendSelectorFromDom(page) {
 
     const ranked = nodes
       .map((el) => ({ el, s: score(el) }))
-      .filter((x) => x.s >= 3)
+      .filter((x) => x.s >= 4)
       .sort((a, b) => b.s - a.s);
     const best = ranked[0] && ranked[0].el;
     if (!best) {
@@ -881,8 +1158,14 @@ async function sendFarmlists(getPage, settings, options = {}) {
   await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
 
   await page.waitForLoadState("domcontentloaded").catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 3500 }).catch(() => {});
   await page.waitForTimeout(600);
+
+  if (!(await isLikelyFarmlistPage(page))) {
+    await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await page.waitForTimeout(600);
+  }
 
   const sendSelectors = [
     "#btn_send_all",
@@ -911,20 +1194,22 @@ async function sendFarmlists(getPage, settings, options = {}) {
         .count()
         .then((count) => count > 0)
         .catch(() => false);
-      if (exists) {
+      if (exists && (await validateFarmlistSendSelector(page, selector))) {
         return selector;
       }
     }
     const discovered = await discoverFarmlistSendSelectorFromDom(page).catch(() => null);
     if (discovered && typeof discovered === "string" && discovered.trim()) {
-      const ok = await page
-        .locator(discovered.trim())
-        .first()
-        .count()
-        .then((c) => c > 0)
-        .catch(() => false);
+      const trimmed = discovered.trim();
+      const ok =
+        (await page
+          .locator(trimmed)
+          .first()
+          .count()
+          .then((c) => c > 0)
+          .catch(() => false)) && (await validateFarmlistSendSelector(page, trimmed));
       if (ok) {
-        return discovered.trim();
+        return trimmed;
       }
     }
     return null;
@@ -985,15 +1270,18 @@ async function sendFarmlists(getPage, settings, options = {}) {
 
   // Fallback 2: Village center -> Rally Point -> Farm Lists.
   if (!chosenSendSelector) {
-    const villageCenterHref = await page.evaluate(() => {
-      const link = document.querySelector("a#n2[href], a[href*='village2.php']");
-      return link && typeof link.getAttribute === "function"
-        ? (link.getAttribute("href") || null)
-        : null;
-    });
+    let villageCenterHref = null;
+    if (!pinnedVillageId) {
+      villageCenterHref = await page.evaluate(() => {
+        const link = document.querySelector("a#n2[href], a[href*='village2.php']");
+        return link && typeof link.getAttribute === "function"
+          ? (link.getAttribute("href") || null)
+          : null;
+      });
+    }
     const targetVillageCenter = villageCenterHref
-      ? new URL(villageCenterHref, page.url()).toString()
-      : new URL("/village2.php", page.url()).toString();
+      ? withVillageId(new URL(villageCenterHref, page.url()).toString(), pinnedVillageId)
+      : withVillageId(new URL("/village2.php", page.url()).toString(), pinnedVillageId);
 
     await page.goto(targetVillageCenter, {
       waitUntil: "domcontentloaded",
@@ -1082,14 +1370,14 @@ async function sendFarmlists(getPage, settings, options = {}) {
         await first.click({ timeout: 15000 }).catch(async () => {
           await first.click({ force: true, timeout: 10000 }).catch(() => {});
         });
-        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+        await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
         return true;
       }
       return false;
     };
 
     if (await trySendByRoleOrLabel()) {
-      return;
+      return { status: "sent" };
     }
 
     const authState = await page.evaluate(() => {
@@ -1113,11 +1401,28 @@ async function sendFarmlists(getPage, settings, options = {}) {
     );
   }
 
+  if (
+    chosenSendSelector &&
+    (!(await validateFarmlistSendSelector(page, chosenSendSelector)) || !(await isLikelyFarmlistPage(page)))
+  ) {
+    await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await page.waitForTimeout(600);
+    chosenSendSelector = await waitForSendSelector(12000);
+  }
+
+  if (chosenSendSelector && isBlockedFarmlistSendSelector(chosenSendSelector)) {
+    const villageHint = pinnedVillageId ? ` (vid=${pinnedVillageId})` : "";
+    throw new Error(
+      `Not on farmlist page — troop trainer #btn_train was not used as send control${villageHint}. URL: ${page.url()}`
+    );
+  }
+
   await ensureFarmlistSelectAllBeforeSend(page, settings);
   let sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 12000);
   if (!sendEnabled) {
     await ensureFarmlistSelectAllBeforeSend(page, settings);
-    sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 6000);
+    sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 8000);
   }
 
   // Safety delay before submitting farmlists:
@@ -1125,17 +1430,49 @@ async function sendFarmlists(getPage, settings, options = {}) {
   const preSendDelayMs = Math.max(1000, getRandomDelayMs(settings));
   await page.waitForTimeout(preSendDelayMs);
 
+  if (!sendEnabled) {
+    const sendState = await inspectFarmlistSendState(page, chosenSendSelector);
+    const villageHint = pinnedVillageId ? ` (vid=${pinnedVillageId})` : "";
+    if (sendState.nothingToSend) {
+      return {
+        status: "idle",
+        message: `[Farmlist] ${sendState.message}${villageHint}`,
+        ...sendState
+      };
+    }
+    if (sendState.noListsConfigured) {
+      throw new Error(
+        `${sendState.message}${villageHint} Set FARMLIST_VILLAGE_ID in .env to a village with Rally Point farmlists. URL: ${sendState.href || page.url()}`
+      );
+    }
+  }
+
   const clicked = await activateFarmlistSendControl(page, chosenSendSelector);
   if (!clicked) {
     const stillDisabled = await isSendControlDisabled(page, chosenSendSelector);
+    if (stillDisabled) {
+      const sendState = await inspectFarmlistSendState(page, chosenSendSelector);
+      const villageHint = pinnedVillageId ? ` (vid=${pinnedVillageId})` : "";
+      if (sendState.nothingToSend) {
+        return {
+          status: "idle",
+          message: `[Farmlist] ${sendState.message}${villageHint}`,
+          ...sendState
+        };
+      }
+      throw new Error(
+        sendState.enabledLists > 0
+          ? `Found farmlist send control '${chosenSendSelector}' but it stayed disabled after selecting ${sendState.checkedLists}/${sendState.enabledLists} ready list(s)${villageHint} (UI changed or AJAX did not enable send).`
+          : `Found farmlist send control '${chosenSendSelector}' but it stayed disabled after select-all (no active farmlists, wrong village, or UI changed)${villageHint}.`
+      );
+    }
     throw new Error(
-      stillDisabled
-        ? `Found farmlist send control '${chosenSendSelector}' but it stayed disabled after select-all (no active farmlists, wrong village, or UI changed).`
-        : `Found farmlist send control '${chosenSendSelector}' but could not activate it (blocked click — try adjusting SEND_BUTTON_SELECTOR or run headed once).`
+      `Found farmlist send control '${chosenSendSelector}' but could not activate it (blocked click — try adjusting SEND_BUTTON_SELECTOR or run headed once).`
     );
   }
 
-  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
+  return { status: "sent" };
 }
 
 function withVillageId(url, villageId) {
@@ -1152,18 +1489,12 @@ function withVillageId(url, villageId) {
   }
 }
 
-function isTransientNavigationError(error) {
-  const msg = String(error && error.message ? error.message : error);
-  return /ERR_ABORTED|Execution context was destroyed|interrupted by another navigation|Navigation failed because page was closed/i.test(
-    msg
-  );
-}
-
 /** Retry goto when Nexian redirects (e.g. village1.php → village1.php?vid=…). */
 async function safeGotoWithRetry(page, url, options = {}, retries = 2) {
   const gotoOptions = { waitUntil: "domcontentloaded", timeout: 60000, ...options };
+  const maxRetries = Math.max(retries, 4);
   let lastError = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     try {
       await page.goto(url, gotoOptions);
       return;
@@ -1189,10 +1520,10 @@ async function safeGotoWithRetry(page, url, options = {}, retries = 2) {
       } catch (_parseError) {
         /* fall through to retry */
       }
-      if (attempt >= retries) {
+      if (attempt >= maxRetries) {
         throw error;
       }
-      await page.waitForTimeout(250 + attempt * 250).catch(() => {});
+      await page.waitForTimeout(navigationRetryDelayMs(attempt, error)).catch(() => {});
     }
   }
   if (lastError) {
@@ -1356,362 +1687,18 @@ function printMainMenu(automationStatus, settings = terminalUiSettings) {
   console.log(`  ${color("3", ANSI.bold, ANSI.cyan)}  Resource Fields Builder`);
   console.log(`  ${color("4", ANSI.bold, ANSI.cyan)}  Troop Trainer`);
   console.log(`  ${color("C", ANSI.bold, ANSI.cyan)}  Cranny defense (selected village)`);
-  console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Templates`);
+  console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Plans (timers + per-village)`);
   console.log(`  ${color("5", ANSI.bold, ANSI.cyan)}  Expansion / Residence Check`);
   console.log(`  ${color("X", ANSI.bold, ANSI.cyan)}  Stop Builder Process`);
   console.log(`  ${color("r", ANSI.bold, ANSI.cyan)}  Relogin Now`);
   console.log(`  ${color("R", ANSI.bold, ANSI.cyan)}  Relogin + Village Status`);
+  console.log(`  ${color("y", ANSI.bold, ANSI.cyan)}  Change Proxy + Relogin`);
   console.log(`  ${color("V", ANSI.bold, ANSI.cyan)}  Select Village Context`);
   console.log(`  ${color("L", ANSI.bold, ANSI.cyan)}  Logs (Summary)`);
   console.log(`  ${color("P", ANSI.bold, ANSI.cyan)}  Pause/Unpause Automation`);
   console.log(`  ${color("S", ANSI.bold, ANSI.cyan)}  Settings`);
   console.log(`  ${color("Q", ANSI.bold, ANSI.cyan)}  Quit`);
 }
-
-function normalizeTroopTemplateMode(value) {
-  return String(value || "offensive").toLowerCase() === "defensive"
-    ? "defensive"
-    : "offensive";
-}
-
-/** Stored setting and env TROOP_TRAINING_BATCH_SIZE; invalid → 5, else clamp 1..999999 */
-function clampTroopTrainingBatchSizeStored(raw) {
-  const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n)) {
-    return 5;
-  }
-  return Math.max(1, Math.min(n, 999999));
-}
-
-/** Per train action: min(batch setting, Nexian row max) */
-function normalizeTroopTrainingBatchGoal(settings) {
-  return clampTroopTrainingBatchSizeStored(settings && settings.troopTrainingBatchSize);
-}
-
-/** Travian Legends–style defaults; infantry = Barracks / Great Barracks, cavalry = Stable (see TROOP_TRIBE). */
-const TRIBE_DEFAULT_TEMPLATES = {
-  teuton: {
-    offensive: {
-      infantry: ["Clubswinger", "Axesman"],
-      cavalry: ["Teutonic Knight"]
-    },
-    defensive: {
-      infantry: ["Spearman"],
-      cavalry: ["Paladin", "Scout"]
-    }
-  },
-  roman: {
-    offensive: {
-      infantry: ["Legionnaire", "Imperian"],
-      cavalry: ["Equites Imperatoris"]
-    },
-    defensive: {
-      infantry: ["Legionnaire", "Praetorian"],
-      cavalry: ["Equites Legati"]
-    }
-  },
-  gaul: {
-    offensive: {
-      infantry: ["Phalanx", "Swordsman"],
-      cavalry: ["Theutates Thunder", "Haeduan"]
-    },
-    defensive: {
-      infantry: ["Phalanx"],
-      cavalry: ["Druidrider", "Pathfinder"]
-    }
-  }
-};
-
-function getDefaultBranchList(tribe, strategyMode, branch) {
-  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
-  const b = branch === "cavalry" ? "cavalry" : "infantry";
-  const pack = (TRIBE_DEFAULT_TEMPLATES[tribe] || TRIBE_DEFAULT_TEMPLATES.teuton)[sm];
-  const list = pack && pack[b];
-  return Array.isArray(list) ? list.slice() : [];
-}
-
-/** When legacy TROOP_TEMPLATE_OFFENSIVE/DEFENSIVE is set but branch-specific envs are empty, pick units that belong on that branch. */
-function legacySplitToBranch(settings, strategyMode, branch, tribeResolved) {
-  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
-  const legacyRaw =
-    sm === "offensive" ? settings.troopTemplateOffensive : settings.troopTemplateDefensive;
-  const full = parseTroopTemplateList(String(legacyRaw || ""), null);
-  if (!full.length) {
-    return null;
-  }
-  const defInf = getDefaultBranchList(tribeResolved, sm, "infantry").map((x) => String(x || "").trim().toLowerCase());
-  const defCav = getDefaultBranchList(tribeResolved, sm, "cavalry").map((x) => String(x || "").trim().toLowerCase());
-  const want = branch === "cavalry" ? defCav : defInf;
-  const picked = [];
-  for (const name of full) {
-    const lc = String(name || "").trim().toLowerCase();
-    if (want.includes(lc)) {
-      picked.push(String(name).trim());
-    }
-  }
-  return picked.length ? picked : null;
-}
-
-function branchSettingsKey(strategyMode, branch) {
-  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
-  const b = branch === "cavalry" ? "cavalry" : "infantry";
-  if (b === "infantry" && sm === "offensive") {
-    return "troopTemplateInfantryOffensive";
-  }
-  if (b === "infantry" && sm === "defensive") {
-    return "troopTemplateInfantryDefensive";
-  }
-  if (b === "cavalry" && sm === "offensive") {
-    return "troopTemplateCavalryOffensive";
-  }
-  return "troopTemplateCavalryDefensive";
-}
-
-function getTroopBranchTemplate(settings, strategyMode, branch, barracksTroopNames = []) {
-  const sm = strategyMode === "defensive" ? "defensive" : "offensive";
-  const b = branch === "cavalry" ? "cavalry" : "infantry";
-  const tribe = resolveTribeForTraining(settings, barracksTroopNames);
-  const key = branchSettingsKey(sm, b);
-  const rawEnv = String((settings && settings[key]) || "").trim();
-  const defaultBatch = normalizeTroopTrainingBatchGoal(settings);
-  let envEntries = parseTroopTemplateEntries(rawEnv, null, defaultBatch);
-  if (!envEntries.length) {
-    const legacy = legacySplitToBranch(settings, sm, b, tribe);
-    if (legacy && legacy.length) {
-      envEntries = legacy.map((name) => ({ name, qty: null }));
-    }
-  }
-  const defaults = getDefaultBranchList(tribe, sm, b);
-  const candidates =
-    envEntries.length > 0
-      ? envEntries
-      : defaults.map((name) => ({ name, qty: null }));
-  return { mode: sm, branch: b, candidates, tribe };
-}
-
-function parseTroopTemplateEntry(token, defaultBatch) {
-  const raw = String(token || "").trim();
-  if (!raw) {
-    return null;
-  }
-  const match = raw.match(/^(.+?):(\d+)$/);
-  if (match) {
-    return {
-      name: match[1].trim(),
-      qty: clampTroopTrainingBatchSizeStored(match[2])
-    };
-  }
-  return { name: raw, qty: null };
-}
-
-function buildTroopSettingsPayload(settings, extras = {}) {
-  return {
-    mode: normalizeTroopTemplateMode(settings.troopTemplateMode),
-    tribe: normalizeTroopTribeSetting(settings.troopTribe),
-    batchSize: normalizeTroopTrainingBatchGoal(settings),
-    lists: {
-      infantryOffensive: String(settings.troopTemplateInfantryOffensive || ""),
-      infantryDefensive: String(settings.troopTemplateInfantryDefensive || ""),
-      cavalryOffensive: String(settings.troopTemplateCavalryOffensive || ""),
-      cavalryDefensive: String(settings.troopTemplateCavalryDefensive || "")
-    },
-    effective: {
-      infantryOffensive: getBranchTroopListPlain(settings, "offensive", "infantry"),
-      infantryDefensive: getBranchTroopListPlain(settings, "defensive", "infantry"),
-      cavalryOffensive: getBranchTroopListPlain(settings, "offensive", "cavalry"),
-      cavalryDefensive: getBranchTroopListPlain(settings, "defensive", "cavalry")
-    },
-    troopLoop: extras.troopLoop || null
-  };
-}
-
-function parseTroopTemplateEntries(raw, fallback, defaultBatch) {
-  const tokens = String(raw || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (tokens.length) {
-    return tokens.map((token) => parseTroopTemplateEntry(token, defaultBatch)).filter(Boolean);
-  }
-  if (fallback === undefined || fallback === null) {
-    return [];
-  }
-  if (Array.isArray(fallback) && fallback.length) {
-    return fallback.map((name) => ({ name: String(name).trim(), qty: null }));
-  }
-  return [];
-}
-
-function serializeTroopTemplateEntries(entries, defaultBatch) {
-  const goal = clampTroopTrainingBatchSizeStored(defaultBatch);
-  return entries
-    .map((entry) => {
-      const name = String(entry.name || "").trim();
-      if (!name) {
-        return "";
-      }
-      if (entry.qty != null && Number.isFinite(Number(entry.qty))) {
-        const qty = clampTroopTrainingBatchSizeStored(entry.qty);
-        if (qty !== goal) {
-          return `${name}:${qty}`;
-        }
-      }
-      return name;
-    })
-    .filter(Boolean)
-    .join(", ");
-}
-
-function troopCandidateName(candidate) {
-  if (candidate == null) {
-    return "";
-  }
-  if (typeof candidate === "string") {
-    return String(candidate).trim();
-  }
-  return String(candidate.name || "").trim();
-}
-
-function troopCandidateQty(candidate, batchGoal) {
-  if (candidate != null && typeof candidate === "object" && candidate.qty != null) {
-    const qty = Math.floor(Number(candidate.qty));
-    if (Number.isFinite(qty) && qty > 0) {
-      return clampTroopTrainingBatchSizeStored(qty);
-    }
-  }
-  return batchGoal;
-}
-
-function parseTroopTemplateList(raw, fallback) {
-  const entries = parseTroopTemplateEntries(raw, fallback, 1);
-  return entries.map((entry) => entry.name);
-}
-
-function normalizeTroopTribeSetting(value) {
-  const t = String(value || "auto").trim().toLowerCase();
-  if (t === "teuton" || t === "teutons" || t === "t") {
-    return "teuton";
-  }
-  if (t === "roman" || t === "romans" || t === "r") {
-    return "roman";
-  }
-  if (t === "gaul" || t === "gauls" || t === "g") {
-    return "gaul";
-  }
-  return "auto";
-}
-
-/** Infer tribe from unit names shown on the barracks / great barracks train form. */
-function inferTribeFromBarracksTroopNames(names) {
-  const lc = (Array.isArray(names) ? names : [])
-    .map((n) => String(n || "").trim().toLowerCase())
-    .filter(Boolean);
-  if (!lc.length) {
-    return null;
-  }
-  const has = (re) => lc.some((n) => re.test(n));
-  let teuton = 0;
-  let roman = 0;
-  let gaul = 0;
-  if (has(/\bclubswinger\b/) || has(/\baxesman\b/) || has(/\bteutonic\b/)) {
-    teuton += 4;
-  }
-  if (has(/\bpaladin\b/) && !has(/\blegionnaire\b/)) {
-    teuton += 2;
-  }
-  if (has(/\bspearman\b/) && !has(/\blegionnaire\b/) && !has(/\bphalanx\b/) && !has(/\bswordsman\b/)) {
-    teuton += 2;
-  }
-  if (has(/\blegionnaire\b/) || has(/\bpraetorian\b/) || has(/\bimperian\b/) || has(/\bimperator/)) {
-    roman += 4;
-  }
-  if (
-    has(/\bphalanx\b/) ||
-    has(/\bswordsman\b/) ||
-    has(/\bpathfinder\b/) ||
-    has(/\bhaeduan\b/) ||
-    has(/\bdruid/) ||
-    has(/\btheutates\b/)
-  ) {
-    gaul += 4;
-  }
-  const maxScore = Math.max(teuton, roman, gaul);
-  if (maxScore < 2) {
-    return null;
-  }
-  if (teuton === maxScore) {
-    return "teuton";
-  }
-  if (roman === maxScore) {
-    return "roman";
-  }
-  return "gaul";
-}
-
-function resolveTribeForTraining(settings, barracksTroopNames) {
-  const cfg = normalizeTroopTribeSetting(settings && settings.troopTribe);
-  if (cfg === "teuton" || cfg === "roman" || cfg === "gaul") {
-    return cfg;
-  }
-  return inferTribeFromBarracksTroopNames(barracksTroopNames) || "teuton";
-}
-
-/** Merged infantry + cavalry order (legacy helpers / logging only). */
-function getTroopTemplateCandidatesForMode(settings, mode, barracksTroopNames = []) {
-  const m = mode === "defensive" ? "defensive" : "offensive";
-  const inf = getTroopBranchTemplate(settings, m, "infantry", barracksTroopNames);
-  const cav = getTroopBranchTemplate(settings, m, "cavalry", barracksTroopNames);
-  return {
-    mode: m,
-    candidates: [...inf.candidates, ...cav.candidates],
-    tribe: inf.tribe
-  };
-}
-
-function getTroopTemplateCandidates(settings, options = {}) {
-  const mode = normalizeTroopTemplateMode(settings.troopTemplateMode);
-  const names = options && Array.isArray(options.barracksTroopNames) ? options.barracksTroopNames : [];
-  return getTroopTemplateCandidatesForMode(settings, mode, names);
-}
-
-function describeBranchTroopList(settings, strategyMode, branch) {
-  const plain = getBranchTroopListPlain(settings, strategyMode, branch);
-  if (!plain.usingDefaults) {
-    return plain.effective.join(", ");
-  }
-  const previewTribe =
-    plain.previewTribe === "auto" ? "auto (infer on train)" : plain.previewTribe;
-  return `${plain.effective.join(", ")}  ${color(`[${previewTribe}]`, ANSI.gray)}`;
-}
-
-function getBranchTroopListPlain(settings, strategyMode, branch) {
-  const m = strategyMode === "defensive" ? "defensive" : "offensive";
-  const b = branch === "cavalry" ? "cavalry" : "infantry";
-  const key = branchSettingsKey(m, b);
-  const defaultBatch = normalizeTroopTrainingBatchGoal(settings);
-  const customRaw = String((settings && settings[key]) || "").trim();
-  const customEntries = parseTroopTemplateEntries(customRaw, null, defaultBatch);
-  if (customEntries.length > 0) {
-    return {
-      custom: customRaw,
-      effective: customEntries.map((entry) => entry.name),
-      entries: customEntries,
-      usingDefaults: false
-    };
-  }
-  const tribe = normalizeTroopTribeSetting(settings.troopTribe);
-  const resolvedTribe = tribe === "auto" ? "teuton" : tribe;
-  const defaults = getDefaultBranchList(resolvedTribe, m, b);
-  return {
-    custom: "",
-    effective: defaults,
-    entries: defaults.map((name) => ({ name, qty: null })),
-    usingDefaults: true,
-    previewTribe: tribe
-  };
-}
-
-const TROOP_TRIBE_MENU_CYCLE = ["auto", "teuton", "roman", "gaul"];
 
 function printCompactMenuKeys(settings = terminalUiSettings) {
   if (!isCompactDisplay(settings)) {
@@ -1894,20 +1881,9 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
     console.log(
       `  ${color("Next Troop Run:", ANSI.gray)} ${color(nextTroopText, ANSI.bold, ANSI.cyan)}`
     );
-    if (settings.troopTrainingAlternateGreatBarracks) {
-      const tplMode = normalizeTroopTemplateMode(settings.troopTemplateMode);
-      const note =
-        tplMode === "offensive"
-          ? "RR cycles: Barracks (off. inf.) → Great Barracks (def. inf.) → Stable (cavalry, same mode)"
-          : "alternate Great Barracks only runs when template mode is offensive";
-      console.log(
-        `  ${color("Troop alternate:", ANSI.gray)} ${color(note, ANSI.bold, ANSI.cyan)}`
-      );
-    } else if (settings.troopTrainingRoundRobinEnabled) {
-      console.log(
-        `  ${color("Troop RR:", ANSI.gray)} ${color("Barracks (inf.) ↔ Stable (cav.) per tick", ANSI.bold, ANSI.cyan)}`
-      );
-    }
+    console.log(
+      `  ${color("Troop RR:", ANSI.gray)} ${color("trains each village's assigned plan (menu T)", ANSI.bold, ANSI.cyan)}`
+    );
   }
 
   const crannyModeLabel = settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF";
@@ -1944,32 +1920,15 @@ function printSettings(settings, villageState) {
   printSubDivider("SETTINGS");
   printKeyValueRows([
     { label: "browserMode", value: settings.headless ? "Headless" : "Full Browser" },
+    { label: "proxy", value: formatProxyDisplay(settings) },
     { label: "randomDelayMs", value: `${settings.randomDelayMinMs}-${settings.randomDelayMaxMs}` },
     { label: "pauseAutoUnpauseMinutes", value: `${settings.manualPauseAutoUnpauseMinutes || 5}` },
     { label: "dashboardDisplay", value: settings.dashboardCompactView ? "Compact view" : "Full view" },
     { label: "farmlistUrl", value: settings.farmlistUrl },
     { label: "villageBuilderUrl", value: settings.villageBuilderUrl },
     { label: "troopTrainerUrl", value: settings.troopTrainerUrl },
-    { label: "troopGreatTrainerUrl", value: settings.troopGreatTrainerUrl },
     { label: "troopStableTrainerUrl", value: settings.troopStableTrainerUrl },
-    {
-      label: "troopAlternateGreatBarracks",
-      value: settings.troopTrainingAlternateGreatBarracks ? "ON" : "OFF"
-    },
-    {
-      label: "troopTribe",
-      value: normalizeTroopTribeSetting(settings.troopTribe)
-    },
-    {
-      label: "troopTrainingBatchSize",
-      value: String(normalizeTroopTrainingBatchGoal(settings))
-    },
-    { label: "troopTrainingPreset", value: settings.troopTrainingPreset },
-    { label: "troopTemplateMode", value: normalizeTroopTemplateMode(settings.troopTemplateMode) },
-    { label: "tplInfantryOff", value: String(settings.troopTemplateInfantryOffensive || "").trim() || "(defaults)" },
-    { label: "tplInfantryDef", value: String(settings.troopTemplateInfantryDefensive || "").trim() || "(defaults)" },
-    { label: "tplCavalryOff", value: String(settings.troopTemplateCavalryOffensive || "").trim() || "(defaults)" },
-    { label: "tplCavalryDef", value: String(settings.troopTemplateCavalryDefensive || "").trim() || "(defaults)" },
+    { label: "troopPlans", value: `${troopPlans.listPlans().length} plan(s) — manage in menu T` },
     { label: "farmlistLoop", value: `${settings.farmlistLoopEnabled ? "ON" : "OFF"} (${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes} min)` },
     { label: "builderLoop", value: `${settings.builderLoopEnabled ? "ON" : "OFF"} (${settings.builderLoopMinMinutes}-${settings.builderLoopMaxMinutes} min)` },
     {
@@ -2064,6 +2023,9 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("3")}  Pause Auto-Unpause ${tag("after", `${settings.manualPauseAutoUnpauseMinutes || 5}m`)}`
   );
   console.log(
+    `  ${opt("Y")}  Proxy              ${tag("", formatProxyDisplay(settings))}`
+  );
+  console.log(
     `  ${opt("4")}  Activity Simulation ${dim("[")}${onOff(settings.activitySimulationEnabled)}${dim("]")}  ${tag("every", `${settings.activitySimulationLoopMinMinutes}-${settings.activitySimulationLoopMaxMinutes}m`)}`
   );
   console.log(
@@ -2110,6 +2072,9 @@ function printSettingsMenu(settings, villageState) {
   section("Troops and Defense");
   console.log(
     `  ${opt("T")}  Troop RR Loop      ${dim("[")}${onOff(settings.troopTrainingRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("U")}  Troop Plans        ${tag("manage", "plans + village assignment")}`
   );
   console.log(
     `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
@@ -2457,6 +2422,623 @@ async function runBuilderRrExclusionMenu(rl, settings, runtimeControls) {
   }
 }
 
+function printTroopPlansMenu(settings, plans) {
+  printSubDivider("TROOP PLANS");
+  console.log(`  ${color(`Engine v${APP_VERSION}`, ANSI.gray)} — Barracks, Great Barracks, Stable, Great Stable per plan`);
+  const rrLabel = settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF";
+  console.log(
+    `  ${color("Auto-train loop:", ANSI.gray)} ${color(rrLabel, ANSI.bold, settings.troopTrainingRoundRobinEnabled ? ANSI.green : ANSI.yellow)} ${color(`(default ${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes} min)`, ANSI.gray)}`
+  );
+  console.log("");
+  if (!plans.length) {
+    console.log(`  ${color("(no plans yet — press N to create one)", ANSI.gray)}`);
+  } else {
+    plans.forEach((plan, index) => {
+      console.log(
+        `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(plan.name, ANSI.bold)}  ${color(troopPlans.describePlan(plan), ANSI.gray)}`
+      );
+    });
+  }
+  console.log("");
+  console.log(`  ${color("[N]", ANSI.bold, ANSI.cyan)}  New plan`);
+  console.log(`  ${color("[E]", ANSI.bold, ANSI.cyan)}  Edit plan`);
+  console.log(`  ${color("[X]", ANSI.bold, ANSI.cyan)}  Delete plan`);
+  console.log(`  ${color("[V]", ANSI.bold, ANSI.cyan)}  Assign villages to plans`);
+  console.log(`  ${color("[U]", ANSI.bold, ANSI.cyan)}  Show trainable unit names from a village`);
+  console.log(`  ${color("[L]", ANSI.bold, ANSI.cyan)}  Toggle auto-train loop + default interval`);
+  console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+async function promptTroopPlanFields(rl, currentPlan) {
+  const isNew = !currentPlan;
+  const cur = currentPlan || {};
+  const branches = troopPlans.PLAN_BRANCHES;
+
+  const askKeep = async (label, currentValue) => {
+    const shown = currentValue !== undefined && currentValue !== null && String(currentValue) !== ""
+      ? ` (Enter keep: ${currentValue})`
+      : isNew
+        ? ""
+        : " (Enter keep: none)";
+    return (await askQuestion(rl, `${label}${shown}: `)).trim();
+  };
+
+  printSubDivider(isNew ? "NEW PLAN — BUILDINGS" : `EDIT PLAN — ${cur.name || "?"}`);
+  console.log(
+    `  ${color("Set each building separately (blank = skip that building):", ANSI.gray)}`
+  );
+  branches.forEach((branch, index) => {
+    const unit = String(cur[branch.unitField] || "").trim();
+    const qty = cur[branch.qtyField];
+    const current = unit ? `${unit} x${qty}` : "—";
+    console.log(
+      `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${branch.label}  ${color(current, ANSI.gray)}`
+    );
+  });
+  console.log("");
+
+  const patch = {};
+
+  for (let index = 0; index < branches.length; index++) {
+    const branch = branches[index];
+    const step = `[${index + 1}/${branches.length}] ${branch.label}`;
+    const unit = await askKeep(`${step} — unit name (blank = none)`, cur[branch.unitField]);
+    if (unit !== "" || isNew) {
+      patch[branch.unitField] = unit;
+    }
+    if (patch[branch.unitField] || cur[branch.unitField]) {
+      const qty = await askKeep(`${step} — qty per train`, cur[branch.qtyField]);
+      if (qty !== "") {
+        patch[branch.qtyField] = qty;
+      }
+    }
+  }
+
+  const minM = await askKeep("Timer MIN minutes", cur.minMinutes);
+  if (minM !== "") {
+    patch.minMinutes = minM;
+  }
+  const maxM = await askKeep("Timer MAX minutes", cur.maxMinutes);
+  if (maxM !== "") {
+    patch.maxMinutes = maxM;
+  }
+
+  return patch;
+}
+
+async function runTroopPlanAssignMenu(rl, hooks) {
+  const getSnapshot =
+    typeof hooks.getSnapshot === "function"
+      ? hooks.getSnapshot
+      : () => ({ villages: [] });
+
+  if (typeof hooks.refreshVillages === "function") {
+    try {
+      await hooks.refreshVillages();
+    } catch (_error) {
+      logWarn("Could not refresh village list (session busy?).");
+    }
+  }
+
+  let done = false;
+  while (!done) {
+    if (hooks.menuSession && hooks.menuSession.quitRequested) {
+      done = true;
+      continue;
+    }
+    const plans = troopPlans.listPlans();
+    const snapshot = getSnapshot();
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+
+    printSubDivider("TROOP — ASSIGN VILLAGES");
+    if (!plans.length) {
+      console.log(`  ${color("(no plans yet — create one first)", ANSI.gray)}`);
+      return;
+    }
+    if (!villages.length) {
+      console.log(`  ${color("(no villages loaded — open main menu V first)", ANSI.gray)}`);
+    }
+    villages.forEach((village, index) => {
+      const assignment = troopPlans.getAssignment(village);
+      const active = troopPlans.resolvePlanForVillage(village);
+      const planLabel = assignment && assignment.plan ? assignment.plan : "—";
+      const stateLabel = active
+        ? color("ON", ANSI.bold, ANSI.green)
+        : assignment && assignment.plan
+          ? color("off", ANSI.gray)
+          : color("—", ANSI.gray);
+      console.log(
+        `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${stateLabel} ${villageDisplayName(village)}  ${color(`plan: ${planLabel}`, ANSI.gray)}`
+      );
+    });
+    console.log("");
+    console.log(
+      `  ${color("Pick", ANSI.bold, ANSI.cyan)} village number  ${color("B", ANSI.bold, ANSI.cyan)} back`
+    );
+
+    const answer = (await askQuestion(rl, "Village: ")).trim().toUpperCase();
+    if (answer === "B") {
+      done = true;
+      continue;
+    }
+    if (answer === "Q") {
+      if (hooks.menuSession) {
+        hooks.menuSession.quitRequested = true;
+      }
+      done = true;
+      continue;
+    }
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a village number or B.");
+      continue;
+    }
+    const village = villages[index - 1];
+
+    printSubDivider(`ASSIGN — ${villageDisplayName(village)}`);
+    plans.forEach((plan, i) => {
+      console.log(`  ${color(String(i + 1), ANSI.bold, ANSI.cyan)} ${plan.name}  ${color(troopPlans.describePlan(plan), ANSI.gray)}`);
+    });
+    console.log("");
+    console.log(`  ${color("[T]", ANSI.bold, ANSI.cyan)}  Toggle on/off   ${color("[U]", ANSI.bold, ANSI.cyan)}  Unassign   ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
+    const pick = (await askQuestion(rl, "Assign plan number / T / U: ")).trim().toUpperCase();
+
+    if (pick === "B" || pick === "") {
+      continue;
+    }
+    if (pick === "U") {
+      troopPlans.clearAssignment(village);
+      logSuccess(`Unassigned ${villageDisplayName(village)}.`);
+      if (typeof hooks.onAssignmentChanged === "function") {
+        hooks.onAssignmentChanged(village);
+      }
+      continue;
+    }
+    if (pick === "T") {
+      const assignment = troopPlans.getAssignment(village);
+      if (!assignment || !assignment.plan) {
+        logWarn("Assign a plan first, then toggle.");
+        continue;
+      }
+      const next = troopPlans.setAssignment(village, { enabled: assignment.enabled === false });
+      logSuccess(`${villageDisplayName(village)} auto-train ${next.enabled ? "ON" : "OFF"}.`);
+      if (typeof hooks.onAssignmentChanged === "function") {
+        hooks.onAssignmentChanged(village);
+      }
+      continue;
+    }
+    const planIndex = Number(pick);
+    if (!Number.isFinite(planIndex) || planIndex < 1 || planIndex > plans.length) {
+      logWarn("Invalid plan selection.");
+      continue;
+    }
+    const chosenPlan = plans[planIndex - 1];
+    troopPlans.setAssignment(village, { plan: chosenPlan.name, enabled: true });
+    logSuccess(`${villageDisplayName(village)} → plan "${chosenPlan.name}" (auto-train ON).`);
+    if (typeof hooks.onAssignmentChanged === "function") {
+      hooks.onAssignmentChanged(village);
+    }
+  }
+}
+
+async function showTrainableUnitsFromVillage(rl, hooks) {
+  if (typeof hooks.listTrainableUnits !== "function") {
+    logWarn("Unit preview is not available in this runtime.");
+    return;
+  }
+  const getSnapshot =
+    typeof hooks.getSnapshot === "function" ? hooks.getSnapshot : () => ({ villages: [] });
+  const villages = Array.isArray(getSnapshot().villages) ? getSnapshot().villages : [];
+  if (!villages.length) {
+    logWarn("No villages loaded — open main menu V first.");
+    return;
+  }
+  printSubDivider("SHOW TRAINABLE UNITS");
+  villages.forEach((village, index) => {
+    console.log(`  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${villageDisplayName(village)}`);
+  });
+  const answer = (await askQuestion(rl, "Village number (B to cancel): ")).trim().toUpperCase();
+  if (answer === "B" || answer === "") {
+    return;
+  }
+  const index = Number(answer);
+  if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+    logWarn("Invalid selection.");
+    return;
+  }
+  const village = villages[index - 1];
+  logInfo(`Reading trainable units from ${villageDisplayName(village)}…`);
+  try {
+    const rows = [];
+    for (const branch of troopPlans.PLAN_BRANCHES) {
+      const data = await hooks.listTrainableUnits(village, branch.building);
+      rows.push({
+        label: branch.label,
+        value: data.missingBuilding
+          ? `(no ${branch.label.toLowerCase()})`
+          : data.units.join(", ") || "(none)"
+      });
+    }
+    printKeyValueRows(rows);
+  } catch (error) {
+    logWarn(`Could not read units: ${error.message || error}`);
+  }
+}
+
+async function runTroopPlansMenu(rl, settings, runtimeControls, hooks = {}) {
+  let done = false;
+  while (!done) {
+    if (hooks.menuSession && hooks.menuSession.quitRequested) {
+      done = true;
+      continue;
+    }
+    const plans = troopPlans.listPlans();
+    printTroopPlansMenu(settings, plans);
+    const input = (await askQuestion(rl, "Troop plans option: ")).trim().toUpperCase();
+
+    if (input === "Q") {
+      if (hooks.menuSession) {
+        hooks.menuSession.quitRequested = true;
+      }
+      if (typeof hooks.requestQuit === "function") {
+        hooks.requestQuit();
+      }
+      done = true;
+      continue;
+    }
+    if (input === "B" || input === "") {
+      done = true;
+      continue;
+    }
+
+    if (input === "N") {
+      const name = (await askQuestion(rl, "New plan name: ")).trim();
+      if (!name) {
+        logWarn("Plan name required.");
+        continue;
+      }
+      if (troopPlans.getPlan(name)) {
+        logWarn(`Plan "${name}" already exists — use Edit.`);
+        continue;
+      }
+      const patch = await promptTroopPlanFields(rl, null);
+      const saved = troopPlans.upsertPlan(name, patch);
+      logSuccess(`Created plan "${saved.name}" — ${troopPlans.describePlan(saved)}.`);
+      if (typeof hooks.onPlansChanged === "function") {
+        hooks.onPlansChanged();
+      }
+      continue;
+    }
+
+    if (input === "E") {
+      if (!plans.length) {
+        logWarn("No plans to edit.");
+        continue;
+      }
+      const pick = (await askQuestion(rl, "Edit plan number: ")).trim();
+      const i = Number(pick);
+      if (!Number.isFinite(i) || i < 1 || i > plans.length) {
+        logWarn("Invalid plan number.");
+        continue;
+      }
+      const plan = plans[i - 1];
+      const patch = await promptTroopPlanFields(rl, plan);
+      const saved = troopPlans.upsertPlan(plan.name, patch);
+      logSuccess(`Updated "${saved.name}" — ${troopPlans.describePlan(saved)}.`);
+      if (typeof hooks.onPlansChanged === "function") {
+        hooks.onPlansChanged();
+      }
+      continue;
+    }
+
+    if (input === "X") {
+      if (!plans.length) {
+        logWarn("No plans to delete.");
+        continue;
+      }
+      const pick = (await askQuestion(rl, "Delete plan number: ")).trim();
+      const i = Number(pick);
+      if (!Number.isFinite(i) || i < 1 || i > plans.length) {
+        logWarn("Invalid plan number.");
+        continue;
+      }
+      const plan = plans[i - 1];
+      const confirm = (await askQuestion(rl, `Delete "${plan.name}" and unassign its villages? (Y/N): `)).trim().toUpperCase();
+      if (confirm === "Y") {
+        troopPlans.deletePlan(plan.name);
+        logSuccess(`Deleted plan "${plan.name}".`);
+        if (typeof hooks.onPlansChanged === "function") {
+          hooks.onPlansChanged();
+        }
+      }
+      continue;
+    }
+
+    if (input === "V") {
+      await runTroopPlanAssignMenu(rl, hooks);
+      continue;
+    }
+
+    if (input === "U") {
+      await showTrainableUnitsFromVillage(rl, hooks);
+      continue;
+    }
+
+    if (input === "L") {
+      const enabledText = (await askQuestion(rl, "Enable auto-train loop? (Y/N, Enter keep): ")).trim().toUpperCase();
+      let nextEnabled = settings.troopTrainingRoundRobinEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+      const nextMinText = (await askQuestion(rl, "Default MIN minutes (Enter keep): ")).trim();
+      const nextMaxText = (await askQuestion(rl, "Default MAX minutes (Enter keep): ")).trim();
+      if (!runtimeControls.updateTroopTrainingLoopConfig) {
+        logWarn("Troop loop update is not available in this runtime.");
+        continue;
+      }
+      try {
+        const applied = await runtimeControls.updateTroopTrainingLoopConfig({
+          enabled: nextEnabled,
+          minMinutes: nextMinText ? Number(nextMinText) : settings.troopTrainingLoopMinMinutes,
+          maxMinutes: nextMaxText ? Number(nextMaxText) : settings.troopTrainingLoopMaxMinutes
+        });
+        settings.troopTrainingRoundRobinEnabled = applied.enabled;
+        settings.troopTrainingLoopMinMinutes = applied.minMinutes;
+        settings.troopTrainingLoopMaxMinutes = applied.maxMinutes;
+        if (typeof hooks.onPlansChanged === "function") {
+          hooks.onPlansChanged();
+        }
+        logSuccess(
+          `Auto-train loop ${applied.enabled ? "ON" : "OFF"}, default ${applied.minMinutes}-${applied.maxMinutes} min (plans can override).`
+        );
+      } catch (error) {
+        logError(`Failed to update troop loop: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    logWarn("Unknown option. Use N, E, X, V, U, L, or B.");
+  }
+}
+
+async function readMultilineUntilBlank(rl, intro) {
+  console.log(intro);
+  const lines = [];
+  while (true) {
+    const line = await askQuestion(rl, lines.length ? "> " : "> ");
+    if (!String(line || "").trim()) {
+      break;
+    }
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+async function runProxySettingsMenu(rl, settings, runtimeControls) {
+  const getDisplay = () =>
+    typeof runtimeControls.getProxyDisplay === "function"
+      ? runtimeControls.getProxyDisplay()
+      : formatProxyDisplay(settings, proxyPool.loadStore());
+
+  const askKeep = async (label, currentValue, secret = false) => {
+    const shown =
+      currentValue !== undefined && currentValue !== null && String(currentValue) !== ""
+        ? secret
+          ? " (Enter keep: ****)"
+          : ` (Enter keep: ${currentValue})`
+        : " (Enter keep: none)";
+    return (await askQuestion(rl, `${label}${shown}: `)).trim();
+  };
+
+  const renderProxyList = () => {
+    const store = proxyPool.loadStore();
+    if (!store.proxies.length) {
+      console.log(`  ${color("(no proxies in pool — paste with [2])", ANSI.gray)}`);
+      return;
+    }
+    store.proxies.forEach((entry, index) => {
+      const active = index === store.activeIndex;
+      console.log(
+        `  ${color(String(index + 1), ANSI.bold, active ? ANSI.green : ANSI.cyan)} ${proxyPool.formatProxyEntryLabel(entry, index, active)}`
+      );
+    });
+  };
+
+  let done = false;
+  while (!done) {
+    if (runtimeControls.menuSession?.quitRequested) {
+      done = true;
+      continue;
+    }
+
+    printSubDivider("PROXY POOL");
+    console.log(`  ${color("Active", ANSI.gray)}: ${color(getDisplay(), ANSI.bold, ANSI.white)}`);
+    renderProxyList();
+    console.log("");
+    console.log(
+      `  ${color("Formats", ANSI.gray)}: host:port:user:pass · user:pass@host:port · http://user:pass@host:port`
+    );
+    console.log("");
+    console.log(`  ${color("[1]", ANSI.bold, ANSI.cyan)}  Edit single active proxy fields`);
+    console.log(`  ${color("[2]", ANSI.bold, ANSI.cyan)}  Paste proxy list (one per line, blank line to finish)`);
+    console.log(`  ${color("[3]", ANSI.bold, ANSI.cyan)}  Pick active proxy by number`);
+    console.log(`  ${color("[A]", ANSI.bold, ANSI.cyan)}  Apply active proxy + logout/relogin`);
+    console.log(`  ${color("[N]", ANSI.bold, ANSI.cyan)}  Next proxy in list + logout/relogin`);
+    console.log(`  ${color("[D]", ANSI.bold, ANSI.cyan)}  Disable proxy + relogin direct`);
+    console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
+
+    const pick = (await askQuestion(rl, "Proxy option: ")).trim().toUpperCase();
+    if (pick === "B" || pick === "") {
+      done = true;
+      continue;
+    }
+    if (pick === "Q") {
+      if (runtimeControls.menuSession) {
+        runtimeControls.menuSession.quitRequested = true;
+      }
+      done = true;
+      continue;
+    }
+
+    if (pick === "2") {
+      const text = await readMultilineUntilBlank(
+        rl,
+        "Paste proxies (one per line). End with a blank line:"
+      );
+      if (!text.trim()) {
+        logWarn("No proxy lines pasted.");
+        continue;
+      }
+      const parsed = proxyPool.parseProxyListText(text);
+      if (!parsed.length) {
+        logWarn("Could not parse any proxies from pasted text.");
+        continue;
+      }
+      try {
+        if (runtimeControls.updateProxySettings) {
+          await runtimeControls.updateProxySettings({ proxyText: text, action: "save" });
+        } else {
+          const store = proxyPool.loadStore();
+          store.proxies = parsed;
+          store.activeIndex = 0;
+          proxyPool.saveStore(store);
+          proxyPool.applyActiveToSettings(settings, store);
+        }
+        logSuccess(`Saved ${parsed.length} proxy/proxies. Active: #1. Pick [A] to relogin.`);
+      } catch (error) {
+        logError(`Could not save proxy list: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (pick === "3") {
+      const store = proxyPool.loadStore();
+      if (!store.proxies.length) {
+        logWarn("No proxies in pool. Paste with [2] first.");
+        continue;
+      }
+      const answer = (await askQuestion(rl, `Active proxy number (1-${store.proxies.length}): `)).trim();
+      const index = Number(answer);
+      if (!Number.isFinite(index) || index < 1 || index > store.proxies.length) {
+        logWarn("Invalid proxy number.");
+        continue;
+      }
+      try {
+        if (runtimeControls.updateProxySettings) {
+          await runtimeControls.updateProxySettings({ activeIndex: index - 1, action: "save" });
+        } else {
+          proxyPool.setActiveIndex(store, index - 1);
+          proxyPool.saveStore(store);
+          proxyPool.applyActiveToSettings(settings, store);
+        }
+        logSuccess(`Active proxy set to #${index} (${getDisplay()}). Pick [A] to relogin.`);
+      } catch (error) {
+        logError(`Could not set active proxy: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (pick === "1") {
+      const server = (await askKeep("Proxy server (type direct to disable)", settings.proxyServer)).trim();
+      const patch = {};
+      if (/^(direct|none|-)$/i.test(server)) {
+        patch.server = "";
+      } else if (server !== "") {
+        patch.server = normalizeProxyServer(server);
+      }
+      const username = (await askKeep("Proxy username", settings.proxyUsername)).trim();
+      if (username !== "") {
+        patch.username = username;
+      }
+      const password = await askKeep("Proxy password", settings.proxyPassword, true);
+      if (password !== "" && password !== "********") {
+        patch.password = password;
+      }
+      const bypass = (await askKeep("Proxy bypass hosts (comma-separated)", settings.proxyBypass)).trim();
+      if (bypass !== "") {
+        patch.bypass = bypass;
+      }
+      try {
+        if (runtimeControls.updateProxySettings) {
+          await runtimeControls.updateProxySettings({ ...patch, action: "save" });
+        } else if (runtimeControls.changeProxyAndRelogin) {
+          await runtimeControls.changeProxyAndRelogin(patch, "proxy_edit");
+        }
+        logSuccess(`Proxy fields updated (${getDisplay()}). Pick [A] to relogin.`);
+      } catch (error) {
+        logError(`Proxy update failed: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (pick === "N") {
+      if (!runtimeControls.updateProxySettings && !runtimeControls.changeProxyAndRelogin) {
+        logWarn("Proxy control is unavailable in this runtime.");
+        continue;
+      }
+      try {
+        if (runtimeControls.updateProxySettings) {
+          await runtimeControls.updateProxySettings({ action: "next" });
+        } else {
+          await runtimeControls.changeProxyAndRelogin({ action: "next" }, "proxy_next");
+        }
+        logSuccess(`Next proxy active (${getDisplay()}). Re-login complete.`);
+      } catch (error) {
+        logError(`Proxy rotation failed: ${error.message || error}`);
+      }
+      done = true;
+      continue;
+    }
+
+    if (pick === "D") {
+      const confirm = (await askQuestion(rl, "Disable proxy and relogin direct? (Y/N): ")).trim().toUpperCase();
+      if (confirm !== "Y") {
+        continue;
+      }
+      try {
+        if (runtimeControls.updateProxySettings) {
+          await runtimeControls.updateProxySettings({ action: "disable" });
+        } else if (runtimeControls.changeProxyAndRelogin) {
+          await runtimeControls.changeProxyAndRelogin(
+            { server: "", username: "", password: "", bypass: "" },
+            "proxy_disabled"
+          );
+        }
+        logSuccess("Proxy disabled. Re-login complete — automation continues.");
+      } catch (error) {
+        logError(`Proxy change failed: ${error.message || error}`);
+      }
+      done = true;
+      continue;
+    }
+
+    if (pick === "A") {
+      const confirm = (await askQuestion(rl, `Logout and relogin via ${getDisplay()}? (Y/N): `))
+        .trim()
+        .toUpperCase();
+      if (confirm !== "Y") {
+        continue;
+      }
+      try {
+        if (runtimeControls.updateProxySettings) {
+          await runtimeControls.updateProxySettings({ action: "apply" });
+        } else if (runtimeControls.changeProxyAndRelogin) {
+          await runtimeControls.changeProxyAndRelogin({}, "proxy_change");
+        }
+        logSuccess("Proxy applied. Re-login complete — automation continues.");
+      } catch (error) {
+        logError(`Proxy change failed: ${error.message || error}`);
+      }
+      done = true;
+      continue;
+    }
+
+    logWarn("Unknown option. Use 1, 2, 3, A, N, D, B, or Q.");
+  }
+}
+
 async function runSettingsMenu(rl, settings, runtimeControls) {
   normalizeExpansionSettlementSettings(settings);
   const getVillageStateForUi = () => {
@@ -2561,6 +3143,11 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       logSuccess(
         `Pause auto-unpause set to ${settings.manualPauseAutoUnpauseMinutes} minute(s).`
       );
+      continue;
+    }
+
+    if (input === "Y") {
+      await runProxySettingsMenu(rl, settings, runtimeControls);
       continue;
     }
 
@@ -2962,6 +3549,11 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "U") {
+      await runTroopPlansMenu(rl, settings, runtimeControls, runtimeControls.troopPlanHooks || {});
+      continue;
+    }
+
     if (input === "I") {
       const enabledText = (
         await askQuestion(rl, "Enable Cranny RR? (Y/N, Enter keep): ")
@@ -3083,50 +3675,8 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, T, I, W, A, E, K, H, P, V, B, or Q.");
+    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, T, U, I, W, A, E, K, H, P, V, B, or Q.");
   }
-}
-
-function printTroopTemplateMenu(settings) {
-  const mode = normalizeTroopTemplateMode(settings.troopTemplateMode);
-  const tribeLabel = normalizeTroopTribeSetting(settings.troopTribe);
-
-  printSubDivider("TROOP TEMPLATES");
-  printKeyValueRows([
-    { label: "mode", value: mode },
-    { label: "tribe", value: tribeLabel },
-    {
-      label: "trainBatch",
-      value: String(normalizeTroopTrainingBatchGoal(settings))
-    },
-    {
-      label: "infantry OFF",
-      value: describeBranchTroopList(settings, "offensive", "infantry")
-    },
-    {
-      label: "infantry DEF",
-      value: describeBranchTroopList(settings, "defensive", "infantry")
-    },
-    {
-      label: "cavalry OFF",
-      value: describeBranchTroopList(settings, "offensive", "cavalry")
-    },
-    {
-      label: "cavalry DEF",
-      value: describeBranchTroopList(settings, "defensive", "cavalry")
-    }
-  ]);
-  console.log(`  ${color("[1]", ANSI.bold, ANSI.cyan)}  Set mode OFFENSIVE`);
-  console.log(`  ${color("[2]", ANSI.bold, ANSI.cyan)}  Set mode DEFENSIVE`);
-  console.log(`  ${color("[3]", ANSI.bold, ANSI.cyan)}  Edit infantry OFFENSIVE list (CSV)`);
-  console.log(`  ${color("[4]", ANSI.bold, ANSI.cyan)}  Edit infantry DEFENSIVE list (CSV)`);
-  console.log(`  ${color("[5]", ANSI.bold, ANSI.cyan)}  Edit cavalry OFFENSIVE list (CSV)`);
-  console.log(`  ${color("[6]", ANSI.bold, ANSI.cyan)}  Edit cavalry DEFENSIVE list (CSV)`);
-  console.log(`  ${color("[7]", ANSI.bold, ANSI.cyan)}  Set batch size (number)`);
-  console.log(`  ${color("[8]", ANSI.bold, ANSI.cyan)}  Cycle tribe: auto → teuton → roman → gaul`);
-  console.log(`  ${color("[+]", ANSI.bold, ANSI.cyan)}  Increase batch +5`);
-  console.log(`  ${color("[-]", ANSI.bold, ANSI.cyan)}  Decrease batch -5`);
-  console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
 }
 
 async function openVillageBuilder(page, settings, selectedVillageId) {
@@ -3139,10 +3689,7 @@ async function openVillageBuilder(page, settings, selectedVillageId) {
 async function navigateToVillageCenterMap(page, settings, selectedVillageId) {
   const villageMapUrl = withVillageId(settings.villageBuilderUrl, selectedVillageId);
 
-  await page.goto(villageMapUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
+  await safeGotoWithRetry(page, villageMapUrl, {}, 4);
 
   const villageCenterUrl = await page.evaluate(() => {
     const topBar = document.querySelector("#mtop a#n2[href]");
@@ -3165,63 +3712,134 @@ async function navigateToVillageCenterMap(page, settings, selectedVillageId) {
 
   if (villageCenterUrl) {
     const absoluteCenter = withVillageId(new URL(villageCenterUrl, page.url()).toString(), selectedVillageId);
-    await page.goto(absoluteCenter, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    });
+    await safeGotoWithRetry(page, absoluteCenter, {}, 4);
   } else {
     const fallbackCenter = withVillageId(new URL("village2.php", page.url()).toString(), selectedVillageId);
-    await page.goto(fallbackCenter, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    });
+    await safeGotoWithRetry(page, fallbackCenter, {}, 4);
   }
+}
+
+const TRAINER_BUILDING_GID = {
+  barracks: 19,
+  great_barracks: 29,
+  stable: 20,
+  great_stable: 30
+};
+
+const TRAINER_BUILDING_LABELS = {
+  barracks: "Barracks",
+  great_barracks: "Great Barracks",
+  stable: "Stable",
+  great_stable: "Great Stable"
+};
+
+function normalizeMapBuildingLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\u00a0/g, " ")
+    .replace(/\blevel\s+\d+\b/gi, " ")
+    .replace(/\blvl\.?\s*\d+\b/gi, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function mapLabelMatchesTrainerKind(label, kind) {
+  const n = normalizeMapBuildingLabel(label);
+  const c = n.replace(/\s+/g, "");
+  if (!n) {
+    return false;
+  }
+  switch (kind) {
+    case "great_barracks":
+      return c.includes("greatbarracks") || /\bgreat barracks\b/.test(n);
+    case "barracks":
+      return (/\bbarracks\b/.test(n) || c === "barracks") && !/great/.test(n);
+    case "great_stable":
+      return c.includes("greatstable") || /\bgreat stable\b/.test(n);
+    case "stable":
+      return (c === "stable" || c === "stables" || /\bstable\b/.test(n) || /\bstables\b/.test(n)) && !/great/.test(n);
+    default:
+      return false;
+  }
+}
+
+async function surveyVillageMapTrainerSlots(getPage, settings, villageId) {
+  const page = getPage();
+  await navigateToVillageCenterMap(page, settings, villageId);
+  return page.evaluate(() => {
+    const normalize = (value) =>
+      String(value || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\blevel\s+\d+\b/gi, " ")
+        .replace(/\blvl\.?\s*\d+\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const areas = Array.from(
+      document.querySelectorAll("map#map2 area[href*='build.php?id='], area[href*='build.php?id=']")
+    );
+    const rows = [];
+    for (const area of areas) {
+      const href = area.getAttribute("href") || "";
+      const match = href.match(/[?&]id=(\d+)/i);
+      const slotId = match ? Number(match[1]) : null;
+      if (!Number.isFinite(slotId) || slotId < 19) {
+        continue;
+      }
+      const gidMatch = href.match(/[?&]gid=(\d+)/i);
+      rows.push({
+        slotId,
+        gid: gidMatch ? Number(gidMatch[1]) : null,
+        label: normalize(`${area.getAttribute("title") || ""} ${area.getAttribute("alt") || ""}`),
+        href
+      });
+    }
+    return rows;
+  });
+}
+
+async function villageHasTrainerBuildingOnMap(getPage, settings, villageId, kind) {
+  const rows = await surveyVillageMapTrainerSlots(getPage, settings, villageId);
+  const expectedGid = TRAINER_BUILDING_GID[kind];
+  for (const row of rows) {
+    if (expectedGid && row.gid === expectedGid) {
+      return true;
+    }
+    if (mapLabelMatchesTrainerKind(row.label, kind)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, kind) {
   const page = getPage();
-  await navigateToVillageCenterMap(page, settings, selectedVillageId);
+  const rows = await surveyVillageMapTrainerSlots(getPage, settings, selectedVillageId);
+  const expectedGid = TRAINER_BUILDING_GID[kind];
 
-    const buildHref = await page.evaluate((k) => {
-    const areas = Array.from(document.querySelectorAll("map#map2 area[href*='build.php?id=']"));
-
-    const labelOf = (area) => {
-      const title = (area.getAttribute("title") || "").trim();
-      const alt = (area.getAttribute("alt") || "").trim();
-      return `${title} ${alt}`.replace(/\s+/g, " ").trim();
-    };
-
-    let chosen = null;
-    for (const area of areas) {
-      const label = labelOf(area);
-      const isGreatBarracks = /great\s+barracks/i.test(label);
-      const looksBarracks = /\bbarracks\b/i.test(label);
-      const isGreatStable = /great\s+stable/i.test(label);
-      const looksStable = /\bstable\b/i.test(label);
-
-      if (k === "great_barracks" && isGreatBarracks) {
-        chosen = area;
-        break;
-      }
-      if (k === "barracks" && looksBarracks && !isGreatBarracks) {
-        chosen = area;
-        break;
-      }
-      if (k === "stable" && looksStable && !isGreatStable) {
-        chosen = area;
-        break;
-      }
+  let chosen = null;
+  for (const row of rows) {
+    if (expectedGid && row.gid === expectedGid) {
+      chosen = row;
+      break;
     }
+    if (mapLabelMatchesTrainerKind(row.label, kind)) {
+      chosen = row;
+      break;
+    }
+  }
 
-    return chosen ? chosen.getAttribute("href") : null;
-  }, kind);
-
-  if (!buildHref) {
+  if (!chosen) {
     return null;
   }
 
-  const absolute = new URL(buildHref, page.url()).toString();
-  return withVillageId(absolute, selectedVillageId);
+  if (chosen.href) {
+    return withVillageId(new URL(chosen.href, page.url()).toString(), selectedVillageId);
+  }
+  if (chosen.slotId) {
+    return withVillageId(new URL(`build.php?id=${chosen.slotId}`, page.url()).toString(), selectedVillageId);
+  }
+  return null;
 }
 
 async function resolveBarracksUrlFromVillageMap(getPage, settings, selectedVillageId) {
@@ -3236,312 +3854,316 @@ async function resolveStableUrlFromVillageMap(getPage, settings, selectedVillage
   return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "stable");
 }
 
-async function trainTroopsInBarracks(getPage, settings, selectedVillageId, options = {}) {
-  const page = getPage();
-  const villageForPrefs =
-    options.village && options.village.id != null
-      ? options.village
-      : { id: selectedVillageId, vid: selectedVillageId };
-  const troopSettings = troopVillagePreferences.resolveSettings(settings, villageForPrefs);
-  const mapVariantRaw = options.mapVariant;
-  const mapVariant =
-    mapVariantRaw === "great_barracks"
-      ? "great_barracks"
-      : mapVariantRaw === "stable"
-        ? "stable"
-        : "barracks";
-  const fallbackTrainerSetting =
-    mapVariant === "great_barracks"
-      ? settings.troopGreatTrainerUrl
-      : mapVariant === "stable"
-        ? settings.troopStableTrainerUrl
-        : settings.troopTrainerUrl;
-  const configuredTrainer =
-    typeof options.trainerUrl === "string" && options.trainerUrl.trim()
-      ? options.trainerUrl.trim()
-      : fallbackTrainerSetting;
+async function resolveGreatStableUrlFromVillageMap(getPage, settings, selectedVillageId) {
+  return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "great_stable");
+}
 
-  const targetTrainerUrl = withVillageId(configuredTrainer, selectedVillageId);
-  await page.goto(targetTrainerUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
+const TROOP_ROW_SELECTOR = "form[name='snd'] table.build_details tbody tr";
 
-  const rowSelector = "form[name='snd'] table.build_details tbody tr";
-  let hasRows = await page.locator(rowSelector).first().isVisible().catch(() => false);
-  if (!hasRows) {
-    await page.waitForSelector(rowSelector, { timeout: 15000 }).catch(() => null);
-    hasRows = await page.locator(rowSelector).first().isVisible().catch(() => false);
+const TRAINER_BUILDING_RESOLVERS = {
+  barracks: resolveBarracksUrlFromVillageMap,
+  great_barracks: resolveGreatBarracksUrlFromVillageMap,
+  stable: resolveStableUrlFromVillageMap,
+  great_stable: resolveGreatStableUrlFromVillageMap
+};
+
+function normalizeTrainerBuilding(building) {
+  return TRAINER_BUILDING_RESOLVERS[building] ? building : "barracks";
+}
+
+async function trainerPageMatchesBuilding(page, kind) {
+  const gid = TRAINER_BUILDING_GID[kind];
+  if (!gid) {
+    return true;
   }
 
+  if (await page.locator(`#build.gid${gid}`).first().isVisible().catch(() => false)) {
+    return true;
+  }
+  if (await page.locator(`img.building.g${gid}, .building.g${gid}`).first().isVisible().catch(() => false)) {
+    return true;
+  }
+
+  const heading = await page.locator("h1").first().textContent().catch(() => "");
+  const h1 = String(heading || "").replace(/\s+/g, " ").trim();
+  if (kind === "stable") {
+    return /\bstables?\b/i.test(h1) && !/great\s+stable/i.test(h1);
+  }
+  if (kind === "barracks") {
+    return /\bbarracks\b/i.test(h1) && !/great\s+barracks/i.test(h1);
+  }
+  if (kind === "great_stable") {
+    return /great\s+stable/i.test(h1);
+  }
+  if (kind === "great_barracks") {
+    return /great\s+barracks/i.test(h1);
+  }
+
+  try {
+    const urlGid = Number(new URL(String(page.url() || "")).searchParams.get("gid"));
+    if (Number.isFinite(urlGid) && urlGid === gid) {
+      return true;
+    }
+  } catch (_error) {
+    /* ignore */
+  }
+
+  return false;
+}
+
+/** Nexian submits troop training via AJAX; wait for the request or cleared inputs. */
+async function submitTroopTraining(page, inputName) {
+  const trainButton = page.locator("#btn_train").first();
+  const inputSelector = `input[name='${inputName}']`;
+
+  const waitForAjax = page
+    .waitForResponse(
+      (resp) => {
+        if (!resp.url().includes("ajax_build.php")) {
+          return false;
+        }
+        const postData = resp.request().postData() || "";
+        return /train_troops/.test(postData);
+      },
+      { timeout: 20000 }
+    )
+    .then(async (resp) => {
+      try {
+        const body = await resp.json();
+        if (body && body.success === false) {
+          return { ok: false, message: body.message || body.error || "Training rejected" };
+        }
+        return { ok: resp.ok(), message: body && body.message ? body.message : null };
+      } catch (_error) {
+        return { ok: resp.ok(), message: null };
+      }
+    })
+    .catch(() => null);
+
+  const waitForClearedInput = page
+    .waitForFunction(
+      (selector) => {
+        const input = document.querySelector(selector);
+        return Boolean(input && String(input.value || "").trim() === "0");
+      },
+      inputSelector,
+      { timeout: 20000 }
+    )
+    .then(() => ({ ok: true, message: null }))
+    .catch(() => null);
+
+  await trainButton.click({ force: true });
+
+  const outcome = await Promise.race([waitForAjax, waitForClearedInput]);
+  if (outcome && outcome.ok) {
+    return { ok: true, message: outcome.message };
+  }
+  if (outcome && outcome.ok === false) {
+    return { ok: false, message: outcome.message || "Training rejected" };
+  }
+
+  const stillFilled = await page
+    .locator(inputSelector)
+    .first()
+    .inputValue()
+    .then((value) => String(value || "").trim() !== "" && String(value || "").trim() !== "0")
+    .catch(() => false);
+  if (!stillFilled) {
+    return { ok: true, message: null };
+  }
+  return { ok: false, message: "Training did not complete (no AJAX response)" };
+}
+
+/** Open a trainer building for a village and return the list of trainable unit rows. */
+async function loadTrainerPageWithRows(page, url, kind) {
+  if (!url) {
+    return false;
+  }
+  await safeGotoWithRetry(page, url, {}, 4);
+  let hasRows = await page.locator(TROOP_ROW_SELECTOR).first().isVisible().catch(() => false);
   if (!hasRows) {
-    const buildingLabel =
-      mapVariant === "great_barracks" ? "Great Barracks" : mapVariant === "stable" ? "Stable" : "Barracks";
-    logWarn(
-      `No troop rows found on configured trainer URL. Trying to locate ${buildingLabel} from village map...`
-    );
-    const discover =
-      mapVariant === "great_barracks"
-        ? resolveGreatBarracksUrlFromVillageMap
-        : mapVariant === "stable"
-          ? resolveStableUrlFromVillageMap
-          : resolveBarracksUrlFromVillageMap;
+    await page.waitForSelector(TROOP_ROW_SELECTOR, { timeout: 15000 }).catch(() => null);
+    hasRows = await page.locator(TROOP_ROW_SELECTOR).first().isVisible().catch(() => false);
+  }
+  if (!hasRows) {
+    return false;
+  }
+  return trainerPageMatchesBuilding(page, kind);
+}
 
-    const discoveredBarracksUrl = await discover(getPage, settings, selectedVillageId);
+async function openTrainerAndReadRows(getPage, settings, villageId, building) {
+  const page = getPage();
+  const kind = normalizeTrainerBuilding(building);
+  let loaded = false;
+  const expectedGid = TRAINER_BUILDING_GID[kind];
 
-    if (discoveredBarracksUrl) {
-      await page.goto(discoveredBarracksUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000
-      });
-      await page.waitForSelector(rowSelector, { timeout: 15000 }).catch(() => null);
-      hasRows = await page.locator(rowSelector).first().isVisible().catch(() => false);
+  const mapRows = await surveyVillageMapTrainerSlots(getPage, settings, villageId);
+  const mapCandidates = mapRows.filter(
+    (row) => (expectedGid && row.gid === expectedGid) || mapLabelMatchesTrainerKind(row.label, kind)
+  );
+
+  for (const row of mapCandidates) {
+    let candidateUrl = null;
+    if (row.href) {
+      candidateUrl = withVillageId(new URL(row.href, page.url()).toString(), villageId);
+    } else if (row.slotId) {
+      candidateUrl = withVillageId(new URL(`build.php?id=${row.slotId}`, page.url()).toString(), villageId);
+    }
+    if (candidateUrl && (await loadTrainerPageWithRows(page, candidateUrl, kind))) {
+      loaded = true;
+      break;
     }
   }
 
-  if (!hasRows) {
-    const vidText = selectedVillageId ? ` (vid=${selectedVillageId})` : "";
-    const buildingLabel =
-      mapVariant === "great_barracks" ? "Great Barracks" : mapVariant === "stable" ? "Stable" : "Barracks";
-    throw new Error(
-      `No ${buildingLabel} training rows found${vidText}. This village may not have that building yet.`
-    );
+  if (!loaded && (kind === "barracks" || kind === "stable")) {
+    const configuredTrainer =
+      kind === "stable" ? settings.troopStableTrainerUrl : settings.troopTrainerUrl;
+    const targetTrainerUrl = withVillageId(configuredTrainer, villageId);
+    loaded = await loadTrainerPageWithRows(page, targetTrainerUrl, kind);
   }
 
-  const troopOptions = await page.evaluate(() => {
-    const rows = Array.from(
-      document.querySelectorAll("form[name='snd'] table.build_details tbody tr")
-    );
+  if (!loaded) {
+    return { page, building: kind, rows: [], missingBuilding: true };
+  }
 
-    return rows
+  const rows = await page.evaluate((rowSelector) => {
+    return Array.from(document.querySelectorAll(rowSelector))
       .map((row) => {
         const tit = row.querySelector("td.desc .tit");
         const nameEl = tit ? tit.querySelector("a") : null;
         const unitImg = tit ? tit.querySelector("img.unit[title], img.unit[alt]") : null;
-
         let troopName = nameEl ? nameEl.textContent.replace(/\u00a0/g, " ").trim() : "";
         if (!troopName && unitImg) {
-          troopName =
-            String(unitImg.getAttribute("title") || unitImg.getAttribute("alt") || "").trim();
+          troopName = String(unitImg.getAttribute("title") || unitImg.getAttribute("alt") || "").trim();
         }
-
         const inputEl = row.querySelector("td.val input.text[type='text'], td.val input.text");
         const maxLink = row.querySelector("td.max a");
-
         const inputName = inputEl ? inputEl.getAttribute("name") : "";
-
         const maxText = maxLink ? maxLink.textContent : "";
         const onclickText = maxLink ? maxLink.getAttribute("onclick") || "" : "";
-
         const maxFromText = (() => {
           const match = String(maxText).match(/(\d+)/);
           return match ? Number(match[1]) : NaN;
         })();
-
         const maxFromOnclick = (() => {
           const m =
             String(onclickText).match(/\.value\s*=\s*(\d+)/i) ||
             String(onclickText).match(/\bvalue\s*=\s*(\d+)/i);
           return m ? Number(m[1]) : NaN;
         })();
-
         let maxTrainable = Number.isFinite(maxFromText)
           ? maxFromText
-          : (Number.isFinite(maxFromOnclick) ? maxFromOnclick : 0);
-
+          : Number.isFinite(maxFromOnclick)
+            ? maxFromOnclick
+            : 0;
         const availEl = row.querySelector(".tit span.info span[id^='availCount_']");
         const availDigits = availEl ? String(availEl.textContent || "").replace(/\D/g, "").trim() : "";
         const availableNow = availDigits !== "" ? Number(availDigits) : NaN;
-        // Only positive "Available:" values cap concurrent train headroom (e.g. merge limits).
-        // "Available: 0" appears on barracks rows that still have a finite resource "(max)" —
-        // using it wiped Spearman/etc. off the roster and broke defensive/alternate modes.
-        if (Number.isFinite(availableNow) && availableNow > 0) {
-          maxTrainable = Math.min(maxTrainable, availableNow);
+        if (Number.isFinite(availableNow)) {
+          if (availableNow <= 0) {
+            maxTrainable = 0;
+          } else {
+            maxTrainable = Math.min(maxTrainable, availableNow);
+          }
         }
-
-        return {
-          troopName,
-          inputName,
-          maxTrainable
-        };
+        return { troopName, inputName, maxTrainable };
       })
-      .filter((item) => item.inputName && item.maxTrainable > 0);
-  });
+      .filter((item) => item.inputName);
+  }, TROOP_ROW_SELECTOR);
 
-  if (!troopOptions.length) {
-    const buildingLabel =
-      mapVariant === "great_barracks" ? "Great Barracks" : mapVariant === "stable" ? "Stable" : "Barracks";
-    throw new Error(
-      `${buildingLabel} opened but no trainable troop rows on ${page.url()}. Check resources/preset.`
-    );
+  return { page, building: kind, rows, missingBuilding: false };
+}
+
+/** List the unit names currently visible in a village's Barracks or Stable (used by the plan editor). */
+async function listTrainableUnits(getPage, settings, villageId, building) {
+  const { rows, missingBuilding } = await openTrainerAndReadRows(getPage, settings, villageId, building);
+  return {
+    missingBuilding,
+    units: rows
+      .map((r) => String(r.troopName || "").trim())
+      .filter(Boolean)
+  };
+}
+
+/**
+ * Train a single unit in one building. Trains the requested targetQty, or the maximum
+ * affordable if resources fall short. Returns a status object (never throws for game state).
+ */
+async function trainPlanBranch(getPage, settings, villageId, options = {}) {
+  const building = normalizeTrainerBuilding(options.building);
+  const buildingLabel = TRAINER_BUILDING_LABELS[building] || building;
+  const unitName = String(options.unitName || "").trim();
+  const targetQty = Math.max(1, Math.floor(Number(options.targetQty) || 1));
+
+  if (!unitName) {
+    return { status: "no_unit_configured", building, buildingLabel, queued: 0 };
   }
 
-  const barracksTroopNames = troopOptions
-    .map((o) => String(o.troopName || "").trim())
-    .filter(Boolean);
+  const { page, rows, missingBuilding } = await openTrainerAndReadRows(
+    getPage,
+    settings,
+    villageId,
+    building
+  );
 
-  const fromAlternate =
-    Array.isArray(options.templateCandidates) && options.templateCandidates.length > 0
-      ? options.templateCandidates.map((name) => String(name || "").trim()).filter(Boolean)
-      : [];
-
-  const forcedListMode =
-    options.templateCandidatesMode === "offensive" || options.templateCandidatesMode === "defensive"
-      ? options.templateCandidatesMode
-      : null;
-
-  const strategyForTemplate =
-    options.templateStrategyMode === "offensive" || options.templateStrategyMode === "defensive"
-      ? options.templateStrategyMode
-      : forcedListMode ||
-        normalizeTroopTemplateMode(troopSettings.troopTemplateMode);
-
-  const templateBranch =
-    options.templateBranch === "cavalry" || options.templateBranch === "infantry"
-      ? options.templateBranch
-      : mapVariant === "stable"
-        ? "cavalry"
-        : "infantry";
-
-  let template;
-  if (fromAlternate.length > 0) {
-    template = {
-      mode: forcedListMode || normalizeTroopTemplateMode(troopSettings.troopTemplateMode),
-      branch: templateBranch,
-      candidates: fromAlternate,
-      tribe: resolveTribeForTraining(troopSettings, barracksTroopNames)
-    };
-  } else if (forcedListMode) {
-    template = getTroopBranchTemplate(troopSettings, forcedListMode, templateBranch, barracksTroopNames);
-  } else {
-    template = getTroopBranchTemplate(troopSettings, strategyForTemplate, templateBranch, barracksTroopNames);
-  }
-  const batchGoal = normalizeTroopTrainingBatchGoal(troopSettings);
-  const normalizedOptions = troopOptions.map((option) => ({
-    troopName: option.troopName || option.inputName,
-    inputName: option.inputName,
-    maxTrainable: option.maxTrainable,
-    trainQty: Math.min(batchGoal, option.maxTrainable),
-    normalizedName: String(option.troopName || option.inputName || "").trim().toLowerCase()
-  }));
-
-  let chosen = null;
-  for (const candidate of template.candidates) {
-    const needle = troopCandidateName(candidate).trim().toLowerCase();
-    if (!needle) {
-      continue;
-    }
-    const wantQty = troopCandidateQty(candidate, batchGoal);
-    const match = normalizedOptions.find((option) => option.normalizedName === needle);
-    if (match) {
-      const trainQty = Math.min(wantQty, match.maxTrainable);
-      if (trainQty > 0) {
-        chosen = { ...match, trainQty };
-        break;
-      }
-    }
+  if (missingBuilding) {
+    return { status: "missing_building", building, buildingLabel, unitName, queued: 0 };
   }
 
-  if (!chosen) {
-    const candidateText = template.candidates
-      .map((candidate) => {
-        const name = troopCandidateName(candidate);
-        const qty = troopCandidateQty(candidate, batchGoal);
-        return qty !== batchGoal ? `${name}:${qty}` : name;
-      })
-      .join(", ");
-    const availableText = normalizedOptions.map((option) => option.troopName).join(", ");
-    const tribeHint = template.tribe ? ` (${template.tribe})` : "";
-    const branchHint = template.branch ? ` ${template.branch}` : "";
-    throw new Error(
-      `No trainable troop found for ${template.mode}${branchHint} template${tribeHint} (${candidateText}). Available now: ${availableText || "none"}.`
-    );
-  }
+  const needle = unitName.toLowerCase();
+  const match =
+    rows.find((r) => String(r.troopName || "").trim().toLowerCase() === needle) ||
+    rows.find((r) => String(r.troopName || "").trim().toLowerCase().includes(needle));
 
-  const input = page.locator(`input[name='${chosen.inputName}']`).first();
-  await input.waitFor({ state: "visible", timeout: 10000 });
-  await input.fill(String(chosen.trainQty));
-
-  const trainButton = page.locator("#btn_train").first();
-  await trainButton.click({ force: true });
-
-  // The page uses AJAX form interception; a brief wait helps ensure request dispatch.
-  await page.waitForTimeout(1500);
-
-  if (chosen.trainQty === chosen.maxTrainable && chosen.maxTrainable < batchGoal) {
-    logSuccess(
-      `Queued ${chosen.trainQty} ${chosen.troopName} ` +
-        `(batch goal ${batchGoal}; Nexian row max is ${chosen.maxTrainable}).`
-    );
-  } else {
-    logSuccess(`Queued ${chosen.trainQty} ${chosen.troopName}.`);
-  }
-
-  const queueSummary = await page.evaluate(() => {
-    const queueTable = document.querySelector("#troopQueueContainer table.under_progress");
-    if (!queueTable) {
-      return null;
-    }
-
-    const queueRows = Array.from(queueTable.querySelectorAll("tbody tr"));
-    let totalQueuedUnits = 0;
-
-    queueRows.forEach((row) => {
-      if (row.classList.contains("next") || row.classList.contains("total")) {
-        return;
-      }
-
-      const desc = row.querySelector("td.desc");
-      if (!desc) {
-        return;
-      }
-
-      const raw = desc.textContent.replace(/\u00a0/g, " ").trim();
-      const match = raw.match(/^(\d+)/);
-      if (match) {
-        totalQueuedUnits += Number(match[1]);
-      }
-    });
-
-    const nextUnitText = (() => {
-      const el = queueTable.querySelector("tbody tr.next span[id^='timer']");
-      return el ? el.textContent.replace(/\u00a0/g, " ").trim() : "N/A";
-    })();
-
-    const totalDurationText = (() => {
-      const el = queueTable.querySelector("tbody tr.total span[id^='timer']");
-      if (el) {
-        return el.textContent.replace(/\u00a0/g, " ").trim();
-      }
-
-      const firstTimer = queueTable.querySelector("tbody tr td.dur span[id^='timer']");
-      return firstTimer ? firstTimer.textContent.replace(/\u00a0/g, " ").trim() : "N/A";
-    })();
-
+  if (!match) {
+    const available = rows.map((r) => r.troopName).filter(Boolean).join(", ") || "none";
     return {
-      totalQueuedUnits,
-      nextUnitText,
-      totalDurationText
+      status: "unit_not_found",
+      building,
+      buildingLabel,
+      unitName,
+      queued: 0,
+      availableUnits: available
     };
-  });
+  }
 
-  if (queueSummary) {
-    printSubDivider("QUEUE SUMMARY");
-    printKeyValueRows([
-      { label: "Total queued units", value: String(queueSummary.totalQueuedUnits) },
-      { label: "Next unit in", value: queueSummary.nextUnitText },
-      { label: "Total queue duration", value: queueSummary.totalDurationText }
-    ]);
+  const maxTrainable = Math.max(0, Math.floor(Number(match.maxTrainable) || 0));
+  if (maxTrainable <= 0) {
+    return {
+      status: "no_resources",
+      building,
+      buildingLabel,
+      unitName: match.troopName || unitName,
+      queued: 0,
+      maxTrainable: 0
+    };
+  }
+
+  const trainQty = Math.min(targetQty, maxTrainable);
+  const input = page.locator(`input[name='${match.inputName}']`).first();
+  await input.waitFor({ state: "visible", timeout: 10000 });
+  await input.fill(String(trainQty));
+
+  const submit = await submitTroopTraining(page, match.inputName);
+  if (!submit.ok) {
+    return {
+      status: "train_failed",
+      building,
+      buildingLabel,
+      unitName: match.troopName || unitName,
+      queued: 0,
+      errorMessage: submit.message || "Training did not complete"
+    };
   }
 
   return {
-    preset: chosen.troopName,
-    templateMode: template.mode,
-    templateBranch: template.branch || templateBranch,
-    trainerBuilding: mapVariant,
-    queued: chosen.trainQty,
-    maxTrainable: chosen.maxTrainable,
-    queueSummary
+    status: "trained",
+    building,
+    buildingLabel,
+    unitName: match.troopName || unitName,
+    queued: trainQty,
+    maxTrainable,
+    cappedByResources: trainQty < targetQty
   };
 }
 
@@ -3907,10 +4529,42 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
 
 }
 
+function resolveVillageSwitchDelayMs(settings) {
+  if (settings && Number.isFinite(Number(settings.villageSwitchDelayMs))) {
+    return Math.max(0, Math.floor(Number(settings.villageSwitchDelayMs)));
+  }
+  return settings && settings.headless ? 0 : 800;
+}
+
+async function waitAfterVillageSwitch(page, settings) {
+  const delayMs = resolveVillageSwitchDelayMs(settings);
+  if (delayMs > 0 && page && !page.isClosed()) {
+    await page.waitForTimeout(delayMs);
+  }
+}
+
+function getCurrentVidFromPageUrl(page) {
+  if (!page || page.isClosed()) {
+    return null;
+  }
+  try {
+    const url = new URL(String(page.url() || ""));
+    const raw = url.searchParams.get("vid") || url.searchParams.get("newdid");
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function readIncomingAttackAlerts(getPage, settings, villageId) {
   const page = getPage();
   const statusUrl = withVillageId(settings.villageStatusUrl, villageId);
-  await safeGotoWithRetry(page, statusUrl, {}, 3);
+  const currentVid = getCurrentVidFromPageUrl(page);
+  if (!(Number.isFinite(currentVid) && Number(currentVid) === Number(villageId))) {
+    await safeGotoWithRetry(page, statusUrl, {}, 3);
+    await waitAfterVillageSwitch(page, settings);
+  }
   const movements = await page.evaluate(() => {
     const classifyMovementRowDirection = (row) => {
       const tbody = row.closest("tbody");
@@ -4352,6 +5006,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
   const raidEvacuationByVillage = new Map();
   const raidEvacuationSkipLogAtByVillage = new Map();
   const troopVillageLoopState = new Map();
+  /** Serializes troop auto runs so per-village timers do not fight for the browser lock. */
+  let troopAutoRunChain = Promise.resolve();
+  const TROOP_MISSING_BUILDING_RETRY_MS = 12 * 60 * 60 * 1000;
 
   try {
     let done = false;
@@ -4657,7 +5314,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (navigateToStatusPage) {
-        await safeGotoWithRetry(page, resolveVillageStatusUrl(settings, villageState));
+        const vlistCount = await page.locator("#vlist tr[data-vid]").count().catch(() => 0);
+        if (!vlistCount) {
+          await safeGotoWithRetry(page, resolveVillageStatusUrl(settings, villageState));
+        }
       }
 
       const snapshot = await fetchVillageSnapshotFromPage();
@@ -4758,6 +5418,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           page,
           withVillageId(settings.villageStatusUrl, selectedVillage.id)
         ).catch(() => null);
+        await waitAfterVillageSwitch(page, settings);
       }
       await refreshVillageState({ navigateToStatusPage: false, silent: true }).catch(() => null);
       if (!sameVillageAlready) {
@@ -4782,6 +5443,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           page,
           withVillageId(settings.villageStatusUrl, village.id)
         ).catch(() => null);
+        await waitAfterVillageSwitch(page, settings);
       }
       await refreshVillageState({ navigateToStatusPage: false, silent: true }).catch(() => null);
       if (!alreadyOnUsableVillagePage) {
@@ -4898,6 +5560,50 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    const builderRrUsesResourceThenVillagePipeline = () =>
+      Boolean(
+        settings.builderRoundRobinEnabled &&
+          settings.builderRrResourceThenVillage !== false &&
+          normalizeBuilderPlanMode(settings.builderDefaultPlanMode) === "resource"
+      );
+
+    const resolveBuilderPlanModeForVillage = (village) => {
+      if (!village) {
+        return normalizeBuilderPlanMode(activeBuilderPlanMode);
+      }
+      if (builderRrUsesResourceThenVillagePipeline()) {
+        if (!isBuilderPlanFullyComplete(village, "resource")) {
+          return "resource";
+        }
+        if (!isBuilderPlanFullyComplete(village, "village")) {
+          return "village";
+        }
+        return null;
+      }
+      return normalizeBuilderPlanMode(activeBuilderPlanMode);
+    };
+
+    const villageHasPendingBuilderWork = (village) =>
+      resolveBuilderPlanModeForVillage(village) != null;
+
+    const getRoundRobinPipelineProgress = (villages) => {
+      const list = (Array.isArray(villages) ? villages : []).filter((v) => !v.isCapital);
+      if (!list.length) {
+        return null;
+      }
+      let resourceDone = 0;
+      let villageDone = 0;
+      for (const village of list) {
+        if (isBuilderPlanFullyComplete(village, "resource")) {
+          resourceDone += 1;
+        }
+        if (isBuilderPlanFullyComplete(village, "village")) {
+          villageDone += 1;
+        }
+      }
+      return `res ${resourceDone}/${list.length} · village ${villageDone}/${list.length}`;
+    };
+
     const getRoundRobinProgress = (villages, planMode) => {
       const list = Array.isArray(villages) ? villages : [];
       if (!list.length) {
@@ -4981,149 +5687,6 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           await refreshVillageState({ navigateToStatusPage: false, silent: true });
         }
         logSuccess(`Selected village context: ${villageDisplayName(nextVillage)}`);
-      }
-    };
-
-    const runTroopTemplateCategoryMenu = async () => {
-      let submenuDone = false;
-      while (!submenuDone) {
-        if (menuSession.quitRequested) {
-          submenuDone = true;
-          continue;
-        }
-        printTroopTemplateMenu(settings);
-        const input = (await askQuestion(menuRl, "Troop template option: ")).trim().toUpperCase();
-
-        if (input === "Q") {
-          requestQuit();
-          submenuDone = true;
-          continue;
-        }
-
-        if (input === "B") {
-          submenuDone = true;
-          continue;
-        }
-
-        if (input === "1" || input === "2") {
-          settings.troopTemplateMode = input === "1" ? "offensive" : "defensive";
-          if (runtimeControls.persistSettings) {
-            await runtimeControls.persistSettings([
-              "TROOP_TEMPLATE_MODE"
-            ]);
-          }
-          logSuccess(`Troop template mode: ${settings.troopTemplateMode}`);
-          continue;
-        }
-
-        if (input === "+") {
-          settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(
-            normalizeTroopTrainingBatchGoal(settings) + 5
-          );
-          if (runtimeControls.persistSettings) {
-            await runtimeControls.persistSettings(["TROOP_TRAINING_BATCH_SIZE"]);
-          }
-          logSuccess(`Troop training batch: ${normalizeTroopTrainingBatchGoal(settings)} (capped per row by Nexian max)`);
-          continue;
-        }
-
-        if (input === "-") {
-          settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(
-            normalizeTroopTrainingBatchGoal(settings) - 5
-          );
-          if (runtimeControls.persistSettings) {
-            await runtimeControls.persistSettings(["TROOP_TRAINING_BATCH_SIZE"]);
-          }
-          logSuccess(`Troop training batch: ${normalizeTroopTrainingBatchGoal(settings)} (capped per row by Nexian max)`);
-          continue;
-        }
-
-        const editBranchCsv = async (label, settingKey, envKey) => {
-          const cur = String(settings[settingKey] || "").trim();
-          const hint = cur ? `current: ${cur}` : "empty = tribal defaults for this branch";
-          const typed = (
-            await askQuestion(menuRl, `${label} — comma-separated unit names (${hint})\nNew list (Enter keep): `)
-          ).trim();
-          if (typed === "") {
-            return;
-          }
-          settings[settingKey] = typed;
-          if (runtimeControls.persistSettings) {
-            await runtimeControls.persistSettings([envKey]);
-          }
-          logSuccess(`${label} updated.`);
-        };
-
-        if (input === "3") {
-          await editBranchCsv(
-            "Infantry OFFENSIVE",
-            "troopTemplateInfantryOffensive",
-            "TROOP_TEMPLATE_INFANTRY_OFFENSIVE"
-          );
-          continue;
-        }
-
-        if (input === "4") {
-          await editBranchCsv(
-            "Infantry DEFENSIVE",
-            "troopTemplateInfantryDefensive",
-            "TROOP_TEMPLATE_INFANTRY_DEFENSIVE"
-          );
-          continue;
-        }
-
-        if (input === "5") {
-          await editBranchCsv(
-            "Cavalry OFFENSIVE",
-            "troopTemplateCavalryOffensive",
-            "TROOP_TEMPLATE_CAVALRY_OFFENSIVE"
-          );
-          continue;
-        }
-
-        if (input === "6") {
-          await editBranchCsv(
-            "Cavalry DEFENSIVE",
-            "troopTemplateCavalryDefensive",
-            "TROOP_TEMPLATE_CAVALRY_DEFENSIVE"
-          );
-          continue;
-        }
-
-        if (input === "7") {
-          const typed = (await askQuestion(menuRl, "Batch size (1–999999, Enter to cancel): ")).trim();
-          if (!typed) {
-            continue;
-          }
-          const n = Number(typed);
-          if (!Number.isFinite(n)) {
-            logWarn("Invalid number.");
-            continue;
-          }
-          settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(n);
-          if (runtimeControls.persistSettings) {
-            await runtimeControls.persistSettings(["TROOP_TRAINING_BATCH_SIZE"]);
-          }
-          logSuccess(`Troop training batch: ${normalizeTroopTrainingBatchGoal(settings)} (capped per row by Nexian max)`);
-          continue;
-        }
-
-        if (input === "8") {
-          const cur = normalizeTroopTribeSetting(settings.troopTribe);
-          const ix = TROOP_TRIBE_MENU_CYCLE.indexOf(cur);
-          const i0 = ix >= 0 ? ix : 0;
-          const next = TROOP_TRIBE_MENU_CYCLE[(i0 + 1) % TROOP_TRIBE_MENU_CYCLE.length];
-          settings.troopTribe = next;
-          if (runtimeControls.persistSettings) {
-            await runtimeControls.persistSettings(["TROOP_TRIBE"]);
-          }
-          logSuccess(
-            `Troop tribe: ${next}. Empty branch template lines use this tribe’s built-in defaults.`
-          );
-          continue;
-        }
-
-        logWarn("Unknown option. Use 1–8, +, -, or B.");
       }
     };
 
@@ -5266,6 +5829,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }
       }
     };
+
+    if (typeof runtimeControls.registerAutomationIdleWaiter === "function") {
+      runtimeControls.registerAutomationIdleWaiter((label, options) =>
+        waitForActionIdle(label, options)
+      );
+    }
 
     let lastUserInterruptAt = 0;
     const handleUserInterrupt = () => {
@@ -5412,7 +5981,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         return { status: "circulation_skipped", message: "market_busy" };
       }
 
-      await refreshVillageState({ navigateToStatusPage: true, silent: true }).catch(() => null);
+      await refreshVillageState({
+        navigateToStatusPage: !(
+          villageState.lastRefreshIso &&
+          Date.now() - Date.parse(villageState.lastRefreshIso) < 5 * 60 * 1000
+        ),
+        silent: true
+      }).catch(() => null);
 
       const deficit = blocker.deficit || {};
       const progressLog = (line) => logInfo(`[${logPrefixAuto}] ${line}`);
@@ -5450,10 +6025,38 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       try {
         circ = await resourceCirculation.circulateResourcesForBuild(getPage, settings, circulateOptions);
       } catch (err) {
-        const msg = err && err.message ? err.message : String(err);
-        logError(`[${logPrefixAuto}] Circulation failed: ${msg}`);
-        await restoreSelectedVillageContext(`${logPrefixAuto} Circulation`).catch(() => null);
-        return { status: "circulation_failed", message: msg };
+        if (isResourceExhaustionError(err)) {
+          logWarn(
+            `[${logPrefixAuto}] Browser resource pressure (${err.message || err}) — waiting 15s and retrying circulation once…`
+          );
+          const page = getPage();
+          if (page && !page.isClosed()) {
+            await page.waitForTimeout(15000).catch(() => null);
+          }
+          try {
+            circ = await resourceCirculation.circulateResourcesForBuild(getPage, settings, circulateOptions);
+          } catch (retryErr) {
+            const msg = retryErr && retryErr.message ? retryErr.message : String(retryErr);
+            logError(`[${logPrefixAuto}] Circulation failed after retry: ${msg}`);
+            if (runtimeControls.reloginNow && isResourceExhaustionError(retryErr)) {
+              logWarn(`[${logPrefixAuto}] Requesting browser restart to recover resources…`);
+              try {
+                await runtimeControls.reloginNow("resource_circulation_exhaustion");
+              } catch (reloginError) {
+                logWarn(
+                  `[${logPrefixAuto}] Browser restart failed: ${reloginError.message || reloginError}`
+                );
+              }
+            }
+            await restoreSelectedVillageContext(`${logPrefixAuto} Circulation`).catch(() => null);
+            return { status: "circulation_failed", message: msg };
+          }
+        } else {
+          const msg = err && err.message ? err.message : String(err);
+          logError(`[${logPrefixAuto}] Circulation failed: ${msg}`);
+          await restoreSelectedVillageContext(`${logPrefixAuto} Circulation`).catch(() => null);
+          return { status: "circulation_failed", message: msg };
+        }
       }
 
       await restoreSelectedVillageContext(`${logPrefixAuto} Circulation`).catch(() => null);
@@ -5532,7 +6135,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const results = [];
       let handledNearImpact = false;
 
-      for (const village of villageState.villages) {
+      const page = getPage();
+      if (page && !page.isClosed()) {
+        const vlistCount = await page.locator("#vlist tr[data-vid]").count().catch(() => 0);
+        await refreshVillageState({ navigateToStatusPage: !vlistCount, silent: true }).catch(() => null);
+      }
+
+      const villagesToCheck = villageState.villages.filter((v) => v && v.underAttack);
+      if (!villagesToCheck.length) {
+        return { status: "evacuation_checked", results, handledNearImpact: false };
+      }
+
+      for (const village of villagesToCheck) {
         if (!village || !Number.isFinite(Number(village.id))) {
           continue;
         }
@@ -5823,12 +6437,6 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       logWarn(`[Log] Startup rotation check failed: ${error.message || error}`);
     }
 
-    try {
-      await refreshVillageState({ navigateToStatusPage: true, silent: false });
-    } catch (error) {
-      logWarn(`[Village] Failed to load village list: ${error.message || error}`);
-    }
-
     const cancelFarmlistLoopTimer = () => {
       if (farmlistLoopTimer) {
         clearTimeout(farmlistLoopTimer);
@@ -5881,14 +6489,19 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const startedAt = Date.now();
         const executed = await runAction(attemptLabel, async () => {
           logInfo("[Farmlist Loop] Auto-send starting...");
-          await runWithRandomDelay(
+          const sendResult = await runWithRandomDelay(
             settings,
             "Auto Send Farmlists",
             () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
             () => cancelRequested
           );
-          logSuccess("[Farmlist Loop] Auto-send completed.");
+          if (sendResult && sendResult.status === "idle") {
+            logInfo(`[Farmlist Loop] ${String(sendResult.message || "Nothing to send.").replace(/^\[Farmlist\]\s*/, "")}`);
+          } else {
+            logSuccess("[Farmlist Loop] Auto-send completed.");
+          }
           await maybePrintAutoFarmlistStatus("Farmlist Loop");
+          return sendResult;
         }, { raidGuardPriority: true });
         return { executed, startedAt };
       };
@@ -5946,6 +6559,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           });
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
+          const isIdleNothingToSend = /no farmlists ready to send|nothing to send/i.test(message);
+          if (isIdleNothingToSend) {
+            logInfo(`[Farmlist Loop] ${message}`);
+            recordAction({
+              actionType: "farmlist.send",
+              status: "info",
+              durationMs: 0,
+              details: {
+                source: "auto-loop",
+                idle: true,
+                ...getVillageMeta("all")
+              }
+            });
+            await restoreSelectedVillageContext("Farmlist Loop").catch(() => null);
+            scheduleFarmlistLoop();
+            return;
+          }
           const isTransientSessionState =
             /has been closed|context or browser has been closed|Session page is currently unavailable|net::ERR_ABORTED|interrupted by another navigation/i.test(
               message
@@ -6099,7 +6729,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const activePlan = getBuilderPlanMeta(activeBuilderPlanMode);
       builderResumeWaitLogged = false;
       nextBuilderRunAt = Date.now() + minutes * 60 * 1000;
-      logInfo(`[Builder Loop] Next auto-build (${activePlan.short}) in ${minutes} minute(s).`);
+      const schedulePlanLabel = builderRrUsesResourceThenVillagePipeline()
+        ? "resource→village"
+        : activePlan.short;
+      logInfo(`[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${minutes} minute(s).`);
 
       const runBuilderScheduledTick = async () => {
         if (done || !settings.builderLoopEnabled) {
@@ -6145,16 +6778,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
           const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
           const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
-          const loopPlan = getBuilderPlanMeta(activeBuilderPlanMode);
           const rrCandidateVillages = nonCapitalVillages.filter(
             (village) =>
-              !excludedVillageIds.has(Number(village.id)) &&
-              !isBuilderPlanFullyComplete(village, loopPlan.key)
+              !excludedVillageIds.has(Number(village.id)) && villageHasPendingBuilderWork(village)
           );
           if (!rrCandidateVillages.length) {
             if (nonCapitalVillages.length) {
               logInfo(
-                `[Builder Loop] All non-capital villages are complete for ${loopPlan.short} plan. Waiting for next changes.`
+                builderRrUsesResourceThenVillagePipeline()
+                  ? "[Builder Loop] All non-capital villages finished resource fields + village stage plans."
+                  : `[Builder Loop] All non-capital villages are complete for ${getBuilderPlanMeta(activeBuilderPlanMode).short} plan. Waiting for next changes.`
               );
             } else {
               logWarn("[Builder Loop] No non-capital villages available for template auto-build. Skipping.");
@@ -6253,7 +6886,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         try {
           const startedAt = Date.now();
           const executed = await runAction("auto-builder", async () => {
-            const loopPlan = getBuilderPlanMeta(activeBuilderPlanMode);
+            let loopPlan = getBuilderPlanMeta(
+              resolveBuilderPlanModeForVillage(targetVillage) || activeBuilderPlanMode
+            );
             builderEfficiencyWindow.attempts += 1;
             await ensureVillageBrowserContext(targetVillage, "Builder Loop");
             logInfo(`[Builder Loop] Auto-build (${loopPlan.short}) starting for ${villageDisplayName(targetVillage)}...`);
@@ -6274,18 +6909,47 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             const maxFollowupAttempts = 20;
             const maxFollowupElapsedMs = 120000;
             let followupAttempt = 0;
-            while (
-              finalResult &&
-              (finalResult.status === "already_satisfied" ||
-                finalResult.status === "template_complete" ||
-                finalResult.status === "realigned_template") &&
-              followupAttempt < maxFollowupAttempts
-            ) {
+            while (followupAttempt < maxFollowupAttempts) {
               if (Date.now() - startedAt > maxFollowupElapsedMs) {
                 logInfo("[Builder Loop] Follow-up retry budget reached for this tick. Continuing on next cycle.");
                 break;
               }
-              const followupTag = finalResult.status === "realigned_template" ? "realigned_template" : "progress_advanced";
+
+              if (
+                finalResult &&
+                finalResult.status === "all_complete" &&
+                loopPlan.key === "resource" &&
+                builderRrUsesResourceThenVillagePipeline() &&
+                !isBuilderPlanFullyComplete(targetVillage, "village")
+              ) {
+                loopPlan = getBuilderPlanMeta("village");
+                logInfo(
+                  `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — continuing with village stage plan.`
+                );
+                await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+                finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
+                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                  goldCompleteMax: settings.builderGoldCompleteMax,
+                  masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                  planMode: loopPlan.key
+                });
+                followupAttempt += 1;
+                continue;
+              }
+
+              if (
+                !finalResult ||
+                !(
+                  finalResult.status === "already_satisfied" ||
+                  finalResult.status === "template_complete" ||
+                  finalResult.status === "realigned_template"
+                )
+              ) {
+                break;
+              }
+
+              const followupTag =
+                finalResult.status === "realigned_template" ? "realigned_template" : "progress_advanced";
               logInfo(`[Builder Loop] ${followupTag}: ${finalResult.message} Retrying next step...`);
               await ensureVillageBrowserContext(targetVillage, "Builder Loop");
               finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
@@ -6376,7 +7040,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             errorMessage: message
           });
           const isTransientSessionState =
-            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|interrupted by another navigation|Execution context was destroyed/i.test(
+            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|ERR_INSUFFICIENT_RESOURCES|interrupted by another navigation|Execution context was destroyed/i.test(
               message
             );
           if (isTransientSessionState) {
@@ -6403,14 +7067,39 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), minutes * 60 * 1000);
     };
 
-    const getTroopVillageLoopKey = (village) => troopVillagePreferences.villageKey(village);
+    const getTroopVillageLoopKey = (village) => troopPlans.villageKey(village);
 
     const getTroopVillageLoopState = (village) => {
       const key = getTroopVillageLoopKey(village);
       if (!troopVillageLoopState.has(key)) {
-        troopVillageLoopState.set(key, { timer: null, nextRunAt: null, lastDelayMinutes: null, buildingPhase: 0 });
+        troopVillageLoopState.set(key, {
+          timer: null,
+          nextRunAt: null,
+          lastDelayMinutes: null,
+          missingBuildings: {}
+        });
       }
       return troopVillageLoopState.get(key);
+    };
+
+    const troopBranchIsSkipped = (state, building) => {
+      const retryAfter = state.missingBuildings[building];
+      if (!retryAfter) {
+        return false;
+      }
+      if (Date.now() >= retryAfter) {
+        delete state.missingBuildings[building];
+        return false;
+      }
+      return true;
+    };
+
+    const rememberMissingTroopBuilding = (state, building) => {
+      state.missingBuildings[building] = Date.now() + TROOP_MISSING_BUILDING_RETRY_MS;
+    };
+
+    const clearMissingTroopBuilding = (state, building) => {
+      delete state.missingBuildings[building];
     };
 
     const getVillageNextInMinutes = (village) => {
@@ -6463,141 +7152,167 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return next;
     };
 
-    const runTroopTrainingForVillage = async (targetVillage) => {
-      const villageTroopSettings = troopVillagePreferences.resolveSettings(settings, targetVillage);
-      const troopTemplateMode = normalizeTroopTemplateMode(villageTroopSettings.troopTemplateMode);
-      const loopState = getTroopVillageLoopState(targetVillage);
-      let troopExecuted = false;
-
-      try {
-        const startedAt = Date.now();
-        let trainedTroop = settings.troopTrainingPreset;
-        let recordedTrainerBuilding = "barracks";
-        troopExecuted = await runAction("auto-troop-trainer", async () => {
-          await ensureVillageBrowserContext(targetVillage, "Troop Auto");
-
-          const useAlternateBarracksGreat =
-            settings.troopTrainingAlternateGreatBarracks && troopTemplateMode === "offensive";
-
-          let trainOptions = {};
-          if (useAlternateBarracksGreat) {
-            const ph = loopState.buildingPhase % 3;
-            if (ph === 0) {
-              trainOptions = {
-                mapVariant: "barracks",
-                trainerUrl: settings.troopTrainerUrl,
-                templateStrategyMode: "offensive",
-                templateBranch: "infantry"
-              };
-              logInfo("[Troop Auto] Building: Barracks — offensive infantry");
-            } else if (ph === 1) {
-              trainOptions = {
-                mapVariant: "great_barracks",
-                trainerUrl: settings.troopGreatTrainerUrl,
-                templateStrategyMode: "defensive",
-                templateBranch: "infantry"
-              };
-              logInfo("[Troop Auto] Building: Great Barracks — defensive infantry");
-            } else {
-              trainOptions = {
-                mapVariant: "stable",
-                trainerUrl: settings.troopStableTrainerUrl,
-                templateStrategyMode: troopTemplateMode,
-                templateBranch: "cavalry"
-              };
-              logInfo(`[Troop Auto] Building: Stable — ${troopTemplateMode} cavalry`);
-            }
-            loopState.buildingPhase += 1;
-          } else {
-            const ph2 = loopState.buildingPhase % 2;
-            trainOptions =
-              ph2 === 0
-                ? {
-                    mapVariant: "barracks",
-                    trainerUrl: settings.troopTrainerUrl,
-                    templateStrategyMode: troopTemplateMode,
-                    templateBranch: "infantry"
-                  }
-                : {
-                    mapVariant: "stable",
-                    trainerUrl: settings.troopStableTrainerUrl,
-                    templateStrategyMode: troopTemplateMode,
-                    templateBranch: "cavalry"
-                  };
-            logInfo(
-              `[Troop Auto] Building: ${
-                ph2 === 0
-                  ? `Barracks — ${troopTemplateMode} infantry`
-                  : `Stable — ${troopTemplateMode} cavalry`
-              }`
-            );
-            loopState.buildingPhase += 1;
-          }
-
-          recordedTrainerBuilding =
-            trainOptions.mapVariant === "great_barracks"
-              ? "great_barracks"
-              : trainOptions.mapVariant === "stable"
-                ? "stable"
-                : "barracks";
-
-          logInfo(`[Troop Auto] Auto-train starting for ${villageDisplayName(targetVillage)}...`);
-          const result = await runWithRandomDelay(
-            settings,
-            "Auto Troop Trainer",
-            () =>
-              trainTroopsInBarracks(getPage, settings, targetVillage.id, {
-                ...trainOptions,
-                village: targetVillage
-              }),
-            () => cancelRequested
-          );
-          trainedTroop = result && result.preset ? result.preset : trainedTroop;
+    const logTroopBranchOutcome = (targetVillage, result) => {
+      if (!result) {
+        return;
+      }
+      const where = villageDisplayName(targetVillage);
+      switch (result.status) {
+        case "trained":
           logSuccess(
-            `[Troop Auto] Trained ${result && result.queued != null ? result.queued : "?"} ${(result && result.preset) || trainedTroop} in ${villageDisplayName(targetVillage)}.`
+            `[Troop Auto] ${where}: queued ${result.queued} ${result.unitName} (${result.buildingLabel})` +
+              (result.cappedByResources ? " — capped by resources" : "")
           );
-        }, { raidGuardPriority: true });
-
-        if (troopExecuted) {
-          recordAction({
-            actionType: "troop.train",
-            status: "success",
-            durationMs: Date.now() - startedAt,
-            details: {
-              source: "auto-loop",
-              templateMode: troopTemplateMode,
-              preset: trainedTroop,
-              villageId: targetVillage.id,
-              villageName: targetVillage.name,
-              villageCoords: targetVillage.coordsText || null,
-              trainerBuilding: recordedTrainerBuilding
-            }
-          });
-          await restoreSelectedVillageContext("Troop Auto");
-        }
-      } catch (error) {
-        const message = error && error.message ? error.message : String(error);
-        recordAction({
-          actionType: "troop.train",
-          status: "failed",
-          durationMs: 0,
-          details: {
-            source: "auto-loop",
-            templateMode: troopTemplateMode,
-            preset: settings.troopTrainingPreset,
-            villageId: targetVillage.id,
-            villageName: targetVillage.name,
-            villageCoords: targetVillage.coordsText || null
-          },
-          errorMessage: message
-        });
-        logWarn(
-          `[Troop Auto] Auto-train skipped/failed for ${villageDisplayName(targetVillage)}: ${message}`
-        );
+          break;
+        case "no_resources":
+          logInfo(`[Troop Auto] ${where}: not enough resources for ${result.unitName} (${result.buildingLabel}).`);
+          break;
+        case "unit_not_found":
+          logWarn(
+            `[Troop Auto] ${where}: unit "${result.unitName}" not in ${result.buildingLabel}. Available: ${result.availableUnits || "none"}.`
+          );
+          break;
+        case "missing_building":
+          logInfo(`[Troop Auto] ${where}: no ${result.buildingLabel} in this village yet.`);
+          break;
+        case "train_failed":
+          logWarn(
+            `[Troop Auto] ${where}: could not train ${result.unitName} in ${result.buildingLabel} — ${result.errorMessage || "unknown error"}.`
+          );
+          break;
+        default:
+          break;
       }
     };
 
-    const scheduleTroopVillageLoop = (village) => {
+    /** Train a village's assigned plan across Barracks, Great Barracks, Stable, and/or Great Stable. */
+    const runTroopTrainingForVillage = async (targetVillage) => {
+      const plan = troopPlans.resolvePlanForVillage(targetVillage);
+      if (!plan) {
+        return "no_plan";
+      }
+
+      const branches = troopPlans.planBranches(plan);
+      if (!branches.length) {
+        logInfo(`[Troop Auto] Plan "${plan.name}" has no units set; nothing to train for ${villageDisplayName(targetVillage)}.`);
+        return "no_units";
+      }
+
+      const loopState = getTroopVillageLoopState(targetVillage);
+      const branchesToRun = branches.filter((branch) => !troopBranchIsSkipped(loopState, branch.building));
+      if (!branchesToRun.length) {
+        return "executed";
+      }
+
+      const enqueueTroopAutoRun = (fn) => {
+        const next = troopAutoRunChain.then(() => fn(), () => fn());
+        troopAutoRunChain = next.catch(() => {});
+        return next;
+      };
+
+      return enqueueTroopAutoRun(async () => {
+        if (!(await waitForActionIdle("Troop Auto", { maxWaitMs: 600000 }))) {
+          return "busy";
+        }
+
+        const startedAt = Date.now();
+        const outcomes = [];
+        let troopExecuted = false;
+
+        try {
+          troopExecuted = await runAction(
+            "auto-troop-trainer",
+            async () => {
+              await ensureVillageBrowserContext(targetVillage, "Troop Auto");
+              logInfo(
+                `[Troop Auto] ${villageDisplayName(targetVillage)} — plan "${plan.name}" (${troopPlans.describePlan(plan)}).`
+              );
+              for (const branch of branchesToRun) {
+                if (cancelRequested) {
+                  break;
+                }
+                const result = await runWithRandomDelay(
+                  settings,
+                  "Auto Troop Trainer",
+                  () => trainPlanBranch(getPage, settings, targetVillage.id, branch),
+                  () => cancelRequested
+                );
+                outcomes.push(result);
+                if (result && result.status === "missing_building") {
+                  const existsOnMap = await villageHasTrainerBuildingOnMap(
+                    getPage,
+                    settings,
+                    targetVillage.id,
+                    result.building
+                  );
+                  if (existsOnMap) {
+                    clearMissingTroopBuilding(loopState, result.building);
+                    logWarn(
+                      `[Troop Auto] ${villageDisplayName(targetVillage)}: could not open ${result.buildingLabel} (found on village map) — will retry next cycle.`
+                    );
+                  } else {
+                    rememberMissingTroopBuilding(loopState, result.building);
+                    logInfo(
+                      `[Troop Auto] ${villageDisplayName(targetVillage)}: no ${result.buildingLabel} yet — skipping that branch on future runs (recheck in ~12h).`
+                    );
+                  }
+                } else {
+                  if (result && result.status === "trained") {
+                    clearMissingTroopBuilding(loopState, result.building);
+                  }
+                  logTroopBranchOutcome(targetVillage, result);
+                }
+              }
+            },
+            { raidGuardPriority: true }
+          );
+
+          if (troopExecuted) {
+            const trained = outcomes.filter((o) => o && o.status === "trained");
+            recordAction({
+              actionType: "troop.train",
+              status: trained.length ? "success" : "info",
+              durationMs: Date.now() - startedAt,
+              details: {
+                source: "auto-loop",
+                plan: plan.name,
+                villageId: targetVillage.id,
+                villageName: targetVillage.name,
+                villageCoords: targetVillage.coordsText || null,
+                trained: trained.map((o) => ({ unit: o.unitName, qty: o.queued, building: o.building }))
+              }
+            });
+            await restoreSelectedVillageContext("Troop Auto");
+          }
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          recordAction({
+            actionType: "troop.train",
+            status: "failed",
+            durationMs: 0,
+            details: {
+              source: "auto-loop",
+              plan: plan.name,
+              villageId: targetVillage.id,
+              villageName: targetVillage.name,
+              villageCoords: targetVillage.coordsText || null
+            },
+            errorMessage: message
+          });
+          logWarn(
+            `[Troop Auto] Auto-train skipped/failed for ${villageDisplayName(targetVillage)}: ${message}`
+          );
+          if (isTransientNavigationError(error)) {
+            return "retry";
+          }
+          return "executed";
+        }
+
+        return troopExecuted ? "executed" : "busy";
+      });
+    };
+
+    const scheduleTroopVillageLoop = (village, options = {}) => {
       if (!village) {
         return;
       }
@@ -6606,16 +7321,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (done || !settings.troopTrainingRoundRobinEnabled) {
         return;
       }
-      if (!troopVillagePreferences.resolveRoundRobinEnabled(village)) {
+      const plan = troopPlans.resolvePlanForVillage(village);
+      if (!plan) {
         return;
       }
 
-      const interval = troopVillagePreferences.resolveLoopInterval(village, settings);
+      const interval = troopPlans.resolveInterval(
+        plan,
+        settings.troopTrainingLoopMinMinutes,
+        settings.troopTrainingLoopMaxMinutes
+      );
       const minutes = pickVillageTroopDelayMinutes(village, interval.min, interval.max);
+      let delayMs = minutes * 60 * 1000 + Math.floor(Math.random() * 60000);
+      const staggerTotal = Number(options.staggerTotal) || 0;
+      const staggerIndex = Number(options.staggerIndex) || 0;
+      if (staggerTotal > 1) {
+        const spreadMs = Math.floor((interval.max * 60 * 1000) / staggerTotal);
+        delayMs += staggerIndex * spreadMs;
+      }
       const state = getTroopVillageLoopState(village);
-      state.nextRunAt = Date.now() + minutes * 60 * 1000;
+      state.nextRunAt = Date.now() + delayMs;
       logInfo(
-        `[Troop Auto] ${villageDisplayName(village)} next train in ${minutes} minute(s) (${interval.min}-${interval.max} min).`
+        `[Troop Auto] ${villageDisplayName(village)} next train in ${formatDelayMs(delayMs)} (plan "${plan.name}", ${interval.min}-${interval.max} min).`
       );
 
       const runTroopVillageScheduledTick = async () => {
@@ -6623,7 +7350,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (done || !settings.troopTrainingRoundRobinEnabled) {
           return;
         }
-        if (!troopVillagePreferences.resolveRoundRobinEnabled(village)) {
+        if (!troopPlans.resolvePlanForVillage(village)) {
           cancelTroopVillageLoop(village);
           return;
         }
@@ -6637,14 +7364,32 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return;
         }
 
-        await runTroopTrainingForVillage(village);
-        scheduleTroopVillageLoop(village);
+        const outcome = await runTroopTrainingForVillage(village);
+        if (outcome === "busy") {
+          // Another loop (farmlist/builder/cranny) held the browser. Retry soon instead of
+          // dropping this village's training for the whole 15-25 min interval.
+          const retryMs = 60000 + Math.floor(Math.random() * 30000);
+          state.nextRunAt = Date.now() + retryMs;
+          logInfo(
+            `[Troop Auto] ${villageDisplayName(village)} — browser busy, retrying in ${formatDelayMs(retryMs)}.`
+          );
+          state.timer = setTimeout(() => void runTroopVillageScheduledTick(), retryMs);
+        } else if (outcome === "retry") {
+          const retryMs = 20000 + Math.floor(Math.random() * 25000);
+          state.nextRunAt = Date.now() + retryMs;
+          logInfo(
+            `[Troop Auto] ${villageDisplayName(village)} — navigation interrupted, retrying in ${formatDelayMs(retryMs)}.`
+          );
+          state.timer = setTimeout(() => void runTroopVillageScheduledTick(), retryMs);
+        } else {
+          scheduleTroopVillageLoop(village);
+        }
         if (dashboardBridge) {
           dashboardBridge.publishSnapshot();
         }
       };
 
-      state.timer = setTimeout(() => void runTroopVillageScheduledTick(), minutes * 60 * 1000);
+      state.timer = setTimeout(() => void runTroopVillageScheduledTick(), delayMs);
     };
 
     const syncAllTroopVillageLoops = () => {
@@ -6660,32 +7405,53 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }, 30000);
         return;
       }
-      const rrVillages = troopVillagePreferences.filterRoundRobinVillages(villageState.villages);
+      const rrVillages = troopPlans.listEnabledVillages(villageState.villages);
       if (!rrVillages.length && villageState.villages.length) {
-        logInfo("[Troop Auto] No villages with auto repeat enabled — enable per village in Troop Templates.");
+        logInfo("[Troop Auto] No villages assigned to a troop plan — assign one in Troop Plans (menu T).");
       }
-      for (const village of rrVillages) {
-        scheduleTroopVillageLoop(village);
+      for (let i = 0; i < rrVillages.length; i++) {
+        scheduleTroopVillageLoop(rrVillages[i], {
+          staggerIndex: i,
+          staggerTotal: rrVillages.length
+        });
       }
     };
 
-    const syncTroopVillageLoopFromPatch = (villageRef, patch) => {
+    /** Re-sync a single village's timer after its plan assignment changes. */
+    const resyncTroopVillageLoop = (villageRef) => {
       const village =
         villageState.villages.find((v) => Number(v.id) === Number(villageRef.id)) || villageRef;
-      const touchesSchedule =
-        patch &&
-        (patch.roundRobinEnabled !== undefined ||
-          patch.loopMinMinutes !== undefined ||
-          patch.loopMaxMinutes !== undefined ||
-          patch.resetToGlobal);
-      if (!touchesSchedule) {
-        return;
+      cancelTroopVillageLoop(village);
+      if (
+        !done &&
+        settings.troopTrainingRoundRobinEnabled &&
+        troopPlans.resolvePlanForVillage(village)
+      ) {
+        scheduleTroopVillageLoop(village);
       }
-      if (patch.resetToGlobal || !troopVillagePreferences.resolveRoundRobinEnabled(village)) {
-        cancelTroopVillageLoop(village);
-        return;
+      if (dashboardBridge) {
+        dashboardBridge.publishSnapshot({ force: true });
       }
-      scheduleTroopVillageLoop(village);
+    };
+
+    const troopPlanHooks = {
+      menuSession,
+      requestQuit,
+      getSnapshot: () => ({
+        villages: villageState.villages.slice(),
+        selectedVillageId: villageState.selectedVillageId,
+        activeVillageId: villageState.activeVillageId
+      }),
+      refreshVillages: () =>
+        refreshVillageState({ navigateToStatusPage: true, silent: true }),
+      listTrainableUnits: (village, building) =>
+        listTrainableUnits(getPage, settings, village.id, building),
+      onAssignmentChanged: (village) => resyncTroopVillageLoop(village),
+      onPlansChanged: () => syncAllTroopVillageLoops()
+    };
+
+    const runTroopTemplateCategoryMenu = async () => {
+      await runTroopPlansMenu(menuRl, settings, runtimeControls, troopPlanHooks);
     };
 
     const scheduleTroopTrainingLoop = () => {
@@ -6806,6 +7572,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   logInfo(`[Cranny defense RR] ${defenseResult.message}`);
                   if (attempt + 1 < n) {
                     logInfo("[Cranny defense RR] No work here — trying next village in rotation…");
+                    await waitAfterVillageSwitch(getPage(), settings);
                   }
                   continue;
                 }
@@ -6926,7 +7693,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleRaidEvacuationLoop();
       };
 
-      raidEvacuationLoopTimer = setTimeout(() => void runRaidEvacuationScheduledTick(), 5000);
+      const pollMs = Math.max(
+        5000,
+        Math.floor(Number(settings.raidEvacuationPollSeconds) || 30) * 1000
+      );
+      raidEvacuationLoopTimer = setTimeout(() => void runRaidEvacuationScheduledTick(), pollMs);
     };
 
     const cancelActivitySimulationLoopTimer = () => {
@@ -7179,16 +7950,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
-    scheduleFarmlistLoop();
-    scheduleBuilderLoop();
-    scheduleTroopTrainingLoop();
-    scheduleCrannyDefenseLoop();
-    scheduleActivitySimulationLoop();
-    scheduleRaidEvacuationLoop();
-
     const buildTroopLiveSummary = () => {
       const allVillages = villageState.villages;
-      const rrVillages = troopVillagePreferences.filterRoundRobinVillages(allVillages);
+      const rrVillages = troopPlans.listEnabledVillages(allVillages);
       return {
         troopLoop: {
           enabled: settings.troopTrainingRoundRobinEnabled,
@@ -7201,45 +7965,41 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         selectedVillageId: villageState.selectedVillageId,
         activeVillageId: villageState.activeVillageId,
         villages: allVillages.map((v) => {
-          const loopInterval = troopVillagePreferences.resolveLoopInterval(v, settings);
+          const plan = troopPlans.resolvePlanForVillage(v);
           return {
             villageId: v.id,
             name: v.name,
             isCapital: Boolean(v.isCapital),
             underAttack: Boolean(v.underAttack),
-            hasCustom: troopVillagePreferences.hasCustomTroopSettings(v),
-            roundRobinEnabled: troopVillagePreferences.resolveRoundRobinEnabled(v, false),
-            loopMinMinutes: loopInterval.min,
-            loopMaxMinutes: loopInterval.max,
-            loopUsesGlobalDefault: loopInterval.usesGlobalDefault,
+            plan: plan ? plan.name : null,
+            planSummary: plan ? troopPlans.describePlan(plan) : null,
+            enabled: Boolean(plan),
             nextInMinutes: getVillageNextInMinutes(v)
           };
         })
       };
     };
 
+    // Terminal-driven engine. The web dashboard troop tab is read-only.
     const buildFullTroopDashboardPayload = () => {
       const allVillages = villageState.villages;
-      const rrVillages = troopVillagePreferences.filterRoundRobinVillages(allVillages);
-      const troopLoop = {
-        enabled: settings.troopTrainingRoundRobinEnabled,
-        minMinutes: settings.troopTrainingLoopMinMinutes,
-        maxMinutes: settings.troopTrainingLoopMaxMinutes,
-        nextInMinutes: getSoonestTroopVillageNextInMinutes(),
-        enabledVillageCount: rrVillages.length,
-        totalVillageCount: allVillages.length
-      };
-      const globalDefaults = buildTroopSettingsPayload(settings, { troopLoop });
+      const rrVillages = troopPlans.listEnabledVillages(allVillages);
       return {
-        globalDefaults,
-        troopLoop,
-        defaults: TRIBE_DEFAULT_TEMPLATES,
+        terminalOnly: true,
+        troopLoop: {
+          enabled: settings.troopTrainingRoundRobinEnabled,
+          minMinutes: settings.troopTrainingLoopMinMinutes,
+          maxMinutes: settings.troopTrainingLoopMaxMinutes,
+          nextInMinutes: getSoonestTroopVillageNextInMinutes(),
+          enabledVillageCount: rrVillages.length,
+          totalVillageCount: allVillages.length
+        },
+        plans: troopPlans.listPlans(),
         selectedVillageId: villageState.selectedVillageId,
         activeVillageId: villageState.activeVillageId,
-        villages: villageState.villages.map((v) => {
-          const progressKey = troopVillagePreferences.villageKey(v);
-          const merged = troopVillagePreferences.resolveSettings(settings, v);
-          const loopInterval = troopVillagePreferences.resolveLoopInterval(v, settings);
+        villages: allVillages.map((v) => {
+          const plan = troopPlans.resolvePlanForVillage(v);
+          const assignment = troopPlans.getAssignment(v);
           return {
             villageId: v.id,
             name: v.name,
@@ -7248,99 +8008,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             coordsText: v.coordsText,
             isCapital: Boolean(v.isCapital),
             underAttack: Boolean(v.underAttack),
-            progressKey,
-            hasCustom: troopVillagePreferences.hasCustomTroopSettings(v),
-            roundRobinEnabled: troopVillagePreferences.resolveRoundRobinEnabled(v, false),
-            loopMinMinutes: loopInterval.min,
-            loopMaxMinutes: loopInterval.max,
-            loopUsesGlobalDefault: loopInterval.usesGlobalDefault,
-            nextInMinutes: getVillageNextInMinutes(v),
-            config: buildTroopSettingsPayload(merged, {})
+            plan: assignment ? assignment.plan : null,
+            enabled: Boolean(plan),
+            planSummary: plan ? troopPlans.describePlan(plan) : null,
+            nextInMinutes: getVillageNextInMinutes(v)
           };
         })
       };
     };
 
-    const applyTroopSettingsPatch = async (patch) => {
-      if (patch && patch.villageId != null) {
-        const village = {
-          id: Number(patch.villageId),
-          x: patch.x,
-          y: patch.y,
-          name: patch.name
-        };
-        if (patch.resetToGlobal) {
-          troopVillagePreferences.clearVillagePreference(village);
-        } else {
-          troopVillagePreferences.setVillagePreference(village, patch);
-        }
-        syncTroopVillageLoopFromPatch(village, patch);
-        if (dashboardBridge) {
-          dashboardBridge.publishSnapshot();
-        }
-        return buildFullTroopDashboardPayload();
-      }
-
-      const keysToPersist = [];
-      if (patch && patch.mode !== undefined) {
-        settings.troopTemplateMode =
-          String(patch.mode).toLowerCase() === "defensive" ? "defensive" : "offensive";
-        keysToPersist.push("TROOP_TEMPLATE_MODE");
-      }
-      if (patch && patch.tribe !== undefined) {
-        settings.troopTribe = normalizeTroopTribeSetting(patch.tribe);
-        keysToPersist.push("TROOP_TRIBE");
-      }
-      if (patch && patch.batchSize !== undefined) {
-        settings.troopTrainingBatchSize = clampTroopTrainingBatchSizeStored(patch.batchSize);
-        keysToPersist.push("TROOP_TRAINING_BATCH_SIZE");
-      }
-      if (
-        patch &&
-        (patch.troopLoopEnabled !== undefined ||
-          patch.troopLoopMinMinutes !== undefined ||
-          patch.troopLoopMaxMinutes !== undefined) &&
-        runtimeControls.updateTroopTrainingLoopConfig
-      ) {
-        const applied = await runtimeControls.updateTroopTrainingLoopConfig({
-          enabled:
-            patch.troopLoopEnabled !== undefined
-              ? Boolean(patch.troopLoopEnabled)
-              : settings.troopTrainingRoundRobinEnabled,
-          minMinutes:
-            patch.troopLoopMinMinutes !== undefined
-              ? Number(patch.troopLoopMinMinutes)
-              : settings.troopTrainingLoopMinMinutes,
-          maxMinutes:
-            patch.troopLoopMaxMinutes !== undefined
-              ? Number(patch.troopLoopMaxMinutes)
-              : settings.troopTrainingLoopMaxMinutes
-        });
-        settings.troopTrainingRoundRobinEnabled = applied.enabled;
-        settings.troopTrainingLoopMinMinutes = applied.minMinutes;
-        settings.troopTrainingLoopMaxMinutes = applied.maxMinutes;
-        scheduleTroopTrainingLoop();
-      }
-      const listMap = [
-        ["infantryOffensive", "troopTemplateInfantryOffensive", "TROOP_TEMPLATE_INFANTRY_OFFENSIVE"],
-        ["infantryDefensive", "troopTemplateInfantryDefensive", "TROOP_TEMPLATE_INFANTRY_DEFENSIVE"],
-        ["cavalryOffensive", "troopTemplateCavalryOffensive", "TROOP_TEMPLATE_CAVALRY_OFFENSIVE"],
-        ["cavalryDefensive", "troopTemplateCavalryDefensive", "TROOP_TEMPLATE_CAVALRY_DEFENSIVE"]
-      ];
-      for (const [patchKey, settingKey, envKey] of listMap) {
-        if (patch && patch[patchKey] !== undefined) {
-          settings[settingKey] = String(patch[patchKey] || "").trim();
-          keysToPersist.push(envKey);
-        }
-      }
-      if (keysToPersist.length && runtimeControls.persistSettings) {
-        await runtimeControls.persistSettings(keysToPersist);
-      }
-      if (dashboardBridge) {
-        dashboardBridge.publishSnapshot();
-      }
-      return buildFullTroopDashboardPayload();
-    };
+    // Troop plans are managed from the terminal; the web updater is a read-only no-op.
+    const applyTroopSettingsPatch = async () => buildFullTroopDashboardPayload();
 
     let cachedDashboardSnapshot = null;
     let cachedDashboardSnapshotKey = "";
@@ -7417,7 +8095,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         maxMinutes: settings.builderLoopMaxMinutes,
         nextInMinutes: builderNextInMinutes,
         roundRobinProgress: settings.builderRoundRobinEnabled
-          ? getRoundRobinProgress(villageState.villages, activeBuilderPlanMode)
+          ? builderRrUsesResourceThenVillagePipeline()
+            ? getRoundRobinPipelineProgress(villageState.villages)
+            : getRoundRobinProgress(villageState.villages, activeBuilderPlanMode)
           : null
       };
       const troopLoopStatus = {
@@ -7453,6 +8133,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const snapshot = {
         updatedAt: new Date().toISOString(),
+        starting: !villageState.lastRefreshIso,
+        loadingVillages: !villageState.lastRefreshIso,
         account: {
           username: account.username || null,
           browserMode: account.browserMode || (settings.headless ? "headless" : "headed"),
@@ -7464,6 +8146,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         },
         automation: automationStatus,
         sessionLoop: sessionLoopStatus,
+        browserRefresh: runtimeControls.getBrowserRefreshStatus
+          ? runtimeControls.getBrowserRefreshStatus()
+          : null,
         loops: {
           farmlist: farmlistLoopStatus,
           builder: builderLoopStatus,
@@ -7475,6 +8160,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         display: {
           compactView: Boolean(settings.dashboardCompactView)
         },
+        proxy: runtimeControls.getProxySettings
+          ? runtimeControls.getProxySettings()
+          : buildProxySettingsPayload(settings),
         villages: snapshotVillageList(),
         selectedVillageId: villageState.selectedVillageId,
         activeVillageId: villageState.activeVillageId,
@@ -7499,6 +8187,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       dashboardBridge.setActivitySettingsProvider(() => buildActivitySimulationPayload());
       dashboardBridge.setActivitySettingsUpdater(applyActivitySettingsPatch);
       dashboardBridge.setDisplaySettingsUpdater(applyDisplaySettingsPatch);
+      if (runtimeControls.getProxySettings) {
+        dashboardBridge.setProxySettingsProvider(() => runtimeControls.getProxySettings());
+      }
+      if (runtimeControls.updateProxySettings) {
+        dashboardBridge.setProxySettingsUpdater((patch) => runtimeControls.updateProxySettings(patch));
+      }
     }
 
     const printInteractiveMenu = () => {
@@ -7521,7 +8215,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           ? Math.max(0, Math.ceil((nextBuilderRunAt - Date.now()) / 60000))
           : null,
         roundRobinProgress: settings.builderRoundRobinEnabled
-          ? getRoundRobinProgress(villageState.villages, activeBuilderPlanMode)
+          ? builderRrUsesResourceThenVillagePipeline()
+            ? getRoundRobinPipelineProgress(villageState.villages)
+            : getRoundRobinProgress(villageState.villages, activeBuilderPlanMode)
           : null
       };
       const troopLoopStatus = {
@@ -7547,9 +8243,31 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     if (dashboardBridge) {
       dashboardBridge.setSnapshotProvider(buildDashboardSnapshot);
+      dashboardBridge.publishSnapshot({ force: true });
       const compactNote = settings.dashboardCompactView ? " compact UI" : "";
-      logInfo(`[Dashboard] Web UI${compactNote} — open http://127.0.0.1:${dashboardPort}`);
+      logInfo(
+        `[Dashboard] Web UI${compactNote} — open http://127.0.0.1:${dashboardPort} (loading villages…)`
+      );
     }
+
+    const finishStartup = async () => {
+      try {
+        await refreshVillageState({ navigateToStatusPage: true, silent: false });
+      } catch (error) {
+        logWarn(`[Village] Failed to load village list: ${error.message || error}`);
+      }
+      scheduleFarmlistLoop();
+      scheduleBuilderLoop();
+      scheduleTroopTrainingLoop();
+      scheduleCrannyDefenseLoop();
+      scheduleActivitySimulationLoop();
+      scheduleRaidEvacuationLoop();
+      if (dashboardBridge) {
+        dashboardBridge.publishSnapshot({ force: true });
+        logInfo(`[Dashboard] Villages loaded — web UI ready`);
+      }
+    };
+    void finishStartup();
 
     let menuNeedsFullRefresh = true;
     let deferMenuFullRefresh = false;
@@ -7640,20 +8358,25 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const startedAt = Date.now();
         await runAction("Send Farmlists", async () => {
           logInfo("Running: Send Farmlists...");
-          await runWithRandomDelay(
+          const sendResult = await runWithRandomDelay(
             settings,
             "Send Farmlists",
             () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
             () => cancelRequested
           );
-          logSuccess("Send Farmlists completed.");
+          if (sendResult && sendResult.status === "idle") {
+            logInfo(String(sendResult.message || "No farmlists ready to send.").replace(/^\[Farmlist\]\s*/, ""));
+          } else {
+            logSuccess("Send Farmlists completed.");
+          }
           await printSelectedVillageStatus("Farmlists");
           recordAction({
             actionType: "farmlist.send",
-            status: "success",
+            status: sendResult && sendResult.status === "idle" ? "info" : "success",
             durationMs: Date.now() - startedAt,
             details: {
               source: "manual",
+              idle: Boolean(sendResult && sendResult.status === "idle"),
               ...getVillageMeta("all")
             }
           });
@@ -8016,50 +8739,43 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             logWarn("No village selected. Use V to select a village first.");
             return;
           }
-          const effectiveSettings = troopVillagePreferences.resolveSettings(settings, selectedVillage);
-          const tplMode = normalizeTroopTemplateMode(effectiveSettings.troopTemplateMode);
-          const steps = [
-            {
-              label: "Barracks (infantry)",
-              opts: {
-                mapVariant: "barracks",
-                templateStrategyMode: tplMode,
-                templateBranch: "infantry"
-              }
-            },
-            {
-              label: "Stable (cavalry)",
-              opts: {
-                mapVariant: "stable",
-                trainerUrl: settings.troopStableTrainerUrl,
-                templateStrategyMode: tplMode,
-                templateBranch: "cavalry"
-              }
-            }
-          ];
-          logInfo("Running: Troop Trainer (infantry + cavalry)...");
+          const plan = troopPlans.resolvePlanForVillage(selectedVillage);
+          if (!plan) {
+            logWarn(
+              `No troop plan assigned to ${villageDisplayName(selectedVillage)}. Assign one in Troop Plans (menu T → V).`
+            );
+            return;
+          }
+          const branches = troopPlans.planBranches(plan);
+          if (!branches.length) {
+            logWarn(`Plan "${plan.name}" has no units set. Edit it in Troop Plans (menu T).`);
+            return;
+          }
+          logInfo(`Running: Troop Trainer — plan "${plan.name}" (${troopPlans.describePlan(plan)}).`);
           await ensureVillageBrowserContext(selectedVillage, "Troop Trainer");
-          let lastResult = null;
-          for (const step of steps) {
-            logInfo(`  → ${step.label}`);
-            lastResult = await runWithRandomDelay(
+          const outcomes = [];
+          for (const branch of branches) {
+            if (cancelRequested) {
+              break;
+            }
+            const result = await runWithRandomDelay(
               settings,
               "Troop Trainer",
-              () => trainTroopsInBarracks(getPage, settings, selectedVillage.id, { ...step.opts, village: selectedVillage }),
+              () => trainPlanBranch(getPage, settings, selectedVillage.id, branch),
               () => cancelRequested
             );
+            outcomes.push(result);
+            logTroopBranchOutcome(selectedVillage, result);
           }
-          const result = lastResult;
+          const trained = outcomes.filter((o) => o && o.status === "trained");
           recordAction({
             actionType: "troop.train",
-            status: "success",
+            status: trained.length ? "success" : "info",
             durationMs: Date.now() - startedAt,
             details: {
-              templateMode: tplMode,
-              preset: result && result.preset ? result.preset : settings.troopTrainingPreset,
-              queued: result && Number.isFinite(result.queued) ? result.queued : 0,
-              troop: result && result.preset ? result.preset : settings.troopTrainingPreset,
-              trainerBuilding: result && result.trainerBuilding ? result.trainerBuilding : null,
+              source: "manual",
+              plan: plan.name,
+              trained: trained.map((o) => ({ unit: o.unitName, qty: o.queued, building: o.building })),
               ...getVillageMeta("single")
             }
           });
@@ -8070,8 +8786,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             status: "failed",
             durationMs: Date.now() - startedAt,
             details: {
-              templateMode: normalizeTroopTemplateMode(settings.troopTemplateMode),
-              preset: settings.troopTrainingPreset,
+              source: "manual",
               ...getVillageMeta("single")
             },
             errorMessage: message
@@ -8367,6 +9082,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
+      if (input === "Y") {
+        await runProxySettingsMenu(menuRl, settings, runtimeControls);
+        if (menuSession.quitRequested) {
+          done = true;
+        }
+        continue;
+      }
+
       if (input === "V") {
         await runVillageSelectorMenu().catch((error) => {
           logError(`Village selector failed: ${error.message || error}`);
@@ -8404,6 +9127,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         await runSettingsMenu(menuRl, settings, {
           ...runtimeControls,
           menuSession,
+          troopPlanHooks,
           refreshSideInfoVillages: async () =>
             refreshVillageState({ navigateToStatusPage: true, silent: true }),
           getRaidPivotVillageUiState: () => ({

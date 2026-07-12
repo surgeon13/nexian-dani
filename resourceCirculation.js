@@ -1,4 +1,8 @@
 const villageBuilder = require("./villageBuilder");
+const {
+  isResourceExhaustionError,
+  safeGotoWithRetry: sharedSafeGotoWithRetry
+} = require("./browserNavigation");
 
 const DEFAULT_WAIT_MINUTES = 5;
 const MARKETPLACE_EXCLUSIVE_RETRY_MS = 2500;
@@ -51,17 +55,8 @@ function withVillageId(url, villageId) {
   }
 }
 
-async function safeGotoWithRetry(page, url, options = {}, retries = 2) {
-  let lastErr = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      await page.goto(url, options);
-      return true;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new Error("Navigation failed.");
+async function safeGotoWithRetry(page, url, options = {}, retries = 3) {
+  return sharedSafeGotoWithRetry(page, url, options, retries);
 }
 
 async function safePageWait(page, ms) {
@@ -305,7 +300,14 @@ function buildMarketSendUrlCandidates(marketUrl, donorVillageId) {
 async function openMarketSendTab(page, marketUrl, donorVillageId) {
   const urls = buildMarketSendUrlCandidates(marketUrl, donorVillageId);
   for (const url of urls) {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    try {
+      await safeGotoWithRetry(page, url, { waitUntil: "domcontentloaded", timeout: 60000 }, 4);
+    } catch (error) {
+      if (isResourceExhaustionError(error)) {
+        throw error;
+      }
+      continue;
+    }
     const ok = await page.evaluate(() => {
       return Array.from(document.forms || []).some((form) => {
         const hasR = Boolean(

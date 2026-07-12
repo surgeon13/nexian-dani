@@ -17,6 +17,8 @@ pnpm-debug.log*
 # Local builder state
 templates/progress.json
 templates/troop_village_preferences.json
+templates/troop_plans.json
+templates/proxy_list.json
 
 # OS / editor noise
 .DS_Store

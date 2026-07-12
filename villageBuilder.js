@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { safeGotoWithRetry } = require("./browserNavigation");
 
 const TEMPLATES_DIR = path.resolve(__dirname, "templates");
 const PROGRESS_FILE = path.resolve(TEMPLATES_DIR, "progress.json");
@@ -295,28 +296,6 @@ function buildVillageCenterUrl(baseUrl, villageId) {
     }
     return url;
   }
-}
-
-async function safeGotoWithRetry(page, url, options = {}, retries = 2) {
-  let lastError = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      await page.goto(url, options);
-      return true;
-    } catch (error) {
-      lastError = error;
-      const msg = String(error && error.message ? error.message : error);
-      const transient = /ERR_ABORTED|Execution context was destroyed|Navigation failed because page was closed/i.test(msg);
-      if (!transient || attempt >= retries) {
-        throw error;
-      }
-      await page.waitForTimeout(250 + attempt * 250).catch(() => {});
-    }
-  }
-  if (lastError) {
-    throw lastError;
-  }
-  return false;
 }
 
 async function readSlotPage(page, baseUrl, slotId, villageId) {

@@ -16,6 +16,8 @@ function createDashboardBridge() {
   let activitySettingsUpdater = null;
   let activitySettingsProvider = null;
   let displaySettingsUpdater = null;
+  let proxySettingsProvider = null;
+  let proxySettingsUpdater = null;
   let lastSnapshotJson = null;
   let lastSnapshotObj = null;
   let lastSnapshotAt = 0;
@@ -80,6 +82,29 @@ function createDashboardBridge() {
       throw new Error("Display settings are not available");
     }
     return displaySettingsUpdater(patch || {});
+  }
+
+  function setProxySettingsProvider(fn) {
+    proxySettingsProvider = typeof fn === "function" ? fn : null;
+  }
+
+  function setProxySettingsUpdater(fn) {
+    proxySettingsUpdater = typeof fn === "function" ? fn : null;
+  }
+
+  function getProxySettings() {
+    try {
+      return proxySettingsProvider ? proxySettingsProvider() : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function updateProxySettings(patch) {
+    if (!proxySettingsUpdater) {
+      throw new Error("Proxy settings are not available");
+    }
+    return proxySettingsUpdater(patch || {});
   }
 
   function publishEvent(type, data) {
@@ -328,6 +353,10 @@ function createDashboardBridge() {
     updateActivitySettings,
     setDisplaySettingsUpdater,
     updateDisplaySettings,
+    setProxySettingsProvider,
+    setProxySettingsUpdater,
+    getProxySettings,
+    updateProxySettings,
     ask,
     answerPrompt,
     clearPendingPrompt,

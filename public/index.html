@@ -56,11 +56,6 @@
       <p id="busy-note" class="busy-note hidden">Action in progress…</p>
     </section>
 
-    <section class="panel console-panel">
-      <h2>Live console</h2>
-      <div id="console-list" class="console-list"></div>
-    </section>
-
     <section class="panel logs-panel">
       <h2>Recent log</h2>
       <div id="log-list" class="log-list"></div>
@@ -140,6 +135,49 @@
           <button type="submit" class="primary-btn troop-rr-save">Save activity settings</button>
         </form>
       </div>
+
+      <div id="proxy-panel" class="troop-rr-panel proxy-panel">
+        <div class="troop-rr-head">
+          <h3 class="subsection-title">Proxy pool</h3>
+          <span id="proxy-pill" class="pill pill-paused">DIRECT</span>
+        </div>
+        <p class="hint proxy-hint">
+          Paste one proxy per line. Supported: <code>host:port:user:pass</code>,
+          <code>user:pass@host:port</code>, <code>http://user:pass@host:port</code>, <code>socks5://host:port</code>.
+          Saved to <code>templates/proxy_list.json</code>. Apply logs out and logs back in through the selected proxy.
+        </p>
+        <div class="troop-rr-stats">
+          <div class="troop-rr-stat">
+            <div class="troop-rr-stat-label">Active</div>
+            <div id="proxy-active-text" class="troop-rr-stat-value">—</div>
+          </div>
+          <div class="troop-rr-stat">
+            <div class="troop-rr-stat-label">Pool size</div>
+            <div id="proxy-count" class="troop-rr-stat-value">0</div>
+          </div>
+        </div>
+        <form id="proxy-form" class="troop-rr-form">
+          <label class="troop-field proxy-field-full">
+            <span>Proxy list (one per line)</span>
+            <textarea id="proxy-text" rows="6" spellcheck="false" placeholder="http://user:pass@1.2.3.4:8080&#10;5.6.7.8:3128:user2:pass2"></textarea>
+          </label>
+          <label class="troop-field">
+            <span>Bypass hosts</span>
+            <input id="proxy-bypass" type="text" placeholder="localhost,127.0.0.1" />
+          </label>
+          <label class="troop-field">
+            <span>Active #</span>
+            <input id="proxy-active-index" type="number" min="1" step="1" />
+          </label>
+          <div id="proxy-list-preview" class="proxy-list-preview"></div>
+          <div class="proxy-actions">
+            <button type="button" id="proxy-save-btn" class="secondary-btn">Save list</button>
+            <button type="submit" class="primary-btn troop-rr-save">Apply + relogin</button>
+            <button type="button" id="proxy-next-btn" class="secondary-btn">Next + relogin</button>
+            <button type="button" id="proxy-disable-btn" class="danger-btn">Disable direct</button>
+          </div>
+        </form>
+      </div>
     </section>
   </div>
 
@@ -187,14 +225,11 @@
         </form>
       </div>
       <p class="hint">
-        Use the <strong>Auto repeat</strong> toggle on each village to turn training on or off. Set min/max interval when on.
-        Unit settings are saved per village to <code>templates/troop_village_preferences.json</code>.
+        Troop plans are managed from the terminal (menu <strong>T</strong>): create plans (infantry/cavalry unit + qty + timer)
+        and assign each village to a plan. This tab is read-only. Plans are saved to <code>templates/troop_plans.json</code>.
       </p>
 
-      <details id="troop-global-section" class="troop-global-section">
-        <summary>Global defaults (.env)</summary>
-        <form id="troop-global-form" class="troop-form troop-form-global"></form>
-      </details>
+      <div id="troop-global-form" class="troop-form troop-form-global"></div>
 
       <h3 class="subsection-title">Villages</h3>
       <div id="troop-villages-empty" class="log-entry hidden">No villages loaded yet. Log in first.</div>
@@ -203,6 +238,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=1.5.12"></script>
+  <script src="/app.js?v=1.6.1"></script>
 </body>
 </html>

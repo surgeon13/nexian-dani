@@ -10,6 +10,15 @@ const {
   serializePatterns: serializeActivityPatterns
 } = require("./activitySimulation");
 const { startDashboardServer, getDashboardNetworkInfo } = require("./dashboardServer");
+const {
+  syncSettingsFromProxyStore,
+  getPlaywrightProxy,
+  formatProxyDisplay,
+  proxyEnvValues,
+  buildProxySettingsPayload,
+  applyProxyToSettings,
+  proxyPool
+} = require("./proxyConfig");
 
 function getArgValue(prefix) {
   const match = process.argv.find((arg) => arg.startsWith(prefix));
@@ -127,6 +136,7 @@ const actionLogFilePath = path.resolve(
   process.env.NEXIAN_ACTION_LOG_FILE || "log.jsonl"
 );
 const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+const STORAGE_STATE_PATH = path.resolve(process.cwd(), "storageState.json");
 
 const LOGIN_URL = process.env.NEXIAN_URL || "https://nexian.world/";
 const USERNAME = process.env.NEXIAN_USERNAME;
@@ -160,6 +170,30 @@ const dashboardOpenBrowser =
 const dashboardCompactView =
   String(process.env.DASHBOARD_COMPACT_VIEW || "false").toLowerCase() === "true";
 
+// Speed: block images/media/fonts so pages load faster and use less RAM. Selectors still work.
+const blockMedia =
+  String(process.env.BLOCK_MEDIA ?? "true").toLowerCase() !== "false";
+
+const BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font"]);
+
+async function applyContextSpeedups(context) {
+  if (!blockMedia || !context) {
+    return;
+  }
+  try {
+    await context.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      if (BLOCKED_RESOURCE_TYPES.has(type)) {
+        route.abort().catch(() => route.continue().catch(() => {}));
+      } else {
+        route.continue().catch(() => {});
+      }
+    });
+  } catch (_error) {
+    /* routing is best-effort; ignore if unsupported */
+  }
+}
+
 function numberEnv(name, fallback) {
   const parsed = Number(process.env[name]);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -180,33 +214,9 @@ const settings = {
   troopTrainerUrl:
     process.env.TROOP_TRAINER_URL ||
     gameUrl("/build.php?id=37"),
-  troopGreatTrainerUrl:
-    process.env.TROOP_GREAT_TRAINER_URL ||
-    gameUrl("/build.php?id=35"),
   troopStableTrainerUrl:
     process.env.TROOP_STABLE_TRAINER_URL ||
     gameUrl("/build.php?id=38"),
-  troopTrainingAlternateGreatBarracks:
-    String(process.env.TROOP_TRAINING_ALTERNATE_GREAT_BARRACKS || "false").toLowerCase() ===
-      "true",
-  troopTrainingPreset:
-    process.env.TROOP_TRAINING_PRESET ||
-    "Clubswinger",
-  troopTemplateMode:
-    String(process.env.TROOP_TEMPLATE_MODE || "offensive").toLowerCase() === "defensive"
-      ? "defensive"
-      : "offensive",
-  troopTribe: (() => {
-    const t = String(process.env.TROOP_TRIBE || "auto").trim().toLowerCase();
-    return ["auto", "teuton", "roman", "gaul"].includes(t) ? t : "auto";
-  })(),
-  troopTemplateOffensive: String(process.env.TROOP_TEMPLATE_OFFENSIVE ?? "").trim(),
-  troopTemplateDefensive: String(process.env.TROOP_TEMPLATE_DEFENSIVE ?? "").trim(),
-  troopTemplateInfantryOffensive: String(process.env.TROOP_TEMPLATE_INFANTRY_OFFENSIVE ?? "").trim(),
-  troopTemplateInfantryDefensive: String(process.env.TROOP_TEMPLATE_INFANTRY_DEFENSIVE ?? "").trim(),
-  troopTemplateCavalryOffensive: String(process.env.TROOP_TEMPLATE_CAVALRY_OFFENSIVE ?? "").trim(),
-  troopTemplateCavalryDefensive: String(process.env.TROOP_TEMPLATE_CAVALRY_DEFENSIVE ?? "").trim(),
-  troopTrainingBatchSize: numberEnv("TROOP_TRAINING_BATCH_SIZE", 5),
   villageStatusUrl:
     process.env.VILLAGE_STATUS_URL ||
     gameUrl("/village1.php"),
@@ -218,6 +228,7 @@ const settings = {
   playMaxMinutes: numberEnv("SESSION_PLAY_MAX_MINUTES", 120),
   restMinMinutes: numberEnv("SESSION_REST_MIN_MINUTES", 5),
   restMaxMinutes: numberEnv("SESSION_REST_MAX_MINUTES", 15),
+  browserRefreshHours: numberEnv("BROWSER_REFRESH_HOURS", 0),
   manualPauseAutoUnpauseMinutes: numberEnv("MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES", 0),
   logoutUrl:
     process.env.LOGOUT_URL ||
@@ -244,6 +255,15 @@ const settings = {
   raidEvacuationReservePerResource: numberEnv("RAID_EVACUATION_RESERVE_PER_RESOURCE", 300),
   raidEvacuationMerchantCapacityFallback: numberEnv("RAID_EVACUATION_MERCHANT_CAPACITY_FALLBACK", 1000),
   raidEvacuationPivotVillageIds: String(process.env.RAID_EVACUATION_PIVOT_VILLAGE_IDS || "").trim(),
+  raidEvacuationPollSeconds: numberEnv("RAID_EVACUATION_POLL_SECONDS", 30),
+  villageSwitchDelayMs: (() => {
+    const raw = process.env.VILLAGE_SWITCH_DELAY_MS;
+    if (raw === undefined || String(raw).trim() === "") {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : null;
+  })(),
   statusAfterFarmlistsEnabled:
     String(process.env.STATUS_AFTER_FARMLISTS_ENABLED || "true").toLowerCase() === "true",
   statusAfterFarmlistsCooldownMinutes: numberEnv("STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES", 15),
@@ -260,6 +280,16 @@ const settings = {
       .trim()
       .toLowerCase();
     return raw === "village" ? "village" : "resource";
+  })(),
+  builderRrResourceThenVillage: (() => {
+    const raw = process.env.BUILDER_RR_RESOURCE_THEN_VILLAGE;
+    if (raw !== undefined && String(raw).trim() !== "") {
+      return String(raw).toLowerCase() === "true";
+    }
+    const defaultPlan = String(process.env.BUILDER_DEFAULT_PLAN_MODE || "resource")
+      .trim()
+      .toLowerCase();
+    return defaultPlan !== "village";
   })(),
   troopTrainingRoundRobinEnabled:
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
@@ -293,8 +323,12 @@ const settings = {
   resourceCirculationMaxDonors: numberEnv("RESOURCE_CIRCULATION_MAX_DONORS", 3),
   resourceCirculationBuilderMaxDonors: numberEnv("RESOURCE_CIRCULATION_BUILDER_MAX_DONORS", 1),
   resourceCirculationBuilderMerchantLoads: numberEnv("RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS", 4),
-  resourceCirculationReservePerResource: numberEnv("RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE", 500)
+  resourceCirculationReservePerResource: numberEnv("RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE", 500),
+  proxyRotateOnSessionRest:
+    String(process.env.PROXY_ROTATE_ON_SESSION_REST ?? "true").toLowerCase() !== "false"
 };
+
+syncSettingsFromProxyStore(settings);
 
 function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
   let min = Number.isFinite(minValue) ? minValue : fallbackMin;
@@ -368,27 +402,9 @@ function persistRuntimeSettings(selectedKeys) {
     SESSION_PLAY_MAX_MINUTES: String(settings.playMaxMinutes),
     SESSION_REST_MIN_MINUTES: String(settings.restMinMinutes),
     SESSION_REST_MAX_MINUTES: String(settings.restMaxMinutes),
+    BROWSER_REFRESH_HOURS: String(settings.browserRefreshHours || 0),
     MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES: String(settings.manualPauseAutoUnpauseMinutes),
-    TROOP_TRAINING_PRESET: String(settings.troopTrainingPreset),
-    TROOP_TRIBE: (() => {
-      const t = String(settings.troopTribe || "auto").trim().toLowerCase();
-      return ["auto", "teuton", "roman", "gaul"].includes(t) ? t : "auto";
-    })(),
-    TROOP_TEMPLATE_MODE: String(settings.troopTemplateMode || "offensive"),
-    TROOP_TEMPLATE_OFFENSIVE: String(settings.troopTemplateOffensive || ""),
-    TROOP_TEMPLATE_DEFENSIVE: String(settings.troopTemplateDefensive || ""),
-    TROOP_TEMPLATE_INFANTRY_OFFENSIVE: String(settings.troopTemplateInfantryOffensive || ""),
-    TROOP_TEMPLATE_INFANTRY_DEFENSIVE: String(settings.troopTemplateInfantryDefensive || ""),
-    TROOP_TEMPLATE_CAVALRY_OFFENSIVE: String(settings.troopTemplateCavalryOffensive || ""),
-    TROOP_TEMPLATE_CAVALRY_DEFENSIVE: String(settings.troopTemplateCavalryDefensive || ""),
     TROOP_STABLE_TRAINER_URL: String(settings.troopStableTrainerUrl || ""),
-    TROOP_TRAINING_BATCH_SIZE: (() => {
-      const n = Math.floor(Number(settings.troopTrainingBatchSize));
-      if (!Number.isFinite(n)) {
-        return "5";
-      }
-      return String(Math.max(1, Math.min(n, 999999)));
-    })(),
     BUILDER_GOLD_COMPLETE_ENABLED: settings.builderGoldCompleteEnabled ? "true" : "false",
     BUILDER_GOLD_COMPLETE_MAX: String(settings.builderGoldCompleteMax),
     BUILDER_MASTER_BUILDER_ENABLED: settings.builderMasterBuilderEnabled ? "true" : "false",
@@ -399,6 +415,9 @@ function persistRuntimeSettings(selectedKeys) {
     RAID_EVACUATION_RESERVE_PER_RESOURCE: String(settings.raidEvacuationReservePerResource),
     RAID_EVACUATION_MERCHANT_CAPACITY_FALLBACK: String(settings.raidEvacuationMerchantCapacityFallback),
     RAID_EVACUATION_PIVOT_VILLAGE_IDS: String(settings.raidEvacuationPivotVillageIds || ""),
+    RAID_EVACUATION_POLL_SECONDS: String(settings.raidEvacuationPollSeconds || 30),
+    VILLAGE_SWITCH_DELAY_MS:
+      settings.villageSwitchDelayMs == null ? "" : String(settings.villageSwitchDelayMs),
     STATUS_AFTER_FARMLISTS_ENABLED: settings.statusAfterFarmlistsEnabled ? "true" : "false",
     STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES: String(settings.statusAfterFarmlistsCooldownMinutes),
     BUILDER_LOOP_ENABLED: settings.builderLoopEnabled ? "true" : "false",
@@ -407,6 +426,7 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_ROUND_ROBIN_ENABLED: settings.builderRoundRobinEnabled ? "true" : "false",
     BUILDER_RR_EXCLUDED_VILLAGE_IDS: String(settings.builderRoundRobinExcludedVillageIds || ""),
     BUILDER_DEFAULT_PLAN_MODE: settings.builderDefaultPlanMode === "village" ? "village" : "resource",
+    BUILDER_RR_RESOURCE_THEN_VILLAGE: settings.builderRrResourceThenVillage ? "true" : "false",
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),
@@ -429,7 +449,8 @@ function persistRuntimeSettings(selectedKeys) {
     RESOURCE_CIRCULATION_MAX_DONORS: String(settings.resourceCirculationMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MAX_DONORS: String(settings.resourceCirculationBuilderMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS: String(settings.resourceCirculationBuilderMerchantLoads),
-    RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE: String(settings.resourceCirculationReservePerResource)
+    RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE: String(settings.resourceCirculationReservePerResource),
+    ...proxyEnvValues(settings)
   };
 
   if (!selectedKeys || !selectedKeys.length) {
@@ -584,7 +605,6 @@ function syncSettingsGameHostFromPage(page, settings) {
     "farmlistUrl",
     "villageBuilderUrl",
     "troopTrainerUrl",
-    "troopGreatTrainerUrl",
     "troopStableTrainerUrl",
     "villageStatusUrl",
     "logoutUrl"
@@ -605,8 +625,8 @@ async function openNexianPortalLoginForm(page) {
 
   const playNow = page.getByRole("link", { name: /Play Now/i });
   if (await playNow.count()) {
-    await playNow.first().click({ timeout: 15000 }).catch(() => null);
-    await page.waitForTimeout(1000);
+    await playNow.first().click({ timeout: 10000 }).catch(() => null);
+    await page.waitForTimeout(400);
   }
 
   await page.evaluate(() => {
@@ -656,9 +676,78 @@ async function waitForGameLogin(page, options = {}) {
   return false;
 }
 
+async function ensureLoggedInAtVillagePage(page, options = {}) {
+  if (await isLoggedIntoGame(page)) {
+    return true;
+  }
+
+  if (isGameRealmHost(page.url())) {
+    const origin = new URL(page.url()).origin;
+    const targets = [
+      settings.villageStatusUrl,
+      `${origin}/dorf1.php`,
+      `${origin}/village1.php`
+    ].filter(Boolean);
+    for (const target of targets) {
+      if (await isLoggedIntoGame(page)) {
+        return true;
+      }
+      await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+    }
+    if (await isLoggedIntoGame(page)) {
+      return true;
+    }
+  }
+
+  return waitForGameLogin(page, {
+    timeoutMs: options.timeoutMs ?? 15000,
+    pollMs: options.pollMs ?? 250
+  });
+}
+
+async function finalizeSuccessfulLogin(page, context, label = "Login OK") {
+  console.log(`  ${label}`);
+  const gameOrigin = syncSettingsGameHostFromPage(page, settings);
+  if (gameOrigin) {
+    console.log(`  Game host: ${gameOrigin}`);
+  }
+  await context.storageState({ path: STORAGE_STATE_PATH });
+  console.log("  Session saved");
+}
+
+async function tryOpenStoredSession(browser, effectiveHeadless) {
+  if (!fs.existsSync(STORAGE_STATE_PATH)) {
+    return null;
+  }
+
+  let context = null;
+  try {
+    console.log("  Restoring saved session...");
+    context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
+    await applyContextSpeedups(context);
+    const page = await context.newPage();
+    const startUrl = settings.villageStatusUrl || `${GAME_HOST}/dorf1.php`;
+    await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+    if (/shownew|show_news/i.test(String(page.url() || ""))) {
+      await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+    }
+    if (!(await ensureLoggedInAtVillagePage(page, { timeoutMs: 12000 }))) {
+      await context.close().catch(() => null);
+      return null;
+    }
+    await finalizeSuccessfulLogin(page, context, "Login OK (saved session)");
+    return { browser, context, page, headless: effectiveHeadless };
+  } catch (_error) {
+    if (context) {
+      await context.close().catch(() => null);
+    }
+    return null;
+  }
+}
+
 async function submitPortalLogin(page) {
   const enterRealm = page.getByRole("button", { name: /Enter Realm/i });
-  await enterRealm.waitFor({ state: "visible", timeout: 30000 });
+  await enterRealm.waitFor({ state: "visible", timeout: 20000 });
 
   const navigationPromise = page
     .waitForURL(
@@ -673,15 +762,18 @@ async function submitPortalLogin(page) {
           return false;
         }
       },
-      { timeout: 90000, waitUntil: "domcontentloaded" }
+      { timeout: 45000, waitUntil: "domcontentloaded" }
     )
     .catch(() => null);
 
-  // Playwright's click waits for navigation to finish; portal redirects can exceed 15s
-  // or never reach networkidle, so submit via DOM click and poll separately.
   await enterRealm.evaluate((button) => button.click());
   await navigationPromise;
-  return waitForGameLogin(page, { timeoutMs: 30000 });
+  if (!(await ensureLoggedInAtVillagePage(page))) {
+    throw new Error(
+      `Login did not reach the game after Enter Realm (still at ${page.url()}).`
+    );
+  }
+  return true;
 }
 
 async function submitLegacyLogin(page) {
@@ -709,7 +801,12 @@ async function submitLegacyLogin(page) {
 
   await submit.evaluate((el) => el.click());
   await navigationPromise;
-  return waitForGameLogin(page, { timeoutMs: 30000 });
+  if (!(await ensureLoggedInAtVillagePage(page))) {
+    throw new Error(
+      `Login did not reach the game after submit (still at ${page.url()}).`
+    );
+  }
+  return true;
 }
 
 async function isLoggedIntoGame(page) {
@@ -768,13 +865,7 @@ async function loginToPage(page, context) {
   }
 
   if (await isLoggedIntoGame(page)) {
-    console.log("  Login OK");
-    const gameOrigin = syncSettingsGameHostFromPage(page, settings);
-    if (gameOrigin) {
-      console.log(`  Game host: ${gameOrigin}`);
-    }
-    await context.storageState({ path: "storageState.json" });
-    console.log("  Session saved");
+    await finalizeSuccessfulLogin(page, context);
   } else {
     const stuckUrl = page.url();
     throw new Error(
@@ -787,26 +878,35 @@ async function createSession(headless) {
   let effectiveHeadless = headless;
   let browser;
   let browserLabel = headless ? "headless" : "headed";
-  const launchArgs = ["--disable-dev-shm-usage"];
+  const launchArgs = [
+    "--disable-dev-shm-usage",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--mute-audio"
+  ];
 
   const launchChromium = (options) => chromium.launch({ args: launchArgs, ...options });
+  const playwrightProxy = getPlaywrightProxy(settings);
+  const proxyLaunchOptions = playwrightProxy ? { proxy: playwrightProxy } : {};
 
   if (!effectiveHeadless) {
-    browser = await launchChromium({ headless: false });
+    browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
   } else {
     try {
-      browser = await launchChromium({ headless: true });
+      browser = await launchChromium({ headless: true, ...proxyLaunchOptions });
     } catch (error) {
       if (!isHeadlessLaunchError(error)) {
         throw error;
       }
 
       try {
-        browser = await launchChromium({ channel: "chrome", headless: true });
+        browser = await launchChromium({ channel: "chrome", headless: true, ...proxyLaunchOptions });
         browserLabel = "headless (chrome channel)";
       } catch (chromeError) {
         effectiveHeadless = false;
-        browser = await launchChromium({ headless: false });
+        browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
         browserLabel = "headed (fallback)";
       }
     }
@@ -814,8 +914,15 @@ async function createSession(headless) {
 
   console.log(`\n  Env:     ${path.basename(resolvedEnvPath)}`);
   console.log(`  Browser: ${browserLabel}`);
+  console.log(`  Proxy:   ${formatProxyDisplay(settings)}`);
+
+  const restored = await tryOpenStoredSession(browser, effectiveHeadless);
+  if (restored) {
+    return restored;
+  }
 
   const context = await browser.newContext();
+  await applyContextSpeedups(context);
   const page = await context.newPage();
   await loginToPage(page, context);
   return { browser, context, page, headless: effectiveHeadless };
@@ -824,8 +931,8 @@ async function createSession(headless) {
 async function run() {
   applySessionLoopDefaults();
 
-  let session = await createSession(settings.headless);
-  settings.headless = session.headless;
+  let session;
+  let startupPhase = "login";
   let sessionLoopTimer = null;
   let nextSessionCycleAt = null;
   let loopStopped = false;
@@ -834,6 +941,9 @@ async function run() {
   let reloginInProgressPromise = null;
   let manualAutomationPaused = false;
   let manualAutomationPausedAtMs = null;
+  let browserRefreshTimer = null;
+  let nextBrowserRefreshAt = null;
+  let automationIdleWaiter = null;
   let dashboardServer = null;
   let dashboardBridge = null;
   let dashboardAccount = null;
@@ -880,6 +990,8 @@ async function run() {
         if (loopStopped) {
           return;
         }
+
+        prepareProxyForSessionRestRelogin();
 
         const nextSession = await createSession(settings.headless);
         session = nextSession;
@@ -944,6 +1056,77 @@ async function run() {
       enabled: settings.sessionLoopEnabled,
       nextInMinutes
     };
+  };
+
+  const cancelBrowserRefreshTimer = () => {
+    if (browserRefreshTimer) {
+      clearTimeout(browserRefreshTimer);
+      browserRefreshTimer = null;
+    }
+    nextBrowserRefreshAt = null;
+  };
+
+  const getBrowserRefreshStatus = () => {
+    const hours = Number(settings.browserRefreshHours) || 0;
+    if (hours <= 0) {
+      return { enabled: false, hours: 0, nextInMinutes: null };
+    }
+    return {
+      enabled: true,
+      hours,
+      nextInMinutes: nextBrowserRefreshAt
+        ? Math.max(0, Math.ceil((nextBrowserRefreshAt - Date.now()) / 60000))
+        : null
+    };
+  };
+
+  const scheduleBrowserRefresh = (delayMs = null) => {
+    cancelBrowserRefreshTimer();
+    const hours = Number(settings.browserRefreshHours) || 0;
+    if (hours <= 0 || loopStopped) {
+      return;
+    }
+
+    const waitMs =
+      Number.isFinite(Number(delayMs)) && Number(delayMs) > 0
+        ? Math.floor(Number(delayMs))
+        : hours * 60 * 60 * 1000;
+    nextBrowserRefreshAt = Date.now() + waitMs;
+    const label =
+      waitMs >= 60 * 60 * 1000
+        ? `${Math.round(waitMs / (60 * 60 * 1000))} hour(s)`
+        : `${Math.max(1, Math.round(waitMs / 60000))} minute(s)`;
+    console.log(`[Browser Refresh] Next Chromium restart in ${label}.`);
+
+    browserRefreshTimer = setTimeout(async () => {
+      browserRefreshTimer = null;
+      if (loopStopped || hours <= 0) {
+        return;
+      }
+
+      try {
+        console.log("[Browser Refresh] Uptime limit reached — restarting browser to free memory...");
+        if (typeof automationIdleWaiter === "function") {
+          const idle = await automationIdleWaiter("Browser refresh", { maxWaitMs: 300000 });
+          if (!idle) {
+            console.warn("[Browser Refresh] Session still busy — retrying in 15 minute(s).");
+            scheduleBrowserRefresh(15 * 60 * 1000);
+            return;
+          }
+        }
+        await reloginNow("browser_refresh");
+      } catch (error) {
+        console.warn(`[Browser Refresh] Failed: ${error.message || error}`);
+        scheduleBrowserRefresh(15 * 60 * 1000);
+        return;
+      }
+
+      scheduleBrowserRefresh();
+    }, waitMs);
+
+    if (typeof browserRefreshTimer.unref === "function") {
+      browserRefreshTimer.unref();
+    }
   };
 
   const getAutomationStatus = () => {
@@ -1039,6 +1222,136 @@ async function run() {
 
     return reloginInProgressPromise;
   };
+
+  const clearSessionForProxyChange = () => {
+    if (fs.existsSync(STORAGE_STATE_PATH)) {
+      fs.unlinkSync(STORAGE_STATE_PATH);
+      console.log("[Session] Cleared saved session for proxy change.");
+    }
+  };
+
+  /** After session-loop rest, rotate proxy (if pool has 2+) and fresh-login through it. */
+  const prepareProxyForSessionRestRelogin = () => {
+    const store = proxyPool.loadStore();
+    if (!store.proxies.length) {
+      clearSessionForProxyChange();
+      return null;
+    }
+
+    if (settings.proxyRotateOnSessionRest && store.proxies.length > 1) {
+      proxyPool.rotateActive(store);
+    }
+
+    proxyPool.applyActiveToSettings(settings, store);
+    proxyPool.saveStore(store);
+    persistRuntimeSettings([
+      "PROXY_SERVER",
+      "PROXY_USERNAME",
+      "PROXY_PASSWORD",
+      "PROXY_BYPASS"
+    ]);
+    clearSessionForProxyChange();
+    console.log(
+      `[Session Loop] Re-login proxy: ${formatProxyDisplay(settings, store)}` +
+        (settings.proxyRotateOnSessionRest && store.proxies.length > 1 ? " (rotated)" : "")
+    );
+    if (dashboardBridge) {
+      dashboardBridge.publishSnapshot({ force: true });
+    }
+    return store;
+  };
+
+  const updateProxySettings = async (patch = {}) => {
+    let store = proxyPool.loadStore();
+    const action = String(patch.action || (patch.apply ? "apply" : "save"))
+      .trim()
+      .toLowerCase();
+
+    if (patch.proxyText !== undefined) {
+      store.proxies = proxyPool.parseProxyListText(patch.proxyText);
+      store.activeIndex = 0;
+    }
+
+    if (Array.isArray(patch.proxies)) {
+      store.proxies = patch.proxies.map(proxyPool.normalizeProxyEntry).filter(Boolean);
+    }
+
+    if (patch.bypass !== undefined) {
+      store.bypass = String(patch.bypass || "").trim();
+    }
+
+    if (patch.activeIndex !== undefined && store.proxies.length) {
+      proxyPool.setActiveIndex(store, patch.activeIndex);
+    }
+
+    if (action === "next") {
+      proxyPool.rotateActive(store);
+    }
+
+    if (action === "disable") {
+      store.proxies = [];
+      store.activeIndex = 0;
+      applyProxyToSettings(settings, {
+        server: "",
+        username: "",
+        password: "",
+        bypass: store.bypass || settings.proxyBypass
+      });
+    } else if (store.proxies.length) {
+      proxyPool.applyActiveToSettings(settings, store);
+    } else if (
+      patch.server !== undefined ||
+      patch.username !== undefined ||
+      patch.password !== undefined
+    ) {
+      applyProxyToSettings(settings, {
+        server: patch.server !== undefined ? patch.server : settings.proxyServer,
+        username: patch.username !== undefined ? patch.username : settings.proxyUsername,
+        password: patch.password !== undefined ? patch.password : settings.proxyPassword,
+        bypass: patch.bypass !== undefined ? patch.bypass : store.bypass || settings.proxyBypass
+      });
+      store.proxies = settings.proxyServer
+        ? [
+            proxyPool.normalizeProxyEntry({
+              server: settings.proxyServer,
+              username: settings.proxyUsername,
+              password: settings.proxyPassword
+            })
+          ].filter(Boolean)
+        : [];
+      store.activeIndex = 0;
+    } else if (action !== "save") {
+      proxyPool.applyActiveToSettings(settings, store);
+    }
+
+    proxyPool.saveStore(store);
+    persistRuntimeSettings([
+      "PROXY_SERVER",
+      "PROXY_USERNAME",
+      "PROXY_PASSWORD",
+      "PROXY_BYPASS"
+    ]);
+
+    const shouldRelogin =
+      action === "apply" || action === "next" || action === "disable" || patch.relogin === true;
+    if (shouldRelogin) {
+      clearSessionForProxyChange();
+      console.log(`[Session] Proxy set to ${formatProxyDisplay(settings, store)} — re-login starting...`);
+      await reloginNow(`proxy_${action}`);
+      if (dashboardBridge) {
+        dashboardBridge.publishSnapshot({ force: true });
+      }
+    }
+
+    return buildProxySettingsPayload(settings);
+  };
+
+  const changeProxyAndRelogin = async (patch = {}, reason = "proxy_change") => {
+    await updateProxySettings({ ...patch, action: patch.action || "apply", relogin: true });
+    return { ok: true, reason };
+  };
+
+  const getProxySettings = () => buildProxySettingsPayload(settings);
 
   const updateFarmlistLoopConfig = async (nextConfig) => {
     settings.farmlistLoopEnabled = Boolean(nextConfig.enabled);
@@ -1197,11 +1510,31 @@ async function run() {
   };
 
   try {
-    scheduleNextSessionCycle();
-
     if (dashboardEnabled && keepOpen) {
       dashboardBridge = createDashboardBridge();
-      const dashboardNetwork = await getDashboardNetworkInfo(dashboardPort);
+      dashboardBridge.setSnapshotProvider(() => ({
+        updatedAt: new Date().toISOString(),
+        starting: startupPhase !== "ready",
+        phase: startupPhase,
+        account: {
+          username: USERNAME,
+          browserMode: settings.headless ? "headless" : "headed",
+          dashboardPort,
+          dashboardUrls: [`http://127.0.0.1:${dashboardPort}`]
+        },
+        automation: {
+          paused: true,
+          reason:
+            startupPhase === "login"
+              ? "logging_in"
+              : startupPhase === "menu"
+                ? "starting"
+                : "online"
+        }
+      }));
+      const dashboardNetwork = await getDashboardNetworkInfo(dashboardPort, "127.0.0.1", {
+        skipPublicFetch: true
+      });
       dashboardAccount = {
         username: USERNAME,
         browserMode: settings.headless ? "headless" : "headed",
@@ -1214,6 +1547,18 @@ async function run() {
         openBrowser: dashboardOpenBrowser
       });
       mirrorConsoleToDashboard(dashboardBridge);
+      console.log(`  Dashboard: http://127.0.0.1:${dashboardPort} (starting…)`);
+      getDashboardNetworkInfo(dashboardPort)
+        .then((fullNetwork) => {
+          if (dashboardAccount) {
+            dashboardAccount.publicAddress = fullNetwork.publicAddress;
+            dashboardAccount.dashboardUrls = fullNetwork.dashboardUrls;
+            if (dashboardBridge) {
+              dashboardBridge.publishSnapshot({ force: true });
+            }
+          }
+        })
+        .catch(() => null);
       if (dashboardNetwork.localAddresses.length) {
         console.log(
           `  Dashboard (LAN): ${dashboardNetwork.localAddresses.map((ip) => `http://${ip}:${dashboardPort}`).join(", ")}`
@@ -1222,6 +1567,16 @@ async function run() {
     } else if (dashboardEnabled && !keepOpen) {
       console.warn("Dashboard requires --keep-open; ignoring --dashboard.");
     }
+
+    session = await createSession(settings.headless);
+    settings.headless = session.headless;
+    startupPhase = "menu";
+    if (dashboardBridge) {
+      dashboardBridge.publishSnapshot({ force: true });
+    }
+
+    scheduleNextSessionCycle();
+    scheduleBrowserRefresh();
 
     if (keepOpen) {
       await runTerminalMenu(
@@ -1237,9 +1592,17 @@ async function run() {
           getSessionId: () => sessionId,
           getLogFilePath: () => actionLogFilePath,
           getSessionLoopStatus,
+          getBrowserRefreshStatus,
           getAutomationStatus,
           setAutomationPaused,
           reloginNow,
+          changeProxyAndRelogin,
+          updateProxySettings,
+          getProxySettings,
+          getProxyDisplay: () => formatProxyDisplay(settings, proxyPool.loadStore()),
+          registerAutomationIdleWaiter: (fn) => {
+            automationIdleWaiter = typeof fn === "function" ? fn : null;
+          },
           updateSessionLoopConfig,
           updateFarmlistLoopConfig,
           updateBuilderLoopConfig,
@@ -1271,6 +1634,7 @@ async function run() {
   } finally {
     loopStopped = true;
     cancelSessionLoopTimer();
+    cancelBrowserRefreshTimer();
     if (dashboardServer) {
       try {
         if (typeof dashboardServer.closeAllConnections === "function") {
@@ -1284,7 +1648,9 @@ async function run() {
       }
       dashboardServer = null;
     }
-    await session.browser.close();
+    if (session && session.browser) {
+      await session.browser.close();
+    }
   }
 }
 

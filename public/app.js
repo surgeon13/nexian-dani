@@ -25,7 +25,6 @@ const els = {
   actionGrid: document.getElementById("action-grid"),
   busyNote: document.getElementById("busy-note"),
   villageList: document.getElementById("village-list"),
-  consoleList: document.getElementById("console-list"),
   logList: document.getElementById("log-list"),
   troopGlobalForm: document.getElementById("troop-global-form"),
   troopRrPanel: document.getElementById("troop-rr-panel"),
@@ -50,6 +49,17 @@ const els = {
   activityMin: document.getElementById("activity-min"),
   activityMax: document.getElementById("activity-max"),
   activityPatterns: document.getElementById("activity-patterns"),
+  proxyPill: document.getElementById("proxy-pill"),
+  proxyActiveText: document.getElementById("proxy-active-text"),
+  proxyCount: document.getElementById("proxy-count"),
+  proxyForm: document.getElementById("proxy-form"),
+  proxyText: document.getElementById("proxy-text"),
+  proxyBypass: document.getElementById("proxy-bypass"),
+  proxyActiveIndex: document.getElementById("proxy-active-index"),
+  proxyListPreview: document.getElementById("proxy-list-preview"),
+  proxySaveBtn: document.getElementById("proxy-save-btn"),
+  proxyNextBtn: document.getElementById("proxy-next-btn"),
+  proxyDisableBtn: document.getElementById("proxy-disable-btn"),
   displayCompact: document.getElementById("display-compact"),
   displayModeBadge: document.getElementById("display-mode-badge"),
   villagePicker: document.getElementById("village-picker"),
@@ -181,11 +191,13 @@ function formatIpList(account) {
   return parts.join(" · ");
 }
 
-function renderAccountStrip(account) {
+function renderAccountStrip(account, proxy) {
   if (!account) {
     els.accountStrip.innerHTML = "";
     return;
   }
+
+  const proxyLabel = proxy && proxy.activeDisplay ? proxy.activeDisplay : "direct (none)";
 
   if (isCompactView()) {
     const user = account.username || "—";
@@ -193,7 +205,7 @@ function renderAccountStrip(account) {
     const browser = account.browserMode === "Headless" ? "headless" : "headed";
     els.accountStrip.innerHTML = `
     <div class="account-item account-compact-line">
-      <div class="account-value">${escapeHtml(user)} · ${escapeHtml(server)} · ${escapeHtml(browser)}</div>
+      <div class="account-value">${escapeHtml(user)} · ${escapeHtml(server)} · ${escapeHtml(browser)} · ${escapeHtml(proxyLabel)}</div>
     </div>`;
     return;
   }
@@ -202,7 +214,8 @@ function renderAccountStrip(account) {
     { label: "Username", value: account.username || "—" },
     { label: "IP address", value: formatIpList(account) },
     { label: "Game server", value: account.gameHost || "—" },
-    { label: "Browser", value: account.browserMode || "—" }
+    { label: "Browser", value: account.browserMode || "—" },
+    { label: "Proxy", value: proxyLabel }
   ];
 
   els.accountStrip.innerHTML = items
@@ -245,11 +258,27 @@ function renderStatusNow(status) {
     lastActionRenderKey = "";
   }
 
+  const starting = Boolean(status.starting);
   const paused = Boolean(status.automation && status.automation.paused);
-  els.automationPill.textContent = paused ? "PAUSED" : "RUNNING";
-  els.automationPill.className = `pill ${paused ? "pill-paused" : "pill-running"}`;
+  let pillText = "RUNNING";
+  let pillClass = "pill-running";
+  if (starting) {
+    const phase = status.phase || (status.loadingVillages ? "starting" : "");
+    pillText =
+      phase === "logging_in" ? "LOGGING IN" : phase === "menu" || status.loadingVillages ? "LOADING" : "STARTING";
+    pillClass = "pill-paused";
+  } else if (paused) {
+    pillText = "PAUSED";
+    pillClass = "pill-paused";
+  }
+  els.automationPill.textContent = pillText;
+  els.automationPill.className = `pill ${pillClass}`;
 
-  renderAccountStrip(status.account);
+  renderAccountStrip(status.account, status.proxy);
+
+  if (status.proxy) {
+    renderProxySettingsPanel(status.proxy);
+  }
 
   const compact = isCompactView();
   const stats = compact
@@ -261,11 +290,24 @@ function renderStatusNow(status) {
         { label: "Activity", value: loopLabelShort(status.loops && status.loops.activity) },
         {
           label: "Now",
-          value: status.actionInProgress ? status.currentActionLabel || "…" : "Idle"
+          value: starting
+            ? "Starting…"
+            : status.actionInProgress
+              ? status.currentActionLabel || "…"
+              : "Idle"
         }
       ]
     : [
-    { label: "Automation", value: paused ? `Paused (${status.automation.reason})` : "Online" },
+    {
+      label: "Automation",
+      value: starting
+        ? status.automation && status.automation.reason
+          ? `Starting (${status.automation.reason})`
+          : "Starting…"
+        : paused
+          ? `Paused (${status.automation.reason})`
+          : "Online"
+    },
     { label: "Session loop", value: loopLabel(status.sessionLoop) },
     { label: "Farmlist", value: loopLabel(status.loops && status.loops.farmlist) },
     { label: "Builder", value: loopLabel(status.loops && status.loops.builder) },
@@ -440,75 +482,6 @@ function renderLogs(entries) {
   });
 }
 
-const CONSOLE_LIMIT = 200;
-let lastConsoleId = 0;
-
-function formatConsoleTime(at) {
-  const d = at ? new Date(at) : new Date();
-  return d.toLocaleTimeString(undefined, { hour12: false });
-}
-
-function appendConsoleEntry(entry, atBottomBeforeAdd) {
-  if (!entry || (entry.id && entry.id <= lastConsoleId)) {
-    return;
-  }
-  if (entry.id) {
-    lastConsoleId = entry.id;
-  }
-  const compact = document.body.classList.contains("compact-view");
-  const micro = compact && isMicroView();
-  const line = document.createElement("div");
-  line.className = `console-line console-${entry.level || "log"}`;
-  if (!compact) {
-    const time = document.createElement("span");
-    time.className = "console-time";
-    time.textContent = formatConsoleTime(entry.at);
-    line.appendChild(time);
-  }
-  const text = document.createElement("span");
-  text.className = "console-text";
-  let message = entry.text || "";
-  const maxLen = micro ? 72 : compact ? 100 : Infinity;
-  if (Number.isFinite(maxLen) && message.length > maxLen) {
-    message = `${message.slice(0, maxLen - 1)}…`;
-  }
-  text.textContent = message;
-  line.appendChild(text);
-  els.consoleList.appendChild(line);
-
-  while (els.consoleList.childElementCount > CONSOLE_LIMIT) {
-    els.consoleList.removeChild(els.consoleList.firstChild);
-  }
-  if (atBottomBeforeAdd) {
-    els.consoleList.scrollTop = els.consoleList.scrollHeight;
-  }
-}
-
-function isConsoleAtBottom() {
-  const el = els.consoleList;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-}
-
-function renderConsole(entries) {
-  els.consoleList.innerHTML = "";
-  lastConsoleId = 0;
-  if (!entries || !entries.length) {
-    els.consoleList.innerHTML = '<div class="console-line">No console output yet.</div>';
-    return;
-  }
-  entries.forEach((entry) => appendConsoleEntry(entry, false));
-  els.consoleList.scrollTop = els.consoleList.scrollHeight;
-}
-
-async function refreshConsole() {
-  try {
-    const data = await api(`/api/console?tail=${CONSOLE_LIMIT}`);
-    renderConsole(data.entries || []);
-  } catch (_error) {
-    /* ignore */
-  }
-}
-
 async function refreshLogs() {
   try {
     const data = await api("/api/logs?tail=40");
@@ -523,15 +496,6 @@ function connectEvents() {
   source.addEventListener("status", (event) => {
     try {
       renderStatus(JSON.parse(event.data));
-    } catch (_error) {
-      /* ignore */
-    }
-  });
-  source.addEventListener("console", (event) => {
-    try {
-      const entry = JSON.parse(event.data);
-      const atBottom = isConsoleAtBottom();
-      appendConsoleEntry(entry, atBottom);
     } catch (_error) {
       /* ignore */
     }
@@ -1590,6 +1554,35 @@ function renderTroopDashboard(data, options = {}) {
   if (!els.troopGlobalForm) {
     return;
   }
+  if (data && data.terminalOnly) {
+    renderTroopLoopPanel(data.troopLoop || null);
+    els.troopGlobalForm.innerHTML =
+      '<p class="troop-terminal-note">Troop plans are managed from the terminal (menu <strong>T</strong>). ' +
+      "Create plans, set timers and infantry/cavalry units, and assign each village there.</p>";
+    if (els.troopVillagesList) {
+      const villages = Array.isArray(data.villages) ? data.villages : [];
+      els.troopVillagesList.innerHTML = villages
+        .map((v) => {
+          const state = v.enabled ? "ON" : "off";
+          const plan = v.plan || "—";
+          const summary = v.planSummary || "no plan";
+          return (
+            '<div class="troop-village-readonly">' +
+            `<strong>${escapeHtml(v.name || String(v.villageId))}</strong> — ` +
+            `<span>${escapeHtml(state)}</span> · plan: ${escapeHtml(plan)} ` +
+            `<span class="muted">(${escapeHtml(summary)})</span>` +
+            "</div>"
+          );
+        })
+        .join("");
+      els.troopVillagesEmpty.classList.toggle("hidden", villages.length > 0);
+      if (!villages.length) {
+        els.troopVillagesEmpty.textContent = "No villages loaded yet.";
+      }
+    }
+    troopRenderedMountKey = "";
+    return;
+  }
   if (!data) {
     if (els.troopRrPanel) {
       renderTroopLoopPanel(null);
@@ -1953,6 +1946,132 @@ function setupActivityForm() {
   });
 }
 
+let proxyFormDirty = false;
+
+function proxyEntryToLine(entry) {
+  if (!entry || !entry.server) {
+    return "";
+  }
+  if (entry.username) {
+    return `${entry.username}:${entry.hasPassword ? "****" : ""}@${entry.server.replace(/^https?:\/\//, "")}`;
+  }
+  return entry.server;
+}
+
+function renderProxySettingsPanel(proxy) {
+  if (!proxy || proxyFormDirty) {
+    return;
+  }
+  const active = proxy.activeDisplay || "direct (none)";
+  const count = Number(proxy.count) || 0;
+  if (els.proxyActiveText) {
+    els.proxyActiveText.textContent = active;
+  }
+  if (els.proxyCount) {
+    els.proxyCount.textContent = String(count);
+  }
+  if (els.proxyPill) {
+    const usingProxy = count > 0 && proxy.active;
+    els.proxyPill.textContent = usingProxy ? "ON" : "DIRECT";
+    els.proxyPill.className = `pill ${usingProxy ? "pill-running" : "pill-paused"}`;
+  }
+  if (els.proxyBypass && proxy.bypass !== undefined) {
+    els.proxyBypass.value = proxy.bypass || "";
+  }
+  if (els.proxyActiveIndex && proxy.active && proxy.active.index != null) {
+    els.proxyActiveIndex.value = String(Number(proxy.active.index) + 1);
+    els.proxyActiveIndex.max = String(Math.max(1, count));
+  } else if (els.proxyActiveIndex) {
+    els.proxyActiveIndex.value = count ? "1" : "";
+  }
+  if (els.proxyListPreview) {
+    const rows = Array.isArray(proxy.proxies) ? proxy.proxies : [];
+    els.proxyListPreview.innerHTML = rows.length
+      ? rows
+          .map(
+            (entry) => `
+        <div class="proxy-list-item${entry.active ? " active" : ""}">
+          #${entry.index + 1} ${escapeHtml(entry.server)}${entry.username ? ` (${escapeHtml(entry.username)})` : ""}${entry.active ? " · active" : ""}
+        </div>`
+          )
+          .join("")
+      : `<div class="hint">No proxies saved yet.</div>`;
+  }
+}
+
+async function refreshProxySettingsPanel() {
+  if (!els.proxyForm) {
+    return;
+  }
+  try {
+    const data = await api("/api/proxy-settings");
+    renderProxySettingsPanel(data.proxy || null);
+  } catch (_error) {
+    if (latestStatus && latestStatus.proxy) {
+      renderProxySettingsPanel(latestStatus.proxy);
+    }
+  }
+}
+
+function readProxyFormPayload(action) {
+  const activeIndexRaw = els.proxyActiveIndex ? Number(els.proxyActiveIndex.value) : NaN;
+  return {
+    action,
+    proxyText: els.proxyText ? els.proxyText.value : "",
+    bypass: els.proxyBypass ? els.proxyBypass.value : "",
+    activeIndex: Number.isFinite(activeIndexRaw) && activeIndexRaw > 0 ? activeIndexRaw - 1 : undefined
+  };
+}
+
+async function submitProxySettings(action, event) {
+  if (event) {
+    event.preventDefault();
+  }
+  try {
+    const payload = readProxyFormPayload(action);
+    const data = await api("/api/proxy-settings", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    proxyFormDirty = false;
+    renderProxySettingsPanel(data.proxy || null);
+    if (latestStatus) {
+      latestStatus.proxy = data.proxy || latestStatus.proxy;
+      renderAccountStrip(latestStatus.account, latestStatus.proxy);
+    }
+    const messages = {
+      save: "Proxy list saved",
+      apply: "Proxy applied — relogin started",
+      next: "Next proxy applied — relogin started",
+      disable: "Proxy disabled — relogin direct"
+    };
+    showToast(messages[action] || "Proxy updated");
+  } catch (error) {
+    showToast(error.message || "Proxy update failed");
+  }
+}
+
+function setupProxyForm() {
+  if (!els.proxyForm) {
+    return;
+  }
+  els.proxyForm.addEventListener("submit", (event) => submitProxySettings("apply", event));
+  if (els.proxySaveBtn) {
+    els.proxySaveBtn.addEventListener("click", () => submitProxySettings("save"));
+  }
+  if (els.proxyNextBtn) {
+    els.proxyNextBtn.addEventListener("click", () => submitProxySettings("next"));
+  }
+  if (els.proxyDisableBtn) {
+    els.proxyDisableBtn.addEventListener("click", () => submitProxySettings("disable"));
+  }
+  ["input", "change"].forEach((type) => {
+    els.proxyForm.addEventListener(type, () => {
+      proxyFormDirty = true;
+    });
+  });
+}
+
 function setupTroopForm() {
   if (!els.troopGlobalForm) {
     return;
@@ -2015,7 +2134,6 @@ function applyDisplayView(view) {
     label.classList.toggle("active", mode === (compact ? "compact" : "full"));
   });
   updateTabLabels(compact);
-  refreshConsole().catch(() => {});
   lastVillageRenderKey = "";
   lastActionRenderKey = "";
   lastStatusGridKey = "";
@@ -2089,6 +2207,7 @@ function setupTabs() {
       }
       if (tab === "settings") {
         refreshActivitySettingsPanel();
+        refreshProxySettingsPanel();
         if (latestStatus && latestStatus.display) {
           renderDisplaySettingsPanel(latestStatus.display);
         }
@@ -2107,6 +2226,7 @@ setupDisplaySettings();
 setupTabs();
 setupTroopForm();
 setupActivityForm();
+setupProxyForm();
 connectEvents();
 startHeavyTabPolling();
 startLoopCountdownTicker();
@@ -2114,7 +2234,6 @@ tickClock();
 setInterval(tickClock, 1000);
 setInterval(refreshLogs, 20000);
 refreshLogs();
-refreshConsole();
 
 api("/api/status")
   .then((data) => {
@@ -2123,6 +2242,9 @@ api("/api/status")
       applyDisplayView(status.display.compactView ? "compact" : "regular");
     } else {
       applyDisplayView(getDisplayView());
+    }
+    if (status.proxy) {
+      renderProxySettingsPanel(status.proxy);
     }
     renderStatusNow(status);
   })

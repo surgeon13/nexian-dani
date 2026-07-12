@@ -136,9 +136,10 @@ async function fetchPublicIPv4() {
   }
 }
 
-async function getDashboardNetworkInfo(port, host = "127.0.0.1") {
+async function getDashboardNetworkInfo(port, host = "127.0.0.1", options = {}) {
   const localAddresses = getLocalIPv4Addresses();
-  const publicAddress = await fetchPublicIPv4();
+  const skipPublicFetch = Boolean(options && options.skipPublicFetch);
+  const publicAddress = skipPublicFetch ? null : await fetchPublicIPv4();
   const dashboardUrls = [`http://127.0.0.1:${port}`];
   localAddresses.forEach((ip) => {
     dashboardUrls.push(`http://${ip}:${port}`);
@@ -399,6 +400,35 @@ function startDashboardServer({
         try {
           const display = await bridge.updateDisplaySettings(body || {});
           sendJson(res, 200, { ok: true, display });
+        } catch (error) {
+          sendJson(res, 400, {
+            ok: false,
+            error: error && error.message ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/proxy-settings") {
+        const proxy =
+          typeof bridge.getProxySettings === "function" ? bridge.getProxySettings() : null;
+        if (!proxy) {
+          sendJson(res, 503, { ok: false, error: "Proxy settings unavailable" });
+          return;
+        }
+        sendJson(res, 200, { ok: true, proxy });
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/proxy-settings") {
+        const body = await readJsonBody(req);
+        if (typeof bridge.updateProxySettings !== "function") {
+          sendJson(res, 503, { ok: false, error: "Proxy settings unavailable" });
+          return;
+        }
+        try {
+          const proxy = await bridge.updateProxySettings(body || {});
+          sendJson(res, 200, { ok: true, proxy });
         } catch (error) {
           sendJson(res, 400, {
             ok: false,

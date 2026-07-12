@@ -2,6 +2,182 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.6] — 2026-07-12
+
+### Release
+
+**v1.8.6** — troop plans (four building branches), proxy pool + session-loop proxy rotation, and reliability fixes for farmlist send, troop auto scheduling, and Stable/map discovery. Requires `GAME_HOST` for realm URLs; use `FARMLIST_VILLAGE_ID` when farmlists live on a specific rally-point village.
+
+### Fixed
+
+- **Farmlist loop mistook `#btn_train` for send.** When the browser was still on a troop-trainer page after builder/troop loops, DOM discovery picked the Train button (id starts with `btn_`). Send controls are now validated, troop trainer buttons are excluded, the farmlist page is confirmed before send, and rally-point fallback navigation uses the pinned `FARMLIST_VILLAGE_ID`.
+
+## [1.8.5] — 2026-07-09
+
+### Fixed
+
+- **False “no Stable in this village yet”.** Village-map discovery now matches “Stable” / “Stables”, uses the same broad map selectors as the builder, opens the correct slot URL, and verifies the trainer page via heading/`gid`/`#build.gid20`. If a building is on the map but the page failed to load, the bot retries next cycle instead of caching it as missing for 12 hours.
+
+## [1.8.4] — 2026-07-09
+
+### Fixed
+
+- **Troop auto “no Stable in this village yet” every cycle.** When a plan includes Stable/Great Stable but the village does not have that building yet, the bot logs once, skips that branch on later runs (rechecks every ~12h), and no longer navigates to the trainer each interval. Trainer URLs are also resolved from the village map first instead of assuming `build.php?id=38`.
+
+## [1.8.3] — 2026-07-09
+
+### Fixed
+
+- **Farmlist send when `#btn_send_all` stays disabled.** Selects individual farmlist checkboxes (not only select-all), fires change events for Nexian UI, and treats “all lists on cooldown / nothing ready” as a normal idle tick instead of a failed send with 2-minute retries.
+
+## [1.8.2] — 2026-07-09
+
+### Fixed
+
+- **Troop auto lock contention.** Per-village troop timers no longer skip each other with `browser busy` / `another action is currently running (auto-troop-trainer)`. Runs are queued and wait for the browser; initial schedules are staggered across the interval so villages do not all fire at once.
+
+## [1.8.1] — 2026-07-09
+
+### Added
+
+- **Proxy rotation on session-loop rest re-login.** When the session loop logs out, rests, and logs back in, the bot rotates to the next proxy in the pool (if you have 2+ saved), clears the saved session, and re-logins through the new proxy. Set `PROXY_ROTATE_ON_SESSION_REST=false` to keep the same proxy across rest cycles.
+
+## [1.8.0] — 2026-07-09
+
+### Added
+
+- **Proxy pool with paste support.** Paste multiple proxies (one per line) in terminal **y → [2]** or dashboard **Settings → Proxy pool**. Supported formats: `host:port:user:pass`, `user:pass@host:port`, `http://user:pass@host:port`, `socks5://host:port`. Pool saved to `templates/proxy_list.json`.
+- **Dashboard proxy panel:** textarea paste, active proxy picker, Save list, Apply + relogin, Next + relogin, Disable direct. Active proxy shown on the status strip.
+
+## [1.7.0] — 2026-07-09
+
+### Added
+
+- **Proxy support for the game browser.** Set `PROXY_SERVER` (and optional `PROXY_USERNAME`, `PROXY_PASSWORD`, `PROXY_BYPASS`) in `.env`, or change at runtime without quitting:
+  - Main menu **y** → proxy menu
+  - Settings **Y** → proxy menu
+  - **[1]** edit fields, **[A]** logout + relogin through proxy and continue automation, **[D]** disable proxy + relogin direct
+  - Proxy is saved to `.env`; saved session cookies are cleared on proxy change so login goes through the new route.
+
+## [1.6.8] — 2026-07-06
+
+### Fixed
+
+- **Troop auto `ERR_ABORTED` on barracks/stable navigation.** Trainer and village-map discovery now use `safeGotoWithRetry` (retries aborted/interrupted navigations). When training still fails with a transient nav error, the village retries in ~20–45s instead of waiting the full plan interval.
+
+## [1.6.7] — 2026-07-05
+
+### Changed
+
+- **Troop auto countdown logs include seconds**, e.g. `next train in 7m 34s` (random 0–59s added to each scheduled tick for finer timing). Busy-retry lines use the same format.
+
+## [1.6.6] — 2026-07-05
+
+### Changed
+
+- **Troop plan editor shows all four buildings explicitly.** Edit/New now lists Barracks, Great Barracks, Stable, and Great Stable with numbered steps `[1/4]`–`[4/4]` and current values before prompting. The plans menu header shows the engine version — if you still see "Infantry/Cavalry" prompts, restart the bot to load v1.6.4+.
+
+## [1.6.5] — 2026-07-05
+
+### Fixed
+
+- **Great Stable / Great Barracks training on Nexian AJAX pages.** Training now waits for the `ajax_build.php` `train_troops` response (or cleared inputs) instead of a fixed 1.5s delay. Building discovery also matches `gid=30` / `gid=29` on map links and verifies `#build.gid30` (etc.) before training.
+- **Population cap (`Available: 0`).** Units with zero available population (e.g. Haeduan when capped) are skipped instead of attempting to queue them.
+
+## [1.6.4] — 2026-07-05
+
+### Added
+
+- **Great Barracks and Great Stable in troop plans.** Each plan can now set a unit + qty for Barracks, Great Barracks, Stable, and/or Great Stable. The plan editor, unit preview (T → U), auto-train loop, and manual train (menu 4) all use these branches. Villages without a great building skip that branch with a log message.
+
+## [1.6.3] — 2026-07-05
+
+### Fixed
+
+- **Troop training skipped when another loop was busy.** All loops share one browser, so a troop tick that fired while farmlists/builder/cranny was running got skipped and pushed to the next full 15–25 min interval. Now, when the browser is busy, the village retries in ~1 minute instead of losing its turn for a whole cycle.
+
+## [1.6.2] — 2026-07-05
+
+### Performance
+
+- **Block images/fonts/media downloads** (`BLOCK_MEDIA=true`, default on) — pages load much faster and use less RAM; selectors still work. Set `BLOCK_MEDIA=false` to load full pages.
+- **Capped `networkidle` waits** in the farmlist flow (12–20s → 3.5–4s) so runs don't stall waiting for a page that never goes fully idle.
+- **Leaner Chromium launch args** (disable extensions/background networking/timer throttling, mute audio).
+
+## [1.6.1] — 2026-07-05
+
+### Changed
+
+- **Removed the "Live console" panel from the web dashboard.** The Recent log panel remains. Terminal output is still visible in the terminal itself.
+
+## [1.6.0] — 2026-07-05
+
+### Changed
+
+- **Troop trainer rebuilt around plans (terminal-driven).** Removed the old mode/tribe/branch template engine and `troopVillagePreferences.js`. New model:
+  - **Troop plans** (`templates/troop_plans.json`): each plan sets an infantry unit + qty and/or a cavalry unit + qty, plus its own train timer (min/max minutes).
+  - **Assign villages to a plan** and toggle on/off. When a village's timer fires it opens the Barracks (infantry) and/or Stable (cavalry) and trains the target quantity, or the **maximum affordable** if resources are short.
+  - Manage everything from the terminal: main menu **T** (or Settings **U**) → create/edit/delete plans, assign villages, preview trainable unit names, toggle the auto-train loop + default interval.
+  - Main menu **4** now trains the selected village's assigned plan once.
+  - The web dashboard troop tab is now read-only (plans are managed in the terminal).
+- Removed env keys `TROOP_TEMPLATE_*`, `TROOP_TRIBE`, `TROOP_TRAINING_PRESET`, `TROOP_TRAINING_BATCH_SIZE`, `TROOP_TRAINING_ALTERNATE_GREAT_BARRACKS`, `TROOP_GREAT_TRAINER_URL`. `TROOP_TRAINING_LOOP_MIN/MAX_MINUTES` now act as the default timer when a plan doesn't set its own.
+
+## [1.5.19] — 2026-06-18
+
+### Added
+
+- **Builder RR: resource fields → village stage** — with round-robin on and `BUILDER_DEFAULT_PLAN_MODE=resource`, each village finishes resource field templates first, then automatically continues village-stage building. Progress shows as `res X/Y · village X/Y`. Disable with `BUILDER_RR_RESOURCE_THEN_VILLAGE=false`.
+
+---
+
+## [1.5.18] — 2026-06-18
+
+### Changed
+
+- **Troop templates (terminal)** — simplified global menu (edit infantry/cavalry for the active mode only, not four separate lists). New **per-village** menu: pick a village, toggle auto-train, set off/def, edit lists, or apply tribal defaults. Reach it via main menu **T → 7**, or Settings **U**.
+
+---
+
+## [1.5.17] — 2026-06-18
+
+### Fixed
+
+- **Headed browser rapidly cycling all villages** — raid guard no longer opens every village every 5s; it refreshes the village list once and only opens villages flagged under attack. Poll interval default is now 30s (`RAID_EVACUATION_POLL_SECONDS`). Added `VILLAGE_SWITCH_DELAY_MS` (headed default 800ms) between village navigations.
+
+---
+
+## [1.5.16] — 2026-06-18
+
+### Fixed
+
+- **`ERR_INSUFFICIENT_RESOURCES` during builder circulation** — marketplace navigation now retries with exponential backoff; circulation waits 15s and retries once; triggers a browser restart if still failing; skips redundant village-page refresh when the list is fresh.
+
+---
+
+## [1.5.15] — 2026-06-18
+
+### Fixed
+
+- **Web dashboard slow to open** — HTTP server starts before Playwright login so the page loads immediately; village refresh and automation loops run in the background; UI shows LOGGING IN / LOADING until villages are ready.
+
+---
+
+## [1.5.14] — 2026-06-18
+
+### Fixed
+
+- **Slow startup / login** — reuse `storageState.json` when valid (skip portal login), navigate straight to the village after Enter Realm instead of long polling, skip redundant village-list navigation when already on the overview, and fetch public dashboard IP in the background.
+
+---
+
+## [1.5.13] — 2026-06-18
+
+### Added
+
+- **`BROWSER_REFRESH_HOURS`** — optionally restart Chromium on a timer (logout → close → fresh login) to cap long-run RAM use. Waits up to 5 minutes for the current action to finish; retries in 15 minutes if busy or failed.
+
+---
+
 ## [1.5.12] — 2026-06-18
 
 ### Fixed
