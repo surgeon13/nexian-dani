@@ -9,6 +9,7 @@ node_modules/
 # Playwright session and logs (regenerated locally)
 storageState.json
 log.jsonl
+top10.log
 log-archive/
 npm-debug.log*
 yarn-error.log*

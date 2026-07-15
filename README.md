@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.6** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.8** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -15,7 +15,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
-| **Loops** | Optional timers for farmlists, builders, troop training, session play/rest windows, raid-guard heartbeat. |
+| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
 ### Automation modules
@@ -24,14 +24,17 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
+- **Top 10 tracking** — Scheduled or manual snapshots of server rankings (attackers, defenders, robbers, climbers, population, alliances, villages) appended to `top10.log` with timestamps for time-series analysis. Settings **[O]** or main menu **[O]** for a one-shot snapshot.
 
 ### What's new in 1.8.x (summary)
 
+- **Top 10 statistics tracking** — seven ranking categories logged to `top10.log` (JSONL lines with `ts` + `epochMs`).
+- **Farmlist auto-send pre-empts** builder, troop, cranny, and activity auto loops when due.
 - **Troop plans** replace the old per-village troop-template toggles (four building branches, per-plan timers).
 - **Proxy pool** with dashboard + terminal management; rotate proxy after session-loop rest.
-- **Reliability:** farmlist send uses `#btn_send_all` (not troop `#btn_train`), troop auto queue, Stable map discovery, `GAME_HOST`, `FARMLIST_VILLAGE_ID`.
+- **Reliability:** farmlist send uses `#btn_send_all` (not troop `#btn_train`), troop auto queue (10s max idle wait), Stable map discovery, `GAME_HOST`, `FARMLIST_VILLAGE_ID`.
 
-See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.6**) for full release notes.
+See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.8**) for full release notes.
 
 ## Requirements
 
@@ -49,6 +52,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.6**) for full release notes.
 | `troopPlans.js` | Troop plan + village assignment store (`templates/troop_plans.json`). |
 | `proxyPool.js` / `proxyConfig.js` | Proxy list parsing, pool file, dashboard/settings sync. |
 | `browserNavigation.js` | Shared transient navigation error detection and retry delays. |
+| `top10Tracking.js` | Server Top 10 / statistics scraping and timestamped `top10.log` output. |
 | `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
 | `public/` | Dashboard HTML, CSS, and client JS. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
@@ -109,7 +113,7 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run dashboard:nexian:headed` | Visible browser + dashboard |
 | `npm run dashboard:headed` | Dashboard with headed browser (default `.env`) |
 | `npm run playwright:install` | Install Playwright Chromium only |
-| `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `templates/progress.json` |
+| `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `templates/progress.json` |
 
 ---
 
@@ -129,6 +133,7 @@ Opens after login. Typical keys include:
 - **`V`** — Pick active village context
 - **`S`** — Settings submenu (loops, gold complete, **D = compact UI**, raid toggle, expansion options, …)
 - **`L`** — Log summary (`log.jsonl`)
+- **`O`** — Top 10 snapshot now (writes `top10.log`)
 - **`P`** — Pause or resume automation loops (farmlist, builder, troop, cranny, raid guard). Optional auto-resume: `MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES` (Settings **3**).
 - **`Q`** — Quit menu / session teardown per `login.js` flow
 
@@ -203,7 +208,7 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 
 **High-signal variables**
 
-- **Loops:** `FARMLIST_LOOP_*`, `BUILDER_LOOP_*`, `SESSION_LOOP_*`, `TROOP_TRAINING_ROUND_ROBIN_ENABLED`
+- **Loops:** `FARMLIST_LOOP_*`, `BUILDER_LOOP_*`, `SESSION_LOOP_*`, `TROOP_TRAINING_ROUND_ROBIN_ENABLED`, `TOP10_TRACKING_*`
 - **Realm / farmlist:** `GAME_HOST`, `FARMLIST_VILLAGE_ID` (pin rally-point village for auto-send)
 - **Proxy:** `PROXY_SERVER`, `PROXY_USERNAME`, `PROXY_PASSWORD`, `PROXY_ROTATE_ON_SESSION_REST`
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
@@ -219,9 +224,10 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 
 ## Logging
 
-- **File:** `log.jsonl` (or `NEXIAN_ACTION_LOG_FILE`)
-- **Rotation:** When the log exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), it is renamed into `log-archive/` and logging continues in a new empty file.
-- **Format:** one JSON object per line, append-only
+- **Action log:** `log.jsonl` (or `NEXIAN_ACTION_LOG_FILE`) — bot actions (farmlists, troops, builder, …)
+- **Top 10 log:** `top10.log` (or `TOP10_TRACKING_LOG_FILE`) — one JSON object per line per ranking category per snapshot (`ts`, `epochMs`, `top10`, `self`)
+- **Rotation:** When `log.jsonl` exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), it is renamed into `log-archive/` and logging continues in a new empty file.
+- **Format:** append-only JSONL
 - **Summary menu** counts farmlists, troops, upgrades, gold autocomplete, merchant-transfer history (mostly historical), evacuation history (mostly historical).
 
 ---
@@ -232,7 +238,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 npm run export
 ```
 
-Produces a zip beside the project folder named like `nexian-v1.3.0-2026-05-18-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `node_modules/`, optionally `templates/progress.json`.
+Produces a zip beside the project folder named like `nexian-v1.8.8-2026-07-15-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `top10.log`, `node_modules/`, optionally `templates/progress.json`.
 
 On the new machine: extract → `node setup.js` → fill `.env` → `node login.js --headed --keep-open`.
 

@@ -9,6 +9,7 @@ const {
   parsePatterns: parseActivityPatterns,
   serializePatterns: serializeActivityPatterns
 } = require("./activitySimulation");
+const { DEFAULT_TOP10_LOG_FILE } = require("./top10Tracking");
 const { startDashboardServer, getDashboardNetworkInfo } = require("./dashboardServer");
 const {
   syncSettingsFromProxyStore,
@@ -308,6 +309,12 @@ const settings = {
   ),
   activitySimulationDwellMinMs: numberEnv("ACTIVITY_SIMULATION_DWELL_MIN_MS", 2000),
   activitySimulationDwellMaxMs: numberEnv("ACTIVITY_SIMULATION_DWELL_MAX_MS", 6000),
+  top10TrackingEnabled:
+    String(process.env.TOP10_TRACKING_ENABLED || "false").toLowerCase() === "true",
+  top10TrackingLoopMinMinutes: numberEnv("TOP10_TRACKING_LOOP_MIN_MINUTES", 60),
+  top10TrackingLoopMaxMinutes: numberEnv("TOP10_TRACKING_LOOP_MAX_MINUTES", 120),
+  top10TrackingLogFile: process.env.TOP10_TRACKING_LOG_FILE || DEFAULT_TOP10_LOG_FILE,
+  top10TrackingPlayerName: String(process.env.TOP10_TRACKING_PLAYER_NAME || "").trim(),
   dashboardCompactView,
   expansionAutoDispatchEnabled:
     String(process.env.EXPANSION_AUTO_DISPATCH_ENABLED || "false").toLowerCase() === "true",
@@ -439,6 +446,11 @@ function persistRuntimeSettings(selectedKeys) {
     ACTIVITY_SIMULATION_PATTERNS: String(settings.activitySimulationPatterns || ""),
     ACTIVITY_SIMULATION_DWELL_MIN_MS: String(settings.activitySimulationDwellMinMs),
     ACTIVITY_SIMULATION_DWELL_MAX_MS: String(settings.activitySimulationDwellMaxMs),
+    TOP10_TRACKING_ENABLED: settings.top10TrackingEnabled ? "true" : "false",
+    TOP10_TRACKING_LOOP_MIN_MINUTES: String(settings.top10TrackingLoopMinMinutes),
+    TOP10_TRACKING_LOOP_MAX_MINUTES: String(settings.top10TrackingLoopMaxMinutes),
+    TOP10_TRACKING_LOG_FILE: String(settings.top10TrackingLogFile || DEFAULT_TOP10_LOG_FILE),
+    TOP10_TRACKING_PLAYER_NAME: String(settings.top10TrackingPlayerName || ""),
     DASHBOARD_COMPACT_VIEW: settings.dashboardCompactView ? "true" : "false",
     EXPANSION_AUTO_DISPATCH_ENABLED: settings.expansionAutoDispatchEnabled ? "true" : "false",
     EXPANSION_USE_PLANNED_TARGETS: settings.expansionUsePlannedTargets ? "true" : "false",
@@ -1433,6 +1445,44 @@ async function run() {
     };
   };
 
+  const updateTop10TrackingLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.top10TrackingEnabled = nextConfig.enabled;
+    }
+
+    const range = normalizeRange(
+      Number(nextConfig.minMinutes),
+      Number(nextConfig.maxMinutes),
+      settings.top10TrackingLoopMinMinutes,
+      settings.top10TrackingLoopMaxMinutes
+    );
+    settings.top10TrackingLoopMinMinutes = range.min;
+    settings.top10TrackingLoopMaxMinutes = range.max;
+
+    if (nextConfig.logFile !== undefined) {
+      settings.top10TrackingLogFile = String(nextConfig.logFile || DEFAULT_TOP10_LOG_FILE).trim() || DEFAULT_TOP10_LOG_FILE;
+    }
+    if (nextConfig.playerName !== undefined) {
+      settings.top10TrackingPlayerName = String(nextConfig.playerName || "").trim();
+    }
+
+    persistRuntimeSettings([
+      "TOP10_TRACKING_ENABLED",
+      "TOP10_TRACKING_LOOP_MIN_MINUTES",
+      "TOP10_TRACKING_LOOP_MAX_MINUTES",
+      "TOP10_TRACKING_LOG_FILE",
+      "TOP10_TRACKING_PLAYER_NAME"
+    ]);
+
+    return {
+      enabled: settings.top10TrackingEnabled,
+      minMinutes: settings.top10TrackingLoopMinMinutes,
+      maxMinutes: settings.top10TrackingLoopMaxMinutes,
+      logFile: settings.top10TrackingLogFile,
+      playerName: settings.top10TrackingPlayerName
+    };
+  };
+
   const updateActivitySimulationLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.activitySimulationEnabled = nextConfig.enabled;
@@ -1609,6 +1659,7 @@ async function run() {
           updateTroopTrainingLoopConfig,
           updateCrannyDefenseLoopConfig,
           updateActivitySimulationLoopConfig,
+          updateTop10TrackingLoopConfig,
           updateDashboardDisplayConfig,
           async persistSettings(selectedKeys) {
             persistRuntimeSettings(selectedKeys);

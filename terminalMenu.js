@@ -8,6 +8,8 @@ const troopPlans = require("./troopPlans");
 const { version: APP_VERSION } = require("./package.json");
 const { formatProxyDisplay, normalizeProxyServer, buildProxySettingsPayload, proxyPool } = require("./proxyConfig");
 const activitySimulation = require("./activitySimulation");
+const top10Tracking = require("./top10Tracking");
+const { DEFAULT_TOP10_LOG_FILE } = top10Tracking;
 const { forEachLogLine } = require("./logTail");
 const { appendActionLogLine, listArchivedLogs, resolveArchiveDir, maybeRotateActionLog } = require("./actionLog");
 const {
@@ -1695,6 +1697,7 @@ function printMainMenu(automationStatus, settings = terminalUiSettings) {
   console.log(`  ${color("y", ANSI.bold, ANSI.cyan)}  Change Proxy + Relogin`);
   console.log(`  ${color("V", ANSI.bold, ANSI.cyan)}  Select Village Context`);
   console.log(`  ${color("L", ANSI.bold, ANSI.cyan)}  Logs (Summary)`);
+  console.log(`  ${color("O", ANSI.bold, ANSI.cyan)}  Top 10 Snapshot Now`);
   console.log(`  ${color("P", ANSI.bold, ANSI.cyan)}  Pause/Unpause Automation`);
   console.log(`  ${color("S", ANSI.bold, ANSI.cyan)}  Settings`);
   console.log(`  ${color("Q", ANSI.bold, ANSI.cyan)}  Quit`);
@@ -2027,6 +2030,9 @@ function printSettingsMenu(settings, villageState) {
   );
   console.log(
     `  ${opt("4")}  Activity Simulation ${dim("[")}${onOff(settings.activitySimulationEnabled)}${dim("]")}  ${tag("every", `${settings.activitySimulationLoopMinMinutes}-${settings.activitySimulationLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("O")}  Top 10 Tracking    ${dim("[")}${onOff(settings.top10TrackingEnabled)}${dim("]")}  ${tag("every", `${settings.top10TrackingLoopMinMinutes}-${settings.top10TrackingLoopMaxMinutes}m`)}  ${tag("log", settings.top10TrackingLogFile || DEFAULT_TOP10_LOG_FILE)}`
   );
   console.log(
     `  ${opt("D")}  Compact UI           ${tag("", settings.dashboardCompactView ? "Compact view" : "Full view")}`
@@ -3201,6 +3207,66 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
         );
       } catch (error) {
         logError(`Failed to update activity simulation: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
+    if (input === "O") {
+      const enabledText = (
+        await askQuestion(rl, "Enable Top 10 tracking loop? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.top10TrackingEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Top 10 loop MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Top 10 loop MAX minutes (Enter keep): ")
+      ).trim();
+      const nextLogFileText = (
+        await askQuestion(rl, `Top 10 log file (Enter keep ${settings.top10TrackingLogFile || DEFAULT_TOP10_LOG_FILE}): `)
+      ).trim();
+      const nextPlayerNameText = (
+        await askQuestion(
+          rl,
+          `In-game player name for self-rank matching (Enter keep${settings.top10TrackingPlayerName ? ` ${settings.top10TrackingPlayerName}` : ", blank = auto-detect"}): `
+        )
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        minMinutes: nextMinText ? Number(nextMinText) : settings.top10TrackingLoopMinMinutes,
+        maxMinutes: nextMaxText ? Number(nextMaxText) : settings.top10TrackingLoopMaxMinutes
+      };
+      if (nextLogFileText) {
+        nextConfig.logFile = nextLogFileText;
+      }
+      if (nextPlayerNameText) {
+        nextConfig.playerName = nextPlayerNameText;
+      }
+
+      try {
+        if (!runtimeControls.updateTop10TrackingLoopConfig) {
+          throw new Error("Top 10 tracking config is unavailable.");
+        }
+        const applied = await runtimeControls.updateTop10TrackingLoopConfig(nextConfig);
+        settings.top10TrackingEnabled = applied.enabled;
+        settings.top10TrackingLoopMinMinutes = applied.minMinutes;
+        settings.top10TrackingLoopMaxMinutes = applied.maxMinutes;
+        settings.top10TrackingLogFile = applied.logFile;
+        settings.top10TrackingPlayerName = applied.playerName;
+        logSuccess(
+          `Top 10 tracking: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, log ${applied.logFile || DEFAULT_TOP10_LOG_FILE}.`
+        );
+      } catch (error) {
+        logError(`Failed to update Top 10 tracking: ${error.message || error}`);
       }
 
       continue;
@@ -4999,6 +5065,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     : terminalRl;
   let farmlistLoopTimer = null;
   let activitySimulationLoopTimer = null;
+  let top10TrackingLoopTimer = null;
   let builderLoopTimer = null;
   let crannyDefenseLoopTimer = null;
   let raidEvacuationLoopTimer = null;
@@ -5042,6 +5109,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let farmlistResumeWaitLogged = false;
     let farmlistShortRetriesLeft = 0;
     const FARMLIST_SHORT_RETRY_MS = 120000;
+    /** Max time troop auto waits for another action (manual menu, Top10 snapshot, etc.) before skipping this tick. */
+    const TROOP_AUTO_ACTION_IDLE_WAIT_MS = 10000;
+    const TROOP_AUTO_BUSY_RETRY_MIN_MS = 15000;
+    const TROOP_AUTO_BUSY_RETRY_JITTER_MS = 10000;
     let nextBuilderRunAt = null;
     let lastBuilderDelayMinutes = null;
     let nextCrannyDefenseRunAt = null;
@@ -5051,6 +5122,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let activitySimulationResumeWaitLogged = false;
     let lastActivitySimulationAction = null;
     let activitySimulationCompletedCount = 0;
+    let nextTop10TrackingRunAt = null;
+    let lastTop10TrackingDelayMinutes = null;
+    let top10TrackingResumeWaitLogged = false;
+    let lastTop10TrackingAction = null;
+    let top10TrackingCompletedCount = 0;
     let builderResumeWaitLogged = false;
     let builderTemplateDeferredForCrannyLogged = false;
     let builderVillageWaitLastLogAt = null;
@@ -5718,6 +5794,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     let runRaidGuardPriorityCheck = async () => false;
 
+    /** Auto loops farmlist may cancel so farm raids are not delayed by builder/troop/etc. */
+    const isPreemptibleAutoAction = (actionLabel) => {
+      const label = String(actionLabel || "").toLowerCase();
+      return (
+        label === "auto-builder" ||
+        label === "auto-troop-trainer" ||
+        label === "cranny-defense-rr" ||
+        label === "activity-simulation"
+      );
+    };
+
+    const waitForPreemptedActionRelease = async (requestLabel, preemptedLabel, maxWaitMs = 90000) => {
+      cancelRequested = true;
+      const stepMs = 400;
+      let waited = 0;
+      while (actionInProgress && waited < maxWaitMs) {
+        await sleep(stepMs);
+        waited += stepMs;
+      }
+      if (actionInProgress) {
+        logWarn(
+          `[${requestLabel}] ${preemptedLabel} did not release within ${Math.round(maxWaitMs / 1000)}s — skipping this tick.`
+        );
+        return false;
+      }
+      return true;
+    };
+
     const waitForActionIdle = async (label = "command", options = {}) => {
       const maxWaitMs = Number.isFinite(Number(options.maxWaitMs))
         ? Math.max(0, Number(options.maxWaitMs))
@@ -5725,6 +5829,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const pollMs = Number.isFinite(Number(options.pollMs))
         ? Math.max(50, Number(options.pollMs))
         : 400;
+      const noticeEveryMs = Number.isFinite(Number(options.noticeEveryMs))
+        ? Math.max(0, Number(options.noticeEveryMs))
+        : maxWaitMs > 15000
+          ? 10000
+          : 0;
       if (!actionInProgress) {
         return true;
       }
@@ -5736,7 +5845,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       while (actionInProgress && waited < maxWaitMs) {
         await sleep(pollMs);
         waited += pollMs;
-        if (waited - lastNoticeAt >= 10000) {
+        if (noticeEveryMs > 0 && waited - lastNoticeAt >= noticeEveryMs) {
           lastNoticeAt = waited;
           logInfo(`[${label}] Still waiting (${Math.round(waited / 1000)}s)…`);
         }
@@ -5754,6 +5863,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const allowWhilePaused = Boolean(options && options.allowWhilePaused);
       const raidGuardPriority = Boolean(options && options.raidGuardPriority);
       const preemptAutoBuilder = Boolean(options && options.preemptAutoBuilder);
+      const farmlistPriority = Boolean(options && options.farmlistPriority);
       const automationStatus = runtimeControls.getAutomationStatus
         ? runtimeControls.getAutomationStatus()
         : { paused: false, reason: "online" };
@@ -5764,25 +5874,29 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         return false;
       }
 
-      const canPreemptTemplateBuilder =
-        preemptAutoBuilder && actionInProgress && currentActionLabel === "auto-builder";
+      const canPreemptForFarmlist =
+        farmlistPriority &&
+        actionInProgress &&
+        isPreemptibleAutoAction(currentActionLabel);
 
-      if (canPreemptTemplateBuilder) {
+      const canPreemptTemplateBuilder =
+        !canPreemptForFarmlist &&
+        preemptAutoBuilder &&
+        actionInProgress &&
+        currentActionLabel === "auto-builder";
+
+      if (canPreemptForFarmlist) {
+        logInfo(
+          `[Farmlist] Pre-empting ${currentActionLabel || "auto loop"} for ${label}…`
+        );
+        if (!(await waitForPreemptedActionRelease(label, currentActionLabel || "auto loop"))) {
+          return false;
+        }
+      } else if (canPreemptTemplateBuilder) {
         logInfo(
           `[Cranny defense] Pre-empting template builder (${currentActionLabel}) for ${label}…`
         );
-        cancelRequested = true;
-        const maxWaitMs = 90000;
-        const stepMs = 400;
-        let waited = 0;
-        while (actionInProgress && waited < maxWaitMs) {
-          await sleep(stepMs);
-          waited += stepMs;
-        }
-        if (actionInProgress) {
-          logWarn(
-            `[Cranny defense] ${label}: template builder did not release within ${maxWaitMs / 1000}s — skipping this tick.`
-          );
+        if (!(await waitForPreemptedActionRelease(label, currentActionLabel || "auto-builder"))) {
           return false;
         }
       } else if (actionInProgress) {
@@ -6502,7 +6616,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           }
           await maybePrintAutoFarmlistStatus("Farmlist Loop");
           return sendResult;
-        }, { raidGuardPriority: true });
+        }, { raidGuardPriority: true, farmlistPriority: true });
         return { executed, startedAt };
       };
 
@@ -6530,11 +6644,6 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               scheduleFarmlistLoop();
             }
           }, 15000);
-          return;
-        }
-
-        if (!(await waitForActionIdle("Farmlist Loop", { maxWaitMs: 180000 }))) {
-          scheduleFarmlistShortRetry("Session still busy after waiting.");
           return;
         }
 
@@ -7211,7 +7320,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       };
 
       return enqueueTroopAutoRun(async () => {
-        if (!(await waitForActionIdle("Troop Auto", { maxWaitMs: 600000 }))) {
+        if (!(await waitForActionIdle("Troop Auto", { maxWaitMs: TROOP_AUTO_ACTION_IDLE_WAIT_MS }))) {
           return "busy";
         }
 
@@ -7366,9 +7475,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
         const outcome = await runTroopTrainingForVillage(village);
         if (outcome === "busy") {
-          // Another loop (farmlist/builder/cranny) held the browser. Retry soon instead of
-          // dropping this village's training for the whole 15-25 min interval.
-          const retryMs = 60000 + Math.floor(Math.random() * 30000);
+          const retryMs =
+            TROOP_AUTO_BUSY_RETRY_MIN_MS +
+            Math.floor(Math.random() * TROOP_AUTO_BUSY_RETRY_JITTER_MS);
           state.nextRunAt = Date.now() + retryMs;
           logInfo(
             `[Troop Auto] ${villageDisplayName(village)} — browser busy, retrying in ${formatDelayMs(retryMs)}.`
@@ -7950,6 +8059,183 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    const cancelTop10TrackingLoopTimer = () => {
+      if (top10TrackingLoopTimer) {
+        clearTimeout(top10TrackingLoopTimer);
+        top10TrackingLoopTimer = null;
+      }
+      nextTop10TrackingRunAt = null;
+    };
+
+    const pickNextTop10TrackingDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (
+        lastTop10TrackingDelayMinutes !== null &&
+        max > min &&
+        next === lastTop10TrackingDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastTop10TrackingDelayMinutes = next;
+      return next;
+    };
+
+    const buildTop10TrackingStatus = () => ({
+      enabled: settings.top10TrackingEnabled,
+      minMinutes: settings.top10TrackingLoopMinMinutes,
+      maxMinutes: settings.top10TrackingLoopMaxMinutes,
+      logFile: settings.top10TrackingLogFile || DEFAULT_TOP10_LOG_FILE,
+      playerName: settings.top10TrackingPlayerName || null,
+      categories: top10Tracking.listCategories(),
+      nextInMinutes: nextTop10TrackingRunAt
+        ? Math.max(0, Math.ceil((nextTop10TrackingRunAt - Date.now()) / 60000))
+        : null,
+      completedCount: top10TrackingCompletedCount,
+      lastAction: lastTop10TrackingAction
+    });
+
+    const executeTop10TrackingSnapshot = async (source) => {
+      const startedAt = Date.now();
+      const account = runtimeControls.dashboardAccount || {};
+      let executed = false;
+
+      try {
+        executed = await runAction(
+          "top10-tracking",
+          async () => {
+            const snapshot = await runWithRandomDelay(
+              settings,
+              "Top 10 Tracking",
+              () =>
+                top10Tracking.runTop10TrackingSnapshot(getPage, settings, {
+                  username: account.username || null
+                }),
+              () => cancelRequested
+            );
+
+            lastTop10TrackingAction = {
+              at: snapshot.ts,
+              logFilePath: snapshot.logFilePath,
+              gameHost: snapshot.gameHost,
+              categories: snapshot.categories
+            };
+
+            const okCount = snapshot.categories.filter((entry) => entry.ok).length;
+            logSuccess(
+              `[Top10] ${source}: logged ${okCount}/${snapshot.categories.length} categories to ${path.basename(snapshot.logFilePath)}.`
+            );
+            for (const cat of snapshot.categories) {
+              if (!cat.ok) {
+                logWarn(
+                  `[Top10] ${cat.categoryLabel}: ${(cat.warnings && cat.warnings[0]) || cat.warning || "no rows parsed"}`
+                );
+              } else if (cat.selfRank) {
+                logInfo(`[Top10] ${cat.categoryLabel}: your rank #${cat.selfRank}`);
+              }
+            }
+
+            recordAction({
+              actionType: "top10.tracking",
+              status: okCount > 0 ? "success" : "failed",
+              durationMs: Date.now() - startedAt,
+              details: {
+                source,
+                logFilePath: snapshot.logFilePath,
+                categories: snapshot.categories
+              }
+            });
+
+            await restoreSelectedVillageContext("Top10 Tracking");
+            if (dashboardBridge) {
+              dashboardBridge.publishSnapshot();
+            }
+            return snapshot;
+          },
+          { raidGuardPriority: false }
+        );
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        recordAction({
+          actionType: "top10.tracking",
+          status: "failed",
+          durationMs: Date.now() - startedAt,
+          details: { source },
+          errorMessage: message
+        });
+        logWarn(`[Top10] ${source} skipped/failed: ${message}`);
+      }
+
+      if (executed) {
+        top10TrackingCompletedCount += 1;
+      }
+      return executed;
+    };
+
+    const scheduleTop10TrackingLoop = () => {
+      cancelTop10TrackingLoopTimer();
+
+      const normalized = normalizeMinuteRange(
+        settings.top10TrackingLoopMinMinutes,
+        settings.top10TrackingLoopMaxMinutes,
+        60,
+        120
+      );
+      settings.top10TrackingLoopMinMinutes = normalized.min;
+      settings.top10TrackingLoopMaxMinutes = normalized.max;
+
+      if (!settings.top10TrackingEnabled || done) {
+        return;
+      }
+
+      const minutes = pickNextTop10TrackingDelayMinutes(
+        settings.top10TrackingLoopMinMinutes,
+        settings.top10TrackingLoopMaxMinutes
+      );
+      top10TrackingResumeWaitLogged = false;
+      nextTop10TrackingRunAt = Date.now() + minutes * 60 * 1000;
+      logInfo(
+        `[Top10] Next snapshot in ${minutes} minute(s). (${top10TrackingCompletedCount} snapshot(s) completed this session.)`
+      );
+
+      const runTop10TrackingScheduledTick = async () => {
+        if (done || !settings.top10TrackingEnabled) {
+          scheduleTop10TrackingLoop();
+          return;
+        }
+
+        const automationStatus = runtimeControls.getAutomationStatus
+          ? runtimeControls.getAutomationStatus()
+          : { paused: false, reason: "online" };
+
+        if (automationStatus.paused) {
+          nextTop10TrackingRunAt = null;
+          if (!top10TrackingResumeWaitLogged) {
+            logInfo(
+              `[Top10] Paused (${automationStatus.reason}). Waiting for session to resume...`
+            );
+            top10TrackingResumeWaitLogged = true;
+          }
+          top10TrackingLoopTimer = setTimeout(() => {
+            if (!done && settings.top10TrackingEnabled) {
+              scheduleTop10TrackingLoop();
+            }
+          }, 15000);
+          return;
+        }
+
+        await executeTop10TrackingSnapshot("auto-loop");
+        scheduleTop10TrackingLoop();
+      };
+
+      top10TrackingLoopTimer = setTimeout(
+        () => void runTop10TrackingScheduledTick(),
+        minutes * 60 * 1000
+      );
+      if (dashboardBridge) {
+        dashboardBridge.publishSnapshot();
+      }
+    };
+
     const buildTroopLiveSummary = () => {
       const allVillages = villageState.villages;
       const rrVillages = troopPlans.listEnabledVillages(allVillages);
@@ -8040,6 +8326,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const activityNextInMinutes = nextActivitySimulationRunAt
         ? Math.max(0, Math.ceil((nextActivitySimulationRunAt - Date.now()) / 60000))
         : null;
+      const top10NextInMinutes = nextTop10TrackingRunAt
+        ? Math.max(0, Math.ceil((nextTop10TrackingRunAt - Date.now()) / 60000))
+        : null;
 
       const cacheKey = [
         automationStatus.paused,
@@ -8050,6 +8339,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.troopTrainingRoundRobinEnabled,
         settings.crannyDefenseRoundRobinEnabled,
         settings.activitySimulationEnabled,
+        settings.top10TrackingEnabled,
         villageState.selectedVillageId,
         villageState.activeVillageId,
         villageState.villages.length,
@@ -8073,6 +8363,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           if (snap.loops.troop) snap.loops.troop.nextInMinutes = getSoonestTroopVillageNextInMinutes();
           if (snap.loops.cranny) snap.loops.cranny.nextInMinutes = crannyNextInMinutes;
           if (snap.loops.activity) snap.loops.activity.nextInMinutes = activityNextInMinutes;
+          if (snap.loops.top10) snap.loops.top10.nextInMinutes = top10NextInMinutes;
         }
         if (runtimeControls.getSessionLoopStatus) {
           snap.sessionLoop = runtimeControls.getSessionLoopStatus();
@@ -8119,6 +8410,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         nextInMinutes: activityNextInMinutes,
         completedCount: activitySimulationCompletedCount
       };
+      const top10LoopStatus = {
+        enabled: settings.top10TrackingEnabled,
+        minMinutes: settings.top10TrackingLoopMinMinutes,
+        maxMinutes: settings.top10TrackingLoopMaxMinutes,
+        nextInMinutes: top10NextInMinutes,
+        completedCount: top10TrackingCompletedCount,
+        logFile: settings.top10TrackingLogFile || DEFAULT_TOP10_LOG_FILE
+      };
       const selectedVillage =
         villageState.villages.find((v) => v.id === villageState.selectedVillageId) || null;
       const activeVillage =
@@ -8154,9 +8453,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           builder: builderLoopStatus,
           troop: troopLoopStatus,
           cranny: crannyLoopStatus,
-          activity: activityLoopStatus
+          activity: activityLoopStatus,
+          top10: top10LoopStatus
         },
         activitySimulation: buildActivitySimulationStatus(),
+        top10Tracking: buildTop10TrackingStatus(),
         display: {
           compactView: Boolean(settings.dashboardCompactView)
         },
@@ -8261,6 +8562,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       scheduleTroopTrainingLoop();
       scheduleCrannyDefenseLoop();
       scheduleActivitySimulationLoop();
+      scheduleTop10TrackingLoop();
       scheduleRaidEvacuationLoop();
       if (dashboardBridge) {
         dashboardBridge.publishSnapshot({ force: true });
@@ -8356,7 +8658,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       if (input === "1") {
         const startedAt = Date.now();
-        await runAction("Send Farmlists", async () => {
+        await runAction(
+          "Send Farmlists",
+          async () => {
           logInfo("Running: Send Farmlists...");
           const sendResult = await runWithRandomDelay(
             settings,
@@ -8380,7 +8684,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               ...getVillageMeta("all")
             }
           });
-        }).catch((error) => {
+        },
+          { farmlistPriority: true }
+        ).catch((error) => {
           const message = error.message || String(error);
           recordAction({
             actionType: "farmlist.send",
@@ -9107,6 +9413,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
+      if (input === "O") {
+        await executeTop10TrackingSnapshot("manual").catch((error) => {
+          logError(`Top 10 snapshot failed: ${error.message || error}`);
+        });
+        continue;
+      }
+
       if (input === "P") {
         if (!runtimeControls.setAutomationPaused || !runtimeControls.getAutomationStatus) {
           logWarn("Pause control is unavailable in this runtime.");
@@ -9145,6 +9458,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleTroopTrainingLoop();
         scheduleCrannyDefenseLoop();
         scheduleActivitySimulationLoop();
+        scheduleTop10TrackingLoop();
         scheduleRaidEvacuationLoop();
         continue;
       }
@@ -9154,7 +9468,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      logWarn("Unknown option. Use 0, 1, 2, 3, T, C, 4, 5, X, r, R, V, L, P, S, or Q.");
+      logWarn("Unknown option. Use 0, 1, 2, 3, T, C, 4, 5, X, r, R, V, L, O, P, S, or Q.");
     }
   } finally {
     if (dashboardBridge) {
@@ -9182,6 +9496,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     if (activitySimulationLoopTimer) {
       clearTimeout(activitySimulationLoopTimer);
       activitySimulationLoopTimer = null;
+    }
+    if (top10TrackingLoopTimer) {
+      clearTimeout(top10TrackingLoopTimer);
+      top10TrackingLoopTimer = null;
     }
     for (const state of troopVillageLoopState.values()) {
       if (state.timer) {

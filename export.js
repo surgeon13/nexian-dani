@@ -22,6 +22,7 @@ const exclude = new Set([
   ".env",
   "storageState.json",
   "log.jsonl",
+  "top10.log",
   "log-archive",
   ".DS_Store",
   "Thumbs.db"
@@ -55,7 +56,7 @@ function copyDir(src, dest, rel) {
 
 console.log(`Zipping ${exportBase} v${version} -> ${zipPath}`);
 console.log(
-  "Excluding: .git, node_modules, .env files, storageState.json, log.jsonl, log-archive, templates/progress.json, templates/troop_plans.json, templates/proxy_list.json, debug logs\n"
+  "Excluding: .git, node_modules, .env files, storageState.json, log.jsonl, top10.log, log-archive, templates/progress.json, templates/troop_plans.json, templates/proxy_list.json, debug logs\n"
 );
 
 copyDir(projectDir, stagedProjectDir, "");

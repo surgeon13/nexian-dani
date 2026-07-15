@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.8] — 2026-07-15
+
+### Release
+
+**v1.8.8** — Top 10 statistics tracking (`top10.log`), farmlist highest auto-loop priority (v1.8.7), and troop auto idle-wait cap (10s). Includes all **1.8.6** troop plans, proxy pool, and reliability fixes.
+
+### Added
+
+- **Top 10 statistics tracking** (`top10Tracking.js`): scheduled or manual snapshots of server Top 10 rankings — attackers, defenders, robbers, climbers, population, alliances, and villages — plus your own rank when found. Each category is appended as one JSONL line with ISO timestamp and `epochMs` in `top10.log` (configurable) for time-series analysis. Enable in Settings **[O]** or `.env`; run once from main menu **[O]**.
+
+### Changed
+
+- **Troop auto idle wait capped at 10s.** If the browser is busy (e.g. Top 10 snapshot **[O]**), troop auto logs once and skips instead of waiting minutes with repeated “Still waiting” lines; it retries that village in ~15–25s.
+
+## [1.8.7] — 2026-07-13
+
+### Changed
+
+- **Farmlist send has highest auto-loop priority.** When the farmlist loop (or manual menu **1** / dashboard send) runs, it pre-empts builder, troop auto-train, cranny RR, and activity simulation instead of waiting up to 3 minutes or retrying. Raid evacuation and manual menu actions are not interrupted.
+
 ## [1.8.6] — 2026-07-12
 
 ### Release
