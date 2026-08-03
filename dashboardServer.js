@@ -4,6 +4,7 @@ const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
 const { tailLogFile } = require("./logTail");
+const { buildTop10DashboardPayload } = require("./top10Dashboard");
 let villageBuilder = null;
 try {
   villageBuilder = require("./villageBuilder");
@@ -27,6 +28,7 @@ const ACTION_MAP = {
   "relogin-status": "R",
   villages: "V",
   logs: "L",
+  top10: "O",
   pause: "P",
   settings: "S",
   quit: "Q"
@@ -213,6 +215,19 @@ function startDashboardServer({
           ok: true,
           entries: tailLogFile(logFilePath, tail)
         });
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/top10") {
+        const limit = Number(url.searchParams.get("limit") || 700);
+        try {
+          sendJson(res, 200, buildTop10DashboardPayload(bridge, { limit }));
+        } catch (error) {
+          sendJson(res, 500, {
+            ok: false,
+            error: error && error.message ? error.message : String(error)
+          });
+        }
         return;
       }
 
