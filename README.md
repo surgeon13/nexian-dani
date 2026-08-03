@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.8** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.9** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -12,10 +12,11 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 |------|----------|
 | **Login / session** | Saves browser storage to `storageState.json` so you can skip full login after the first run. |
 | **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker, **proxy menu (`y`)**. |
-| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
+| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat. |
+| **24/7 keep-alive** | External watchdog (`npm run start:24-7`) restarts a dead or stalled bot; heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
 ### Automation modules
@@ -24,17 +25,19 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
-- **Top 10 tracking** — Scheduled or manual snapshots of server rankings (attackers, defenders, robbers, climbers, population, alliances, villages) appended to `top10.log` with timestamps for time-series analysis. Settings **[O]** or main menu **[O]** for a one-shot snapshot.
+- **Top 10 tracking** — Scheduled or manual snapshots of server rankings (attackers, defenders, robbers, climbers, population, alliances, villages) appended to `top10.log`. Dashboard **Top 10** tab shows standings, leaderboards, poll-to-poll **Δ**, and **per-hour** pace from the full log history. Settings **[O]** or main menu / dashboard **Snapshot now**.
+- **24/7 keep-alive** — `scripts/keep-alive.sh` polls every minute and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. Prefer `npm run start:24-7` on a long-lived host.
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.9:** Top 10 dashboard + Δ/`/h` from all polls; 24/7 keep-alive; session wake recovery; proxy rotate-on-rest visibility; farmlist village pin; Palace expansion on realm host.
 - **Top 10 statistics tracking** — seven ranking categories logged to `top10.log` (JSONL lines with `ts` + `epochMs`).
 - **Farmlist auto-send pre-empts** builder, troop, cranny, and activity auto loops when due.
 - **Troop plans** replace the old per-village troop-template toggles (four building branches, per-plan timers).
 - **Proxy pool** with dashboard + terminal management; rotate proxy after session-loop rest.
 - **Reliability:** farmlist send uses `#btn_send_all` (not troop `#btn_train`), troop auto queue (10s max idle wait), Stable map discovery, `GAME_HOST`, `FARMLIST_VILLAGE_ID`.
 
-See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.8**) for full release notes.
+See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 
 ## Requirements
 
@@ -53,10 +56,13 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.8**) for full release notes.
 | `proxyPool.js` / `proxyConfig.js` | Proxy list parsing, pool file, dashboard/settings sync. |
 | `browserNavigation.js` | Shared transient navigation error detection and retry delays. |
 | `top10Tracking.js` | Server Top 10 / statistics scraping and timestamped `top10.log` output. |
+| `top10Dashboard.js` | Builds `/api/top10` payload: standings, history, Δ, and `/h` rates from the poll log. |
 | `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
-| `public/` | Dashboard HTML, CSS, and client JS. |
+| `public/` | Dashboard HTML, CSS, and client JS (includes Top 10 tab). |
+| `scripts/keep-alive.sh` | 24/7 watchdog: restart dead/stale bot; heartbeats → `keep-alive.log`. |
+| `scripts/start-24-7.sh` | Starts bot + network sampler + keep-alive in tmux sessions. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
-| `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers). |
+| `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers); Palace on realm host. |
 | `templates/` | Build templates; `templates/index.json` lists available plans. |
 | `templates/progress.json` | Per-village builder progress (gitignored; safe to delete to reset). |
 | `templates/troop_plans.json` | Troop plans and village assignments (gitignored; created at runtime). |
@@ -112,6 +118,8 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run dashboard:nexian:headless` | Same with `.env.nexian` (Playwright headless + web UI) |
 | `npm run dashboard:nexian:headed` | Visible browser + dashboard |
 | `npm run dashboard:headed` | Dashboard with headed browser (default `.env`) |
+| `npm run start:24-7` | Start bot dashboard + network sampler + keep-alive watchdog (tmux) |
+| `npm run keep-alive` | Run the keep-alive watchdog only (expects bot already running) |
 | `npm run playwright:install` | Install Playwright Chromium only |
 | `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `templates/progress.json` |
 
@@ -133,11 +141,70 @@ Opens after login. Typical keys include:
 - **`V`** — Pick active village context
 - **`S`** — Settings submenu (loops, gold complete, **D = compact UI**, raid toggle, expansion options, …)
 - **`L`** — Log summary (`log.jsonl`)
-- **`O`** — Top 10 snapshot now (writes `top10.log`)
+- **`O`** — Top 10 snapshot now (writes `top10.log`; also available on the dashboard Top 10 tab)
 - **`P`** — Pause or resume automation loops (farmlist, builder, troop, cranny, raid guard). Optional auto-resume: `MANUAL_PAUSE_AUTO_UNPAUSE_MINUTES` (Settings **3**).
 - **`Q`** — Quit menu / session teardown per `login.js` flow
 
 Exact labels are printed each run—use those as source of truth if keys change. With **compact UI** enabled, the main menu collapses to two short rows (same keys).
+
+---
+
+## Top 10 tracking and dashboard
+
+Enable `TOP10_TRACKING_ENABLED=true` and set the interval (`TOP10_TRACKING_LOOP_MIN/MAX_MINUTES`). Snapshots scrape Nexian `statistics.php` and append one JSONL line per category to `top10.log`.
+
+**Dashboard → Top 10 tab**
+
+| Panel | Meaning |
+|-------|---------|
+| Your standings | Rank / points per category, total **Δ** across all polls, **`/h`** pace, sparkline |
+| Leaderboard | Current top 10 + **Δ all**, **`/h`**, last-interval `/h`, rank move |
+| Your trend | All-polls Δ/`/h`, last-interval Δ/`/h`, poll-by-poll table, chart |
+
+Rates use wall-clock hours between snapshot timestamps:  
+`(value_now − value_then) / hours_elapsed`.
+
+Manual snapshot: menu **`O`**, dashboard **Snapshot now**, or `POST /api/action` with `{ "action": "top10" }`.
+
+---
+
+## 24/7 keep-alive (crash recovery)
+
+The Cursor/cloud agent is **not** a 24/7 process supervisor. Use the keep-alive watchdog on a long-lived host (VPS, Pi, always-on PC).
+
+```bash
+npm run start:24-7
+```
+
+This starts three tmux sessions by default:
+
+| Session | Role |
+|---------|------|
+| `nexian-dani` | Bot + dashboard (`npm run dashboard`) |
+| `nexian-keep` | `scripts/keep-alive.sh` watchdog |
+| `net-usage` | Optional network sampler |
+
+**Keep-alive checks every 60s** (`CHECK_SECONDS`):
+
+1. Is `login.js` running? → else restart  
+2. Does `http://127.0.0.1:3847/api/status` answer? → else restart  
+3. Is `log.jsonl` older than **20 minutes** (`STALE_MINUTES`) while loops are expected? → restart (skipped if automation is paused / session rest)
+
+Heartbeats and restart reasons are appended to **`keep-alive.log`**.
+
+If keep-alive itself dies, nothing restarts the bot until you run `npm run start:24-7` (or `npm run keep-alive`) again. Pair with systemd/cron on production hosts if you need the watchdog supervised too.
+
+### Is the bot down?
+
+| Check | Healthy signal |
+|-------|----------------|
+| `curl -sS http://127.0.0.1:3847/api/status` | HTTP 200; fresh `status.updatedAt` |
+| `pgrep -af 'login.js\|keep-alive'` | Both bot and keep-alive processes |
+| `tail -20 keep-alive.log` | `heartbeat bot=up dash=up` about every minute |
+| `log.jsonl` / `top10.log` mtime | Updating within your loop intervals |
+| `status.top10Tracking.lastAction.at` | Within ~`TOP10_TRACKING_*` minutes when enabled |
+
+Stale `log_age` ≥ 20m in keep-alive while online → watchdog should restart. Missing heartbeats for many minutes → keep-alive itself is stuck/down.
 
 ---
 
@@ -211,6 +278,7 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 - **Loops:** `FARMLIST_LOOP_*`, `BUILDER_LOOP_*`, `SESSION_LOOP_*`, `TROOP_TRAINING_ROUND_ROBIN_ENABLED`, `TOP10_TRACKING_*`
 - **Realm / farmlist:** `GAME_HOST`, `FARMLIST_VILLAGE_ID` (pin rally-point village for auto-send)
 - **Proxy:** `PROXY_SERVER`, `PROXY_USERNAME`, `PROXY_PASSWORD`, `PROXY_ROTATE_ON_SESSION_REST`
+- **24/7 keep-alive:** shell env `CHECK_SECONDS`, `STALE_MINUTES`, `DASH_URL` (see `.env.example` comments; not stored as bot `.env` keys)
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
@@ -225,9 +293,10 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 ## Logging
 
 - **Action log:** `log.jsonl` (or `NEXIAN_ACTION_LOG_FILE`) — bot actions (farmlists, troops, builder, …)
-- **Top 10 log:** `top10.log` (or `TOP10_TRACKING_LOG_FILE`) — one JSON object per line per ranking category per snapshot (`ts`, `epochMs`, `top10`, `self`)
+- **Top 10 log:** `top10.log` (or `TOP10_TRACKING_LOG_FILE`) — one JSON object per line per ranking category per snapshot (`ts`, `epochMs`, `top10`, `self`). The dashboard aggregates these lines for Δ and `/h`.
+- **Keep-alive log:** `keep-alive.log` — watchdog heartbeats and restart reasons (gitignored)
 - **Rotation:** When `log.jsonl` exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), it is renamed into `log-archive/` and logging continues in a new empty file.
-- **Format:** append-only JSONL
+- **Format:** append-only JSONL (action + Top 10); keep-alive is plain text timestamps
 - **Summary menu** counts farmlists, troops, upgrades, gold autocomplete, merchant-transfer history (mostly historical), evacuation history (mostly historical).
 
 ---
@@ -238,7 +307,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 npm run export
 ```
 
-Produces a zip beside the project folder named like `nexian-v1.8.8-2026-07-15-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `top10.log`, `node_modules/`, optionally `templates/progress.json`.
+Produces a zip beside the project folder named like `nexian-v1.8.9-2026-08-03-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `top10.log`, `keep-alive.log`, `node_modules/`, optionally `templates/progress.json`.
 
 On the new machine: extract → `node setup.js` → fill `.env` → `node login.js --headed --keep-open`.
 
@@ -261,6 +330,8 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
+- **Bot crashed / dashboard dead:** run `npm run start:24-7` (or ensure `npm run keep-alive` is running). Check `keep-alive.log` for `restarting bot (...)`.
+- **Top 10 empty / no Δ:** need at least two successful snapshots in `top10.log`; confirm `TOP10_TRACKING_ENABLED` and that `/api/top10` returns `ok: true` categories.
 
 ---
 
