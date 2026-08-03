@@ -986,7 +986,17 @@ async function run() {
       sessionCycleInProgress = true;
       sessionCycleReason = "resting";
       try {
-        console.log("[Session Loop] Logging off current session...");
+        const pool = proxyPool.loadStore();
+        const willRotate =
+          settings.proxyRotateOnSessionRest && Array.isArray(pool.proxies) && pool.proxies.length > 1;
+        console.log(
+          "[Session Loop] Logging off current session..." +
+            (willRotate
+              ? ` (will rotate proxy on wake — pool ${pool.proxies.length})`
+              : pool.proxies && pool.proxies.length
+                ? " (same proxy on wake)"
+                : " (direct / no proxy pool)")
+        );
         await session.page.goto(settings.logoutUrl, {
           waitUntil: "domcontentloaded",
           timeout: 15000
@@ -1004,15 +1014,60 @@ async function run() {
 
         prepareProxyForSessionRestRelogin();
 
-        const nextSession = await createSession(settings.headless);
+        const loginWithTimeout = async (label) => {
+          const timeoutMs = 180000;
+          let timer = null;
+          try {
+            return await Promise.race([
+              createSession(settings.headless),
+              new Promise((_, reject) => {
+                timer = setTimeout(
+                  () => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)),
+                  timeoutMs
+                );
+              })
+            ]);
+          } finally {
+            if (timer) {
+              clearTimeout(timer);
+            }
+          }
+        };
+
+        let nextSession = null;
+        let lastError = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            console.log(`[Session Loop] Wake login attempt ${attempt}/3...`);
+            nextSession = await loginWithTimeout(`session wake login #${attempt}`);
+            break;
+          } catch (error) {
+            lastError = error;
+            console.error(
+              `[Session Loop] Wake login attempt ${attempt}/3 failed: ${error.message || error}`
+            );
+            if (attempt < 3) {
+              prepareProxyForSessionRestRelogin();
+              await waitMs(5000);
+            }
+          }
+        }
+        if (!nextSession) {
+          throw lastError || new Error("Session wake login failed.");
+        }
         session = nextSession;
         settings.headless = nextSession.headless;
-        console.log("[Session Loop] Re-login complete. Session resumed.");
+        console.log(
+          `[Session Loop] Re-login complete. Session resumed via ${formatProxyDisplay(settings)}.`
+        );
+        if (dashboardBridge) {
+          dashboardBridge.publishSnapshot({ force: true });
+        }
       } catch (error) {
         console.error("[Session Loop] Cycle failed:", error.message || error);
       } finally {
         sessionCycleInProgress = false;
-        sessionCycleReason = "resting";
+        sessionCycleReason = null;
         scheduleNextSessionCycle();
       }
     }, playMinutes * 60 * 1000);
@@ -1054,7 +1109,8 @@ async function run() {
       playMinMinutes: settings.playMinMinutes,
       playMaxMinutes: settings.playMaxMinutes,
       restMinMinutes: settings.restMinMinutes,
-      restMaxMinutes: settings.restMaxMinutes
+      restMaxMinutes: settings.restMaxMinutes,
+      proxyRotateOnSessionRest: settings.proxyRotateOnSessionRest !== false
     };
   };
 
@@ -1062,10 +1118,20 @@ async function run() {
     const nextInMinutes = nextSessionCycleAt
       ? Math.max(0, Math.ceil((nextSessionCycleAt - Date.now()) / 60000))
       : null;
+    const store = proxyPool.loadStore();
+    const poolCount = Array.isArray(store.proxies) ? store.proxies.length : 0;
 
     return {
       enabled: settings.sessionLoopEnabled,
-      nextInMinutes
+      nextInMinutes,
+      playMinMinutes: settings.playMinMinutes,
+      playMaxMinutes: settings.playMaxMinutes,
+      restMinMinutes: settings.restMinMinutes,
+      restMaxMinutes: settings.restMaxMinutes,
+      proxyRotateOnSessionRest: settings.proxyRotateOnSessionRest !== false,
+      proxyPoolCount: poolCount,
+      proxyWillRotateOnRest:
+        settings.proxyRotateOnSessionRest !== false && poolCount > 1
     };
   };
 
@@ -1259,7 +1325,8 @@ async function run() {
       "PROXY_SERVER",
       "PROXY_USERNAME",
       "PROXY_PASSWORD",
-      "PROXY_BYPASS"
+      "PROXY_BYPASS",
+      "PROXY_ROTATE_ON_SESSION_REST"
     ]);
     clearSessionForProxyChange();
     console.log(
@@ -1289,6 +1356,15 @@ async function run() {
 
     if (patch.bypass !== undefined) {
       store.bypass = String(patch.bypass || "").trim();
+    }
+
+    if (patch.rotateOnSessionRest !== undefined || patch.proxyRotateOnSessionRest !== undefined) {
+      const raw =
+        patch.rotateOnSessionRest !== undefined
+          ? patch.rotateOnSessionRest
+          : patch.proxyRotateOnSessionRest;
+      settings.proxyRotateOnSessionRest =
+        raw === true || String(raw).toLowerCase() === "true";
     }
 
     if (patch.activeIndex !== undefined && store.proxies.length) {
@@ -1340,7 +1416,8 @@ async function run() {
       "PROXY_SERVER",
       "PROXY_USERNAME",
       "PROXY_PASSWORD",
-      "PROXY_BYPASS"
+      "PROXY_BYPASS",
+      "PROXY_ROTATE_ON_SESSION_REST"
     ]);
 
     const shouldRelogin =

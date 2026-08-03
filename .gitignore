@@ -36,3 +36,6 @@ Desktop.ini
 
 # Local network usage baseline/logs
 network-usage/
+
+# 24/7 keep-alive watchdog log
+keep-alive.log
