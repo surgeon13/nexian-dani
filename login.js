@@ -238,7 +238,7 @@ const settings = {
   randomDelayMaxMs: numberEnv("RANDOM_DELAY_MAX_MS", 2000),
   selectAllSelector:
     process.env.FARMLIST_SELECT_ALL_SELECTOR ||
-    "#farmlist_selectall_32",
+    'input[id^="farmlist_selectall_"]',
   sendButtonSelector:
     process.env.FARMLIST_SEND_BUTTON_SELECTOR ||
     "#btn_send_all",
@@ -404,6 +404,8 @@ function persistRuntimeSettings(selectedKeys) {
     FARMLIST_LOOP_ENABLED: settings.farmlistLoopEnabled ? "true" : "false",
     FARMLIST_LOOP_MIN_MINUTES: String(settings.farmlistLoopMinMinutes),
     FARMLIST_LOOP_MAX_MINUTES: String(settings.farmlistLoopMaxMinutes),
+    FARMLIST_VILLAGE_ID:
+      settings.farmlistVillageId == null ? "" : String(settings.farmlistVillageId),
     SESSION_LOOP_ENABLED: settings.sessionLoopEnabled ? "true" : "false",
     SESSION_PLAY_MIN_MINUTES: String(settings.playMinMinutes),
     SESSION_PLAY_MAX_MINUTES: String(settings.playMaxMinutes),
@@ -599,12 +601,9 @@ function syncSettingsGameHostFromPage(page, settings) {
   let origin;
   try {
     const parsed = new URL(page.url());
+    // Only realm hosts (s1.nexian.world, …). Never the marketing portal —
+    // nexian.world/village2.php redirects there and would poison all game URLs.
     if (/^s\d+\.nexian\.world$/i.test(parsed.hostname)) {
-      origin = parsed.origin;
-    } else if (
-      parsed.hostname.endsWith("nexian.world") &&
-      /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(parsed.pathname)
-    ) {
       origin = parsed.origin;
     } else {
       return null;

@@ -1474,17 +1474,77 @@ async function sendFarmlists(getPage, settings, options = {}) {
   }
 
   await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
+  await page.waitForTimeout(800);
+
+  // Nexian shows e.g. "Raids sent: 5 | Skipped: 690 (insufficient troops), 1 (paused)"
+  const sendResult = await page
+    .evaluate(() => {
+      const text = String((document.body && document.body.innerText) || "");
+      const lineMatch = text.match(
+        /Raids?\s+sent:\s*\d+\s*\|\s*Skipped:\s*[^\n\r]{0,200}/i
+      );
+      const raw = lineMatch ? String(lineMatch[0]).replace(/\s+/g, " ").trim() : "";
+      const sentMatch = raw.match(/Raids?\s+sent:\s*(\d+)/i);
+      const skippedMatch = raw.match(/Skipped:\s*(\d+)/i);
+      if (!sentMatch && !skippedMatch) {
+        return null;
+      }
+      const reasonParts = [];
+      const reasonRe = /(\d+)\s*\(([^)]+)\)/g;
+      let m;
+      while ((m = reasonRe.exec(raw)) !== null) {
+        reasonParts.push(`${m[1]} (${m[2].trim()})`);
+      }
+      const firstParen = raw.match(/\(([^)]+)\)/);
+      return {
+        sent: sentMatch ? Number(sentMatch[1]) || 0 : 0,
+        skipped: skippedMatch ? Number(skippedMatch[1]) || 0 : 0,
+        reason: reasonParts.length
+          ? reasonParts.join(", ")
+          : firstParen
+            ? String(firstParen[1] || "").trim()
+            : "",
+        raw
+      };
+    })
+    .catch(() => null);
+
+  if (sendResult) {
+    const summary =
+      sendResult.raw ||
+      `Raids sent: ${sendResult.sent} | Skipped: ${sendResult.skipped}${
+        sendResult.reason ? ` (${sendResult.reason})` : ""
+      }`;
+    if (sendResult.sent <= 0) {
+      return {
+        status: "idle",
+        message: `[Farmlist] ${summary}`,
+        raidsSent: sendResult.sent,
+        raidsSkipped: sendResult.skipped,
+        skipReason: sendResult.reason || null
+      };
+    }
+    return {
+      status: "sent",
+      message: `[Farmlist] ${summary}`,
+      raidsSent: sendResult.sent,
+      raidsSkipped: sendResult.skipped,
+      skipReason: sendResult.reason || null
+    };
+  }
+
   return { status: "sent" };
 }
 
 function withVillageId(url, villageId) {
-  if (!villageId) {
+  const id = Number(villageId);
+  if (!Number.isFinite(id) || id <= 0) {
     return url;
   }
 
   try {
     const parsed = new URL(url);
-    parsed.searchParams.set("vid", String(villageId));
+    parsed.searchParams.set("vid", String(Math.trunc(id)));
     return parsed.toString();
   } catch (_error) {
     return url;
@@ -1537,8 +1597,9 @@ function resolveVillageStatusUrl(settings, villageState = null) {
   const preferredVid =
     villageState &&
     (villageState.selectedVillageId || villageState.activeVillageId || null);
-  return preferredVid
-    ? withVillageId(settings.villageStatusUrl, preferredVid)
+  const id = Number(preferredVid);
+  return Number.isFinite(id) && id > 0
+    ? withVillageId(settings.villageStatusUrl, id)
     : settings.villageStatusUrl;
 }
 
@@ -4093,6 +4154,23 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   }
 
   const rows = await page.evaluate((rowSelector) => {
+    const parseStock = (id) => {
+      const el = document.querySelector(id);
+      if (!el) {
+        return NaN;
+      }
+      const digits = String(el.textContent || "")
+        .split("/")[0]
+        .replace(/[^\d]/g, "");
+      return digits ? Number(digits) : NaN;
+    };
+    const stock = {
+      wood: parseStock("#l4"),
+      clay: parseStock("#l3"),
+      iron: parseStock("#l2"),
+      crop: parseStock("#l1")
+    };
+
     return Array.from(document.querySelectorAll(rowSelector))
       .map((row) => {
         const tit = row.querySelector("td.desc .tit");
@@ -4102,7 +4180,9 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
         if (!troopName && unitImg) {
           troopName = String(unitImg.getAttribute("title") || unitImg.getAttribute("alt") || "").trim();
         }
-        const inputEl = row.querySelector("td.val input.text[type='text'], td.val input.text");
+        const inputEl = row.querySelector(
+          "td.val input.text[type='text'], td.val input.text, td.val input[type='text']"
+        );
         const maxLink = row.querySelector("td.max a");
         const inputName = inputEl ? inputEl.getAttribute("name") : "";
         const maxText = maxLink ? maxLink.textContent : "";
@@ -4117,19 +4197,55 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
             String(onclickText).match(/\bvalue\s*=\s*(\d+)/i);
           return m ? Number(m[1]) : NaN;
         })();
-        let maxTrainable = Number.isFinite(maxFromText)
-          ? maxFromText
-          : Number.isFinite(maxFromOnclick)
-            ? maxFromOnclick
-            : 0;
+
+        const costSpans = Array.from(row.querySelectorAll("td.desc .details span.little_res"));
+        const costs = costSpans
+          .map((el) => Number(String(el.textContent || "").replace(/[^\d]/g, "")))
+          .filter((n) => Number.isFinite(n));
+        // Nexian cost order: wood | clay | iron | crop (| upkeep | time…)
+        let maxFromCosts = NaN;
+        if (costs.length >= 4) {
+          const caps = [];
+          const pairs = [
+            [stock.wood, costs[0]],
+            [stock.clay, costs[1]],
+            [stock.iron, costs[2]],
+            [stock.crop, costs[3]]
+          ];
+          for (const [have, need] of pairs) {
+            if (!Number.isFinite(have) || !Number.isFinite(need) || need <= 0) {
+              continue;
+            }
+            caps.push(Math.floor(have / need));
+          }
+          if (caps.length) {
+            maxFromCosts = Math.max(0, Math.min(...caps));
+          }
+        }
+
+        // Prefer game max-link / onclick; fall back to cost math; Available: N last.
+        const fromUi = [maxFromText, maxFromOnclick].filter((n) => Number.isFinite(n) && n >= 0);
+        let maxTrainable = fromUi.length ? Math.max(...fromUi) : 0;
+        if (maxTrainable <= 0 && Number.isFinite(maxFromCosts)) {
+          maxTrainable = maxFromCosts;
+        } else if (maxTrainable > 0 && Number.isFinite(maxFromCosts)) {
+          maxTrainable = Math.min(maxTrainable, maxFromCosts);
+        }
+
         const availEl = row.querySelector(".tit span.info span[id^='availCount_']");
         const availDigits = availEl ? String(availEl.textContent || "").replace(/\D/g, "").trim() : "";
         const availableNow = availDigits !== "" ? Number(availDigits) : NaN;
         if (Number.isFinite(availableNow)) {
           if (availableNow <= 0) {
             maxTrainable = 0;
-          } else {
+          } else if (maxTrainable > 0) {
             maxTrainable = Math.min(maxTrainable, availableNow);
+          } else {
+            // Max link missing/unparsed — Available: N is the game's affordance hint.
+            maxTrainable = availableNow;
+            if (Number.isFinite(maxFromCosts) && maxFromCosts >= 0) {
+              maxTrainable = Math.min(maxTrainable, maxFromCosts);
+            }
           }
         }
         return { troopName, inputName, maxTrainable };
@@ -5109,10 +5225,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let farmlistResumeWaitLogged = false;
     let farmlistShortRetriesLeft = 0;
     const FARMLIST_SHORT_RETRY_MS = 120000;
-    /** Max time troop auto waits for another action (manual menu, Top10 snapshot, etc.) before skipping this tick. */
-    const TROOP_AUTO_ACTION_IDLE_WAIT_MS = 10000;
+    /** Max time troop auto waits for another action before preempting builder / skipping. */
+    const TROOP_AUTO_ACTION_IDLE_WAIT_MS = 45000;
     const TROOP_AUTO_BUSY_RETRY_MIN_MS = 15000;
     const TROOP_AUTO_BUSY_RETRY_JITTER_MS = 10000;
+    /** When clay/wood can't cover a full TT batch, retry sooner than the plan interval. */
+    const TROOP_AUTO_RESOURCE_RETRY_MIN_MS = 2 * 60 * 1000;
+    const TROOP_AUTO_RESOURCE_RETRY_JITTER_MS = 2 * 60 * 1000;
     let nextBuilderRunAt = null;
     let lastBuilderDelayMinutes = null;
     let nextCrannyDefenseRunAt = null;
@@ -5205,6 +5324,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       return page.evaluate(() => {
+        const isValidVillageId = (value) => {
+          const id = Number(value);
+          return Number.isFinite(id) && id > 0;
+        };
+
         const rows = Array.from(document.querySelectorAll("#vlist tr[data-vid]"));
         let villages = rows.map((row) => {
           const villageId = Number(row.getAttribute("data-vid"));
@@ -5245,7 +5369,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           );
 
           return {
-            id: Number.isFinite(villageId) ? villageId : null,
+            id: isValidVillageId(villageId) ? villageId : null,
             name,
             groupName,
             isCapital,
@@ -5259,7 +5383,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             isActive,
             underAttack
           };
-        }).filter((village) => Number.isFinite(village.id));
+        }).filter((village) => isValidVillageId(village.id));
 
         // Fallback layout: some worlds/themes render villages in sidebar/dropdown links
         // without #vlist rows. Parse anchors with newdid/vid and infer basic meta.
@@ -5292,7 +5416,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 (absoluteHref && (absoluteHref.searchParams.get("newdid") || absoluteHref.searchParams.get("vid"))) ||
                 null;
               const villageId = Number(idRaw);
-              if (!Number.isFinite(villageId)) {
+              if (!isValidVillageId(villageId)) {
                 return null;
               }
 
@@ -5329,7 +5453,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 underAttack: false
               };
             })
-            .filter((village) => village && Number.isFinite(village.id));
+            .filter((village) => village && isValidVillageId(village.id));
         }
 
         // Last fallback: if no village list is rendered at all, infer current village from URL.
@@ -5339,13 +5463,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             const url = new URL(window.location.href);
             const raw = url.searchParams.get("vid") || url.searchParams.get("newdid");
             const parsed = Number(raw);
-            if (Number.isFinite(parsed)) {
+            if (isValidVillageId(parsed)) {
               inferredId = parsed;
             }
           } catch (_error) {
             inferredId = null;
           }
-          if (Number.isFinite(inferredId)) {
+          if (isValidVillageId(inferredId)) {
             villages = [
               {
                 id: inferredId,
@@ -5397,8 +5521,29 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       const snapshot = await fetchVillageSnapshotFromPage();
-      villageState.villages = snapshot.villages;
-      villageState.activeVillageId = snapshot.activeVillageId;
+      const nextVillages = (snapshot.villages || []).filter(
+        (village) => Number.isFinite(Number(village && village.id)) && Number(village.id) > 0
+      );
+      const priorGood = (villageState.villages || []).filter(
+        (village) => Number.isFinite(Number(village && village.id)) && Number(village.id) > 0
+      );
+
+      // Never replace a known-good village list with an empty/invalid scrape
+      // (portal pages, mid-navigation blanks, vid=0 placeholders).
+      if (!nextVillages.length && priorGood.length) {
+        if (!silent) {
+          logWarn(
+            `[Village] Refresh returned no valid villages — keeping previous ${priorGood.length} village(s).`
+          );
+        }
+        return villageState;
+      }
+
+      villageState.villages = nextVillages;
+      villageState.activeVillageId =
+        nextVillages.some((v) => Number(v.id) === Number(snapshot.activeVillageId))
+          ? snapshot.activeVillageId
+          : nextVillages.find((v) => v.isActive)?.id || (nextVillages[0] ? nextVillages[0].id : null);
       villageState.lastRefreshIso = new Date().toISOString();
 
       const selectedStillExists = villageState.villages.some(
@@ -5406,7 +5551,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       );
       if (!selectedStillExists) {
         villageState.selectedVillageId =
-          snapshot.activeVillageId || (villageState.villages[0] ? villageState.villages[0].id : null);
+          villageState.activeVillageId || (villageState.villages[0] ? villageState.villages[0].id : null);
       }
 
       if (!silent) {
@@ -5433,17 +5578,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (capital && capital.id) {
         return Number(capital.id);
       }
-      const selected = getSelectedVillage();
-      if (selected && selected.id) {
-        return Number(selected.id);
+      // Prefer a village whose farmlists are typically defined (capital often unmarked
+      // on Nexian scrapes). Use the first known village rather than the transient
+      // "active" village — builder RR often leaves context on a young expansion village
+      // with no useful farm troops.
+      if (villageState.villages.length) {
+        return Number(villageState.villages[0].id);
       }
-      const active = villageState.villages.find(
-        (v) => v.id === villageState.activeVillageId
-      );
-      if (active && active.id) {
-        return Number(active.id);
-      }
-      return villageState.villages.length ? Number(villageState.villages[0].id) : null;
+      return null;
     };
 
     /** When builder RR is off, match troop trainer behavior: use explicit selection, else game-active village, else first row. */
@@ -5460,7 +5602,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const url = new URL(String(page.url() || ""));
         const raw = url.searchParams.get("vid") || url.searchParams.get("newdid");
         const parsed = Number(raw);
-        return Number.isFinite(parsed) ? parsed : null;
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
       } catch (_error) {
         return null;
       }
@@ -5504,7 +5646,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     /** Open status/overview for `village` in the browser (does not change menu selection). Round-robin builder needs this before slot reads. */
     const ensureVillageBrowserContext = async (village, sourceLabel = "Context") => {
-      if (!village || !Number.isFinite(Number(village.id))) {
+      if (!village || !Number.isFinite(Number(village.id)) || Number(village.id) <= 0) {
         return;
       }
       const page = getPage();
@@ -6601,23 +6743,29 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const runFarmlistSendCore = async (attemptLabel) => {
         const startedAt = Date.now();
+        let sendResult = null;
         const executed = await runAction(attemptLabel, async () => {
           logInfo("[Farmlist Loop] Auto-send starting...");
-          const sendResult = await runWithRandomDelay(
+          sendResult = await runWithRandomDelay(
             settings,
             "Auto Send Farmlists",
             () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
             () => cancelRequested
           );
           if (sendResult && sendResult.status === "idle") {
-            logInfo(`[Farmlist Loop] ${String(sendResult.message || "Nothing to send.").replace(/^\[Farmlist\]\s*/, "")}`);
+            logInfo(
+              `[Farmlist Loop] ${String(sendResult.message || "Nothing to send.").replace(/^\[Farmlist\]\s*/, "")}`
+            );
+          } else if (sendResult && sendResult.message) {
+            logSuccess(
+              `[Farmlist Loop] ${String(sendResult.message).replace(/^\[Farmlist\]\s*/, "")}`
+            );
           } else {
             logSuccess("[Farmlist Loop] Auto-send completed.");
           }
           await maybePrintAutoFarmlistStatus("Farmlist Loop");
-          return sendResult;
         }, { raidGuardPriority: true, farmlistPriority: true });
-        return { executed, startedAt };
+        return { executed, startedAt, sendResult };
       };
 
       const runFarmlistScheduledTick = async () => {
@@ -6649,18 +6797,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
         let farmlistExecuted = false;
         try {
-          const { executed, startedAt } = await runFarmlistSendCore("auto-send farmlists");
+          const { executed, startedAt, sendResult } = await runFarmlistSendCore("auto-send farmlists");
           farmlistExecuted = executed;
           if (!farmlistExecuted) {
             scheduleFarmlistShortRetry("Auto-send skipped.");
             return;
           }
+          const idle = Boolean(sendResult && sendResult.status === "idle");
           recordAction({
             actionType: "farmlist.send",
-            status: "success",
+            status: idle ? "info" : "success",
             durationMs: Date.now() - startedAt,
             details: {
               source: "auto-loop",
+              idle,
+              raidsSent: sendResult && Number.isFinite(Number(sendResult.raidsSent))
+                ? Number(sendResult.raidsSent)
+                : null,
+              raidsSkipped: sendResult && Number.isFinite(Number(sendResult.raidsSkipped))
+                ? Number(sendResult.raidsSkipped)
+                : null,
+              skipReason: (sendResult && sendResult.skipReason) || null,
+              villageId: resolveFarmlistVillageId(),
               minMinutes: settings.farmlistLoopMinMinutes,
               maxMinutes: settings.farmlistLoopMaxMinutes,
               ...getVillageMeta("all")
@@ -6701,15 +6859,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               logSuccess("[Farmlist Loop] Re-login complete. Retrying auto-send now...");
 
               const retryStartedAt = Date.now();
-              const { executed: retryExecuted } = await runFarmlistSendCore("auto-send farmlists retry");
+              const { executed: retryExecuted, sendResult: retrySendResult } =
+                await runFarmlistSendCore("auto-send farmlists retry");
 
               if (retryExecuted) {
+                const idle = Boolean(retrySendResult && retrySendResult.status === "idle");
                 recordAction({
                   actionType: "farmlist.send",
-                  status: "success",
+                  status: idle ? "info" : "success",
                   durationMs: Date.now() - retryStartedAt,
                   details: {
                     source: "auto-loop-retry",
+                    idle,
+                    raidsSent: retrySendResult && Number.isFinite(Number(retrySendResult.raidsSent))
+                      ? Number(retrySendResult.raidsSent)
+                      : null,
+                    raidsSkipped:
+                      retrySendResult && Number.isFinite(Number(retrySendResult.raidsSkipped))
+                        ? Number(retrySendResult.raidsSkipped)
+                        : null,
+                    skipReason: (retrySendResult && retrySendResult.skipReason) || null,
+                    villageId: resolveFarmlistVillageId(),
                     minMinutes: settings.farmlistLoopMinMinutes,
                     maxMinutes: settings.farmlistLoopMaxMinutes,
                     ...getVillageMeta("all")
@@ -7373,7 +7543,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 }
               }
             },
-            { raidGuardPriority: true }
+            // Preempt resource builder so 1–3m builder RR does not starve troop training.
+            { raidGuardPriority: true, preemptAutoBuilder: true }
           );
 
           if (troopExecuted) {
@@ -7417,7 +7588,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return "executed";
         }
 
-        return troopExecuted ? "executed" : "busy";
+        if (!troopExecuted) {
+          return "busy";
+        }
+
+        const trained = outcomes.filter((o) => o && o.status === "trained");
+        const noResources = outcomes.some((o) => o && o.status === "no_resources");
+        const cappedShort = trained.some((o) => o && o.cappedByResources);
+        if (noResources || cappedShort) {
+          return "resource_wait";
+        }
+        return "executed";
       });
     };
 
@@ -7488,6 +7669,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           state.nextRunAt = Date.now() + retryMs;
           logInfo(
             `[Troop Auto] ${villageDisplayName(village)} — navigation interrupted, retrying in ${formatDelayMs(retryMs)}.`
+          );
+          state.timer = setTimeout(() => void runTroopVillageScheduledTick(), retryMs);
+        } else if (outcome === "resource_wait") {
+          const retryMs =
+            TROOP_AUTO_RESOURCE_RETRY_MIN_MS +
+            Math.floor(Math.random() * TROOP_AUTO_RESOURCE_RETRY_JITTER_MS);
+          state.nextRunAt = Date.now() + retryMs;
+          logInfo(
+            `[Troop Auto] ${villageDisplayName(village)} — waiting on resources, retrying in ${formatDelayMs(retryMs)}.`
           );
           state.timer = setTimeout(() => void runTroopVillageScheduledTick(), retryMs);
         } else {
@@ -8670,6 +8860,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           );
           if (sendResult && sendResult.status === "idle") {
             logInfo(String(sendResult.message || "No farmlists ready to send.").replace(/^\[Farmlist\]\s*/, ""));
+          } else if (sendResult && sendResult.message) {
+            logSuccess(String(sendResult.message).replace(/^\[Farmlist\]\s*/, ""));
           } else {
             logSuccess("Send Farmlists completed.");
           }
@@ -8681,6 +8873,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             details: {
               source: "manual",
               idle: Boolean(sendResult && sendResult.status === "idle"),
+              raidsSent: sendResult && Number.isFinite(Number(sendResult.raidsSent))
+                ? Number(sendResult.raidsSent)
+                : null,
+              raidsSkipped: sendResult && Number.isFinite(Number(sendResult.raidsSkipped))
+                ? Number(sendResult.raidsSkipped)
+                : null,
+              skipReason: (sendResult && sendResult.skipReason) || null,
+              villageId: resolveFarmlistVillageId(),
               ...getVillageMeta("all")
             }
           });

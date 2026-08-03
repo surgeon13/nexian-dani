@@ -33,3 +33,6 @@ Desktop.ini
 
 # Optional local overrides (uncomment if you use a private copy)
 # templates/settlement_targets.json
+
+# Local network usage baseline/logs
+network-usage/
