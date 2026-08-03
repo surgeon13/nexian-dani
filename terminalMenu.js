@@ -8761,6 +8761,78 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     };
     void finishStartup();
 
+    // Recover if a loop timer is lost/overdue while automation is online (e.g. after long stalls).
+    const LOOP_OVERDUE_GRACE_MS = 3 * 60 * 1000;
+    const loopHealthTimer = setInterval(() => {
+      if (done) {
+        clearInterval(loopHealthTimer);
+        return;
+      }
+      if (actionInProgress) {
+        return;
+      }
+      const automationStatus = runtimeControls.getAutomationStatus
+        ? runtimeControls.getAutomationStatus()
+        : { paused: false, reason: "online" };
+      if (automationStatus.paused) {
+        return;
+      }
+
+      const now = Date.now();
+      const check = (enabled, nextAt, scheduleFn, label) => {
+        if (!enabled || nextAt == null) {
+          return;
+        }
+        const overdueMs = now - Number(nextAt);
+        if (overdueMs < LOOP_OVERDUE_GRACE_MS) {
+          return;
+        }
+        logWarn(
+          `[Watchdog] ${label} overdue by ${Math.max(1, Math.round(overdueMs / 60000))}m — rescheduling.`
+        );
+        try {
+          scheduleFn();
+        } catch (error) {
+          logWarn(
+            `[Watchdog] Failed to reschedule ${label}: ${error && error.message ? error.message : error}`
+          );
+        }
+      };
+
+      check(settings.farmlistLoopEnabled, nextFarmlistRunAt, scheduleFarmlistLoop, "Farmlist");
+      check(settings.builderLoopEnabled, nextBuilderRunAt, scheduleBuilderLoop, "Builder");
+      try {
+        const soonest =
+          typeof getSoonestTroopVillageNextInMinutes === "function"
+            ? getSoonestTroopVillageNextInMinutes()
+            : null;
+        if (settings.troopTrainingRoundRobinEnabled && soonest == null) {
+          logWarn("[Watchdog] Troop loop has no village timers — rescheduling.");
+          scheduleTroopTrainingLoop();
+        }
+      } catch (_error) {
+        /* ignore */
+      }
+      check(
+        settings.crannyDefenseRoundRobinEnabled,
+        nextCrannyDefenseRunAt,
+        scheduleCrannyDefenseLoop,
+        "Cranny"
+      );
+      check(
+        settings.activitySimulationEnabled,
+        nextActivitySimulationRunAt,
+        scheduleActivitySimulationLoop,
+        "Activity"
+      );
+      check(
+        settings.top10TrackingEnabled,
+        nextTop10TrackingRunAt,
+        scheduleTop10TrackingLoop,
+        "Top10"
+      );
+    }, 60000);
+
     let menuNeedsFullRefresh = true;
     let deferMenuFullRefresh = false;
     const menuFullRefreshInputs = new Set(["S", "V", "T"]);

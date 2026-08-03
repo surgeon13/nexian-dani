@@ -1014,17 +1014,60 @@ async function run() {
 
         prepareProxyForSessionRestRelogin();
 
-        const nextSession = await createSession(settings.headless);
+        const loginWithTimeout = async (label) => {
+          const timeoutMs = 180000;
+          let timer = null;
+          try {
+            return await Promise.race([
+              createSession(settings.headless),
+              new Promise((_, reject) => {
+                timer = setTimeout(
+                  () => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)),
+                  timeoutMs
+                );
+              })
+            ]);
+          } finally {
+            if (timer) {
+              clearTimeout(timer);
+            }
+          }
+        };
+
+        let nextSession = null;
+        let lastError = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            console.log(`[Session Loop] Wake login attempt ${attempt}/3...`);
+            nextSession = await loginWithTimeout(`session wake login #${attempt}`);
+            break;
+          } catch (error) {
+            lastError = error;
+            console.error(
+              `[Session Loop] Wake login attempt ${attempt}/3 failed: ${error.message || error}`
+            );
+            if (attempt < 3) {
+              prepareProxyForSessionRestRelogin();
+              await waitMs(5000);
+            }
+          }
+        }
+        if (!nextSession) {
+          throw lastError || new Error("Session wake login failed.");
+        }
         session = nextSession;
         settings.headless = nextSession.headless;
         console.log(
           `[Session Loop] Re-login complete. Session resumed via ${formatProxyDisplay(settings)}.`
         );
+        if (dashboardBridge) {
+          dashboardBridge.publishSnapshot({ force: true });
+        }
       } catch (error) {
         console.error("[Session Loop] Cycle failed:", error.message || error);
       } finally {
         sessionCycleInProgress = false;
-        sessionCycleReason = "resting";
+        sessionCycleReason = null;
         scheduleNextSessionCycle();
       }
     }, playMinutes * 60 * 1000);
