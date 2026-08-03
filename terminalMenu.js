@@ -1474,6 +1474,65 @@ async function sendFarmlists(getPage, settings, options = {}) {
   }
 
   await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
+  await page.waitForTimeout(800);
+
+  // Nexian shows e.g. "Raids sent: 5 | Skipped: 690 (insufficient troops), 1 (paused)"
+  const sendResult = await page
+    .evaluate(() => {
+      const text = String((document.body && document.body.innerText) || "");
+      const lineMatch = text.match(
+        /Raids?\s+sent:\s*\d+\s*\|\s*Skipped:\s*[^\n\r]{0,200}/i
+      );
+      const raw = lineMatch ? String(lineMatch[0]).replace(/\s+/g, " ").trim() : "";
+      const sentMatch = raw.match(/Raids?\s+sent:\s*(\d+)/i);
+      const skippedMatch = raw.match(/Skipped:\s*(\d+)/i);
+      if (!sentMatch && !skippedMatch) {
+        return null;
+      }
+      const reasonParts = [];
+      const reasonRe = /(\d+)\s*\(([^)]+)\)/g;
+      let m;
+      while ((m = reasonRe.exec(raw)) !== null) {
+        reasonParts.push(`${m[1]} (${m[2].trim()})`);
+      }
+      const firstParen = raw.match(/\(([^)]+)\)/);
+      return {
+        sent: sentMatch ? Number(sentMatch[1]) || 0 : 0,
+        skipped: skippedMatch ? Number(skippedMatch[1]) || 0 : 0,
+        reason: reasonParts.length
+          ? reasonParts.join(", ")
+          : firstParen
+            ? String(firstParen[1] || "").trim()
+            : "",
+        raw
+      };
+    })
+    .catch(() => null);
+
+  if (sendResult) {
+    const summary =
+      sendResult.raw ||
+      `Raids sent: ${sendResult.sent} | Skipped: ${sendResult.skipped}${
+        sendResult.reason ? ` (${sendResult.reason})` : ""
+      }`;
+    if (sendResult.sent <= 0) {
+      return {
+        status: "idle",
+        message: `[Farmlist] ${summary}`,
+        raidsSent: sendResult.sent,
+        raidsSkipped: sendResult.skipped,
+        skipReason: sendResult.reason || null
+      };
+    }
+    return {
+      status: "sent",
+      message: `[Farmlist] ${summary}`,
+      raidsSent: sendResult.sent,
+      raidsSkipped: sendResult.skipped,
+      skipReason: sendResult.reason || null
+    };
+  }
+
   return { status: "sent" };
 }
 
@@ -5433,17 +5492,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (capital && capital.id) {
         return Number(capital.id);
       }
-      const selected = getSelectedVillage();
-      if (selected && selected.id) {
-        return Number(selected.id);
+      // Prefer a village whose farmlists are typically defined (capital often unmarked
+      // on Nexian scrapes). Use the first known village rather than the transient
+      // "active" village — builder RR often leaves context on a young expansion village
+      // with no useful farm troops.
+      if (villageState.villages.length) {
+        return Number(villageState.villages[0].id);
       }
-      const active = villageState.villages.find(
-        (v) => v.id === villageState.activeVillageId
-      );
-      if (active && active.id) {
-        return Number(active.id);
-      }
-      return villageState.villages.length ? Number(villageState.villages[0].id) : null;
+      return null;
     };
 
     /** When builder RR is off, match troop trainer behavior: use explicit selection, else game-active village, else first row. */
@@ -6601,23 +6657,29 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const runFarmlistSendCore = async (attemptLabel) => {
         const startedAt = Date.now();
+        let sendResult = null;
         const executed = await runAction(attemptLabel, async () => {
           logInfo("[Farmlist Loop] Auto-send starting...");
-          const sendResult = await runWithRandomDelay(
+          sendResult = await runWithRandomDelay(
             settings,
             "Auto Send Farmlists",
             () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
             () => cancelRequested
           );
           if (sendResult && sendResult.status === "idle") {
-            logInfo(`[Farmlist Loop] ${String(sendResult.message || "Nothing to send.").replace(/^\[Farmlist\]\s*/, "")}`);
+            logInfo(
+              `[Farmlist Loop] ${String(sendResult.message || "Nothing to send.").replace(/^\[Farmlist\]\s*/, "")}`
+            );
+          } else if (sendResult && sendResult.message) {
+            logSuccess(
+              `[Farmlist Loop] ${String(sendResult.message).replace(/^\[Farmlist\]\s*/, "")}`
+            );
           } else {
             logSuccess("[Farmlist Loop] Auto-send completed.");
           }
           await maybePrintAutoFarmlistStatus("Farmlist Loop");
-          return sendResult;
         }, { raidGuardPriority: true, farmlistPriority: true });
-        return { executed, startedAt };
+        return { executed, startedAt, sendResult };
       };
 
       const runFarmlistScheduledTick = async () => {
@@ -6649,18 +6711,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
         let farmlistExecuted = false;
         try {
-          const { executed, startedAt } = await runFarmlistSendCore("auto-send farmlists");
+          const { executed, startedAt, sendResult } = await runFarmlistSendCore("auto-send farmlists");
           farmlistExecuted = executed;
           if (!farmlistExecuted) {
             scheduleFarmlistShortRetry("Auto-send skipped.");
             return;
           }
+          const idle = Boolean(sendResult && sendResult.status === "idle");
           recordAction({
             actionType: "farmlist.send",
-            status: "success",
+            status: idle ? "info" : "success",
             durationMs: Date.now() - startedAt,
             details: {
               source: "auto-loop",
+              idle,
+              raidsSent: sendResult && Number.isFinite(Number(sendResult.raidsSent))
+                ? Number(sendResult.raidsSent)
+                : null,
+              raidsSkipped: sendResult && Number.isFinite(Number(sendResult.raidsSkipped))
+                ? Number(sendResult.raidsSkipped)
+                : null,
+              skipReason: (sendResult && sendResult.skipReason) || null,
+              villageId: resolveFarmlistVillageId(),
               minMinutes: settings.farmlistLoopMinMinutes,
               maxMinutes: settings.farmlistLoopMaxMinutes,
               ...getVillageMeta("all")
@@ -6701,15 +6773,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               logSuccess("[Farmlist Loop] Re-login complete. Retrying auto-send now...");
 
               const retryStartedAt = Date.now();
-              const { executed: retryExecuted } = await runFarmlistSendCore("auto-send farmlists retry");
+              const { executed: retryExecuted, sendResult: retrySendResult } =
+                await runFarmlistSendCore("auto-send farmlists retry");
 
               if (retryExecuted) {
+                const idle = Boolean(retrySendResult && retrySendResult.status === "idle");
                 recordAction({
                   actionType: "farmlist.send",
-                  status: "success",
+                  status: idle ? "info" : "success",
                   durationMs: Date.now() - retryStartedAt,
                   details: {
                     source: "auto-loop-retry",
+                    idle,
+                    raidsSent: retrySendResult && Number.isFinite(Number(retrySendResult.raidsSent))
+                      ? Number(retrySendResult.raidsSent)
+                      : null,
+                    raidsSkipped:
+                      retrySendResult && Number.isFinite(Number(retrySendResult.raidsSkipped))
+                        ? Number(retrySendResult.raidsSkipped)
+                        : null,
+                    skipReason: (retrySendResult && retrySendResult.skipReason) || null,
+                    villageId: resolveFarmlistVillageId(),
                     minMinutes: settings.farmlistLoopMinMinutes,
                     maxMinutes: settings.farmlistLoopMaxMinutes,
                     ...getVillageMeta("all")
@@ -8670,6 +8754,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           );
           if (sendResult && sendResult.status === "idle") {
             logInfo(String(sendResult.message || "No farmlists ready to send.").replace(/^\[Farmlist\]\s*/, ""));
+          } else if (sendResult && sendResult.message) {
+            logSuccess(String(sendResult.message).replace(/^\[Farmlist\]\s*/, ""));
           } else {
             logSuccess("Send Farmlists completed.");
           }
@@ -8681,6 +8767,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             details: {
               source: "manual",
               idle: Boolean(sendResult && sendResult.status === "idle"),
+              raidsSent: sendResult && Number.isFinite(Number(sendResult.raidsSent))
+                ? Number(sendResult.raidsSent)
+                : null,
+              raidsSkipped: sendResult && Number.isFinite(Number(sendResult.raidsSkipped))
+                ? Number(sendResult.raidsSkipped)
+                : null,
+              skipReason: (sendResult && sendResult.skipReason) || null,
+              villageId: resolveFarmlistVillageId(),
               ...getVillageMeta("all")
             }
           });
