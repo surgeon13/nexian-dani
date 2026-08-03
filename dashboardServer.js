@@ -4,12 +4,18 @@ const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
 const { tailLogFile } = require("./logTail");
-const { buildTop10DashboardPayload } = require("./top10Dashboard");
 let villageBuilder = null;
 try {
   villageBuilder = require("./villageBuilder");
 } catch (_error) {
   villageBuilder = null;
+}
+
+function buildTop10DashboardPayload(bridge, options) {
+  // Reload so dashboard presentation tweaks apply without a full bot restart.
+  const resolved = require.resolve("./top10Dashboard");
+  delete require.cache[resolved];
+  return require("./top10Dashboard").buildTop10DashboardPayload(bridge, options);
 }
 
 const PUBLIC_DIR = path.join(__dirname, "public");

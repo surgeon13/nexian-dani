@@ -104,6 +104,302 @@ function computeDelta(history, key) {
   return newest - previous;
 }
 
+function hoursBetween(fromMs, toMs) {
+  const from = Number(fromMs);
+  const to = Number(toMs);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return null;
+  }
+  const hours = (to - from) / 3_600_000;
+  return hours > 0 ? hours : null;
+}
+
+function roundRate(value) {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return null;
+  }
+  const n = Number(value);
+  const abs = Math.abs(n);
+  if (abs >= 1000) {
+    return Math.round(n);
+  }
+  if (abs >= 100) {
+    return Math.round(n * 10) / 10;
+  }
+  if (abs >= 10) {
+    return Math.round(n * 100) / 100;
+  }
+  return Math.round(n * 1000) / 1000;
+}
+
+function validHistoryPoints(history, key) {
+  return (history || []).filter(
+    (point) =>
+      point &&
+      point[key] != null &&
+      Number.isFinite(Number(point[key])) &&
+      point.epochMs != null &&
+      Number.isFinite(Number(point.epochMs))
+  );
+}
+
+function computePollSeries(history, key) {
+  const points = validHistoryPoints(history, key);
+  const series = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const previous = points[i - 1];
+    const newest = points[i];
+    const hours = hoursBetween(previous.epochMs, newest.epochMs);
+    if (hours == null) {
+      continue;
+    }
+    const delta = Number(newest[key]) - Number(previous[key]);
+    series.push({
+      index: i,
+      delta,
+      hours: Math.round(hours * 1000) / 1000,
+      perHour: roundRate(delta / hours),
+      fromTs: previous.ts || null,
+      toTs: newest.ts || null,
+      fromValue: Number(previous[key]),
+      toValue: Number(newest[key])
+    });
+  }
+  return series;
+}
+
+function summarizePollSeries(series) {
+  if (!series || !series.length) {
+    return null;
+  }
+  const totalDelta = series.reduce((sum, item) => sum + Number(item.delta || 0), 0);
+  const totalHours = series.reduce((sum, item) => sum + Number(item.hours || 0), 0);
+  const last = series[series.length - 1];
+  return {
+    samples: series.length + 1,
+    intervals: series.length,
+    totalDelta,
+    totalHours: Math.round(totalHours * 1000) / 1000,
+    perHour: totalHours > 0 ? roundRate(totalDelta / totalHours) : null,
+    lastPoll: last,
+    series
+  };
+}
+
+function computeTimedRate(history, key) {
+  const series = computePollSeries(history, key);
+  if (!series.length) {
+    return null;
+  }
+  const last = series[series.length - 1];
+  return {
+    delta: last.delta,
+    hours: last.hours,
+    perHour: last.perHour,
+    fromTs: last.fromTs,
+    toTs: last.toTs,
+    samples: 2
+  };
+}
+
+function computeWindowRate(history, key) {
+  const summary = summarizePollSeries(computePollSeries(history, key));
+  if (!summary) {
+    return null;
+  }
+  const points = validHistoryPoints(history, key);
+  const first = points[0];
+  const last = points[points.length - 1];
+  // Prefer first→latest over the raw span so sparse gaps still normalize correctly.
+  const hours = hoursBetween(first.epochMs, last.epochMs);
+  const delta = Number(last[key]) - Number(first[key]);
+  return {
+    delta,
+    hours: hours == null ? summary.totalHours : Math.round(hours * 1000) / 1000,
+    perHour:
+      hours == null || hours <= 0 ? summary.perHour : roundRate(delta / hours),
+    fromTs: first.ts || null,
+    toTs: last.ts || null,
+    samples: points.length,
+    intervals: summary.intervals
+  };
+}
+
+function indexRowsByName(rows) {
+  const map = new Map();
+  for (const row of rows || []) {
+    const name = String((row && row.name) || "")
+      .trim()
+      .toLowerCase();
+    if (!name || name === "—") {
+      continue;
+    }
+    map.set(name, row);
+  }
+  return map;
+}
+
+function collectNamedPollHistory(entryList) {
+  const byName = new Map();
+  for (const entry of entryList || []) {
+    const epochMs =
+      Number(entry.epochMs) || (entry.ts ? Date.parse(entry.ts) : null);
+    const rows = Array.isArray(entry.top10) ? entry.top10.map(summarizeRow).filter(Boolean) : [];
+    const self = summarizeRow(entry.self);
+    if (self && self.name) {
+      // Keep self in the timeline even when outside the printed top 10.
+      const selfKey = self.name.trim().toLowerCase();
+      if (selfKey && selfKey !== "—") {
+        const exists = rows.some(
+          (row) => String(row.name || "").trim().toLowerCase() === selfKey
+        );
+        if (!exists) {
+          rows.push(self);
+        }
+      }
+    }
+    for (const row of rows) {
+      const key = String(row.name || "")
+        .trim()
+        .toLowerCase();
+      if (!key || key === "—") {
+        continue;
+      }
+      if (!byName.has(key)) {
+        byName.set(key, []);
+      }
+      byName.get(key).push({
+        ts: entry.ts || null,
+        epochMs,
+        rank: row.rank,
+        value: row.value,
+        name: row.name,
+        alliance: row.alliance,
+        tribe: row.tribe
+      });
+    }
+  }
+  return byName;
+}
+
+function ratesFromNamedHistory(points) {
+  if (!points || points.length < 2) {
+    return {
+      valueDelta: null,
+      valuePerHour: null,
+      windowDelta: null,
+      windowPerHour: null,
+      rankDelta: null,
+      windowRankDelta: null,
+      pollSeries: [],
+      previousRank: null,
+      previousValue: null,
+      firstRank: null,
+      firstValue: null,
+      samples: points ? points.length : 0
+    };
+  }
+  const history = points.map((point) => ({
+    ts: point.ts,
+    epochMs: point.epochMs,
+    selfValue: point.value,
+    selfRank: point.rank
+  }));
+  const valueSeries = computePollSeries(history, "selfValue");
+  const rankSeries = computePollSeries(history, "selfRank");
+  const windowValue = computeWindowRate(history, "selfValue");
+  const windowRank = computeWindowRate(history, "selfRank");
+  const lastValue = valueSeries.length ? valueSeries[valueSeries.length - 1] : null;
+  const lastRank = rankSeries.length ? rankSeries[rankSeries.length - 1] : null;
+  const first = points[0];
+  const previous = points[points.length - 2];
+  return {
+    valueDelta: lastValue ? lastValue.delta : null,
+    valuePerHour: lastValue ? lastValue.perHour : null,
+    windowDelta: windowValue ? windowValue.delta : null,
+    windowPerHour: windowValue ? windowValue.perHour : null,
+    rankDelta: lastRank ? lastRank.delta : null,
+    windowRankDelta: windowRank ? windowRank.delta : null,
+    pollSeries: valueSeries,
+    previousRank: previous && previous.rank != null ? Number(previous.rank) : null,
+    previousValue: previous && previous.value != null ? Number(previous.value) : null,
+    firstRank: first && first.rank != null ? Number(first.rank) : null,
+    firstValue: first && first.value != null ? Number(first.value) : null,
+    samples: points.length,
+    windowHours: windowValue ? windowValue.hours : null
+  };
+}
+
+function enrichTop10FromPollLogs(entryList) {
+  const latest = entryList && entryList.length ? entryList[entryList.length - 1] : null;
+  const latestRows =
+    latest && Array.isArray(latest.top10) ? latest.top10.map(summarizeRow).filter(Boolean) : [];
+  const byName = collectNamedPollHistory(entryList);
+  return latestRows.map((row) => {
+    const key = String(row.name || "")
+      .trim()
+      .toLowerCase();
+    const rates = ratesFromNamedHistory(key ? byName.get(key) || [] : []);
+    return {
+      ...row,
+      valueDelta: rates.windowDelta,
+      valueDeltaText: rates.windowDelta == null ? null : formatCompactNumber(rates.windowDelta),
+      valuePerHour: rates.windowPerHour,
+      valuePerHourText: rates.windowPerHour == null ? null : formatCompactNumber(rates.windowPerHour),
+      lastValueDelta: rates.valueDelta,
+      lastValuePerHour: rates.valuePerHour,
+      rankDelta: rates.windowRankDelta != null ? rates.windowRankDelta : rates.rankDelta,
+      lastRankDelta: rates.rankDelta,
+      previousRank: rates.previousRank,
+      previousValue: rates.previousValue,
+      firstRank: rates.firstRank,
+      firstValue: rates.firstValue,
+      pollSamples: rates.samples,
+      windowHours: rates.windowHours,
+      pollSeries: rates.pollSeries
+    };
+  });
+}
+
+/** @deprecated Prefer enrichTop10FromPollLogs — kept for tests/callers. */
+function enrichTop10WithRates(latestRows, previousRows, hours) {
+  const previousByName = indexRowsByName(previousRows);
+  return (latestRows || []).map((row) => {
+    const key = String(row.name || "")
+      .trim()
+      .toLowerCase();
+    const previous = key ? previousByName.get(key) : null;
+    const valueDelta =
+      previous &&
+      previous.value != null &&
+      row.value != null &&
+      Number.isFinite(Number(previous.value)) &&
+      Number.isFinite(Number(row.value))
+        ? Number(row.value) - Number(previous.value)
+        : null;
+    const rankDelta =
+      previous &&
+      previous.rank != null &&
+      row.rank != null &&
+      Number.isFinite(Number(previous.rank)) &&
+      Number.isFinite(Number(row.rank))
+        ? Number(row.rank) - Number(previous.rank)
+        : null;
+    const perHour =
+      valueDelta != null && hours != null && hours > 0 ? roundRate(valueDelta / hours) : null;
+    return {
+      ...row,
+      valueDelta,
+      valueDeltaText: valueDelta == null ? null : formatCompactNumber(valueDelta),
+      valuePerHour: perHour,
+      valuePerHourText: perHour == null ? null : formatCompactNumber(perHour),
+      rankDelta,
+      previousRank: previous && previous.rank != null ? Number(previous.rank) : null,
+      previousValue: previous && previous.value != null ? Number(previous.value) : null
+    };
+  });
+}
+
 function buildTop10DashboardPayload(bridge, options = {}) {
   const logFilePath = resolveTop10LogPath(bridge, options.logFilePath);
   const limit = Math.max(50, Math.min(Number(options.limit) || 700, 2000));
@@ -125,13 +421,35 @@ function buildTop10DashboardPayload(bridge, options = {}) {
   const categories = CATEGORY_ORDER.map((id) => {
     const list = byCategory[id] || [];
     const latest = list.length ? list[list.length - 1] : null;
+    const previous = list.length > 1 ? list[list.length - 2] : null;
+    // Use every polled log entry for this category — not just the last pair.
     const history = list.map(buildHistoryPoint);
-    const recentHistory = history.slice(-48);
     const self = latest ? summarizeRow(latest.self) : null;
-    const top10 = latest && Array.isArray(latest.top10) ? latest.top10.map(summarizeRow).filter(Boolean) : [];
+    const top10 = enrichTop10FromPollLogs(list);
     const meta = CATEGORY_META[id] || { label: id, metric: "Value", accent: "pop" };
-    const rankDelta = computeDelta(recentHistory, "selfRank");
-    const valueDelta = computeDelta(recentHistory, "selfValue");
+    const valuePollSeries = computePollSeries(history, "selfValue");
+    const rankPollSeries = computePollSeries(history, "selfRank");
+    const lastPollValueRate = computeTimedRate(history, "selfValue");
+    const lastPollRankRate = computeTimedRate(history, "selfRank");
+    const windowValueRate = computeWindowRate(history, "selfValue");
+    const windowRankRate = computeWindowRate(history, "selfRank");
+    const valueDelta =
+      windowValueRate && windowValueRate.delta != null
+        ? windowValueRate.delta
+        : computeDelta(history, "selfValue");
+    const rankDelta =
+      windowRankRate && windowRankRate.delta != null
+        ? windowRankRate.delta
+        : computeDelta(history, "selfRank");
+    const pollHours = hoursBetween(
+      previous && previous.epochMs,
+      latest && latest.epochMs
+    );
+    const windowHours = windowValueRate
+      ? windowValueRate.hours
+      : windowRankRate
+        ? windowRankRate.hours
+        : null;
 
     return {
       id,
@@ -143,19 +461,44 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       ok: top10.length > 0,
       top10,
       self,
-      history: recentHistory,
-      sparkline: recentHistory
+      history,
+      sparkline: history
         .map((point) => point.selfValue)
         .filter((value) => value != null),
-      rankSparkline: recentHistory
+      rankSparkline: history
         .map((point) => point.selfRank)
         .filter((value) => value != null),
+      pollIntervalHours: pollHours == null ? null : Math.round(pollHours * 1000) / 1000,
+      windowHours: windowHours == null ? null : Math.round(Number(windowHours) * 1000) / 1000,
+      pollCount: history.length,
       deltas: {
+        // Primary deltas are first→latest across all polled logs.
         rank: rankDelta,
-        // For ranks, lower is better — flip the "improved" flag.
         rankImproved: rankDelta == null ? null : rankDelta < 0,
         value: valueDelta,
-        valueImproved: valueDelta == null ? null : valueDelta > 0
+        valueImproved: valueDelta == null ? null : valueDelta > 0,
+        valuePerHour: windowValueRate ? windowValueRate.perHour : null,
+        valuePerHourImproved:
+          windowValueRate && windowValueRate.perHour != null
+            ? windowValueRate.perHour > 0
+            : null,
+        rankPerHour: windowRankRate ? windowRankRate.perHour : null,
+        rankPerHourImproved:
+          windowRankRate && windowRankRate.perHour != null
+            ? windowRankRate.perHour < 0
+            : null,
+        lastPoll: {
+          value: lastPollValueRate,
+          rank: lastPollRankRate
+        },
+        window: {
+          value: windowValueRate,
+          rank: windowRankRate
+        },
+        polls: {
+          value: valuePollSeries,
+          rank: rankPollSeries
+        }
       },
       warnings:
         latest && latest.meta && Array.isArray(latest.meta.parseWarnings)
@@ -184,6 +527,28 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       rankImproved: cat.deltas.rankImproved,
       valueDelta: cat.deltas.value,
       valueImproved: cat.deltas.valueImproved,
+      valuePerHour: cat.deltas.valuePerHour,
+      valuePerHourImproved: cat.deltas.valuePerHourImproved,
+      lastValueDelta:
+        cat.deltas.lastPoll && cat.deltas.lastPoll.value
+          ? cat.deltas.lastPoll.value.delta
+          : null,
+      lastValuePerHour:
+        cat.deltas.lastPoll && cat.deltas.lastPoll.value
+          ? cat.deltas.lastPoll.value.perHour
+          : null,
+      lastValueImproved:
+        cat.deltas.lastPoll &&
+        cat.deltas.lastPoll.value &&
+        cat.deltas.lastPoll.value.delta != null
+          ? cat.deltas.lastPoll.value.delta > 0
+          : null,
+      windowValuePerHour: cat.deltas.valuePerHour,
+      windowValueImproved: cat.deltas.valuePerHourImproved,
+      pollIntervalHours: cat.pollIntervalHours,
+      windowHours: cat.windowHours,
+      pollCount: cat.pollCount,
+      pollSeries: (cat.deltas.polls && cat.deltas.polls.value) || [],
       sparkline: cat.sparkline
     }));
 
@@ -218,5 +583,11 @@ module.exports = {
   CATEGORY_META,
   resolveTop10LogPath,
   buildTop10DashboardPayload,
-  formatCompactNumber
+  formatCompactNumber,
+  hoursBetween,
+  computeTimedRate,
+  computeWindowRate,
+  computePollSeries,
+  enrichTop10WithRates,
+  enrichTop10FromPollLogs
 };
