@@ -17,6 +17,47 @@ function normalizeText(value) {
     .trim();
 }
 
+function resolveExpansionBaseUrl(settings) {
+  const fromBuilder = settings && String(settings.villageBuilderUrl || "").trim();
+  if (fromBuilder) {
+    return fromBuilder;
+  }
+  const statusUrl = settings && String(settings.villageStatusUrl || "").trim();
+  if (statusUrl) {
+    try {
+      const parsed = new URL(statusUrl);
+      return `${parsed.origin}/village2.php`;
+    } catch (_error) {
+      // fall through
+    }
+  }
+  return "https://nexian.world/village2.php";
+}
+
+function compactBuildingKey(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, "");
+}
+
+function isSettlerBuildingName(value) {
+  const key = compactBuildingKey(value);
+  return key.includes("residence") || key.includes("palace");
+}
+
+function isBlankBuildingName(value) {
+  return !normalizeText(value);
+}
+
+function describeSettlerBuilding(slotInfo) {
+  const name = String((slotInfo && slotInfo.buildingName) || "").trim();
+  if (compactBuildingKey(name).includes("palace")) {
+    return "Palace";
+  }
+  if (compactBuildingKey(name).includes("residence")) {
+    return "Residence";
+  }
+  return name || "Residence/Palace";
+}
+
 async function readResidencePage(page, baseUrl, villageId) {
   const url = buildSlotUrl(baseUrl, RESIDENCE_SLOT, villageId);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -214,8 +255,8 @@ async function readResidencePage(page, baseUrl, villageId) {
   });
 }
 
-async function getSettlerCountFromRallyPoint(page, village) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function getSettlerCountFromRallyPoint(page, village, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const rallyPointUrl = buildSlotUrl(baseUrl, 39, village.id);
   const parsed = new URL(rallyPointUrl);
   parsed.searchParams.set("tt", "2");
@@ -267,8 +308,8 @@ function buildVillageOverviewUrl(baseUrl, villageId) {
   }
 }
 
-async function readVillageOverviewDetails(page, village) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function readVillageOverviewDetails(page, village, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const overviewUrl = buildVillageOverviewUrl(baseUrl, village.id);
   await page.goto(overviewUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
@@ -339,8 +380,11 @@ function checkSettlementResources(stock) {
   return { sufficient, deficit, required: SETTLEMENT_RESOURCE_REQUIREMENT };
 }
 
-async function clickResidenceConstruction(page) {
-  return page.evaluate(() => {
+async function clickSettlerBuildingConstruction(page, preferredNames = ["palace", "residence"]) {
+  const preferred = (Array.isArray(preferredNames) ? preferredNames : [preferredNames])
+    .map((name) => compactBuildingKey(name))
+    .filter(Boolean);
+  return page.evaluate((preferredKeys) => {
     const normalize = (value) =>
       String(value || "")
         .toLowerCase()
@@ -348,7 +392,11 @@ async function clickResidenceConstruction(page) {
         .replace(/[^a-z0-9]+/g, " ")
         .trim()
         .replace(/\s+/g, " ");
-    const isResidence = (name) => normalize(name).replace(/\s+/g, "") === "residence";
+    const compact = (value) => normalize(value).replace(/\s+/g, "");
+    const matchesPreferred = (name) => {
+      const key = compact(name);
+      return preferredKeys.some((wanted) => key.includes(wanted));
+    };
 
     const canClick = (element) => Boolean(
       element &&
@@ -357,37 +405,84 @@ async function clickResidenceConstruction(page) {
       element.getAttribute("aria-disabled") !== "true"
     );
 
-    const tableItems = document.querySelectorAll("table.new_building, #contract_building table.new_building");
-    for (const table of tableItems) {
-      const img = table.querySelector("td.bimg img.building, td.bimg img[title], td.bimg img[alt]");
-      const name = img ? (img.getAttribute("title") || img.getAttribute("alt") || "") : "";
-      if (isResidence(name)) {
-        const link = table.querySelector("td.link a.build, a.build[href*='?b='], a.build[href*='&b=']");
-        if (canClick(link)) {
-          link.click();
-          return true;
+    const tryClickFromTables = () => {
+      const tableItems = document.querySelectorAll("table.new_building, #contract_building table.new_building");
+      for (const table of tableItems) {
+        const img = table.querySelector("td.bimg img.building, td.bimg img[title], td.bimg img[alt]");
+        const name = img ? (img.getAttribute("title") || img.getAttribute("alt") || "") : "";
+        if (matchesPreferred(name)) {
+          const link = table.querySelector("td.link a.build, a.build[href*='?b='], a.build[href*='&b=']");
+          if (canClick(link)) {
+            link.click();
+            return true;
+          }
         }
+      }
+      return false;
+    };
+
+    const tryClickFromCards = () => {
+      const cards = document.querySelectorAll(".buildingList .building, #contract_building .building, .buildingList .innerBox");
+      for (const card of cards) {
+        const nameEl = card.querySelector("h2, .name, .tit a, .tit");
+        const imgEl = card.querySelector("img.building, img[title], img[alt]");
+        const name = nameEl
+          ? nameEl.textContent
+          : (imgEl ? (imgEl.getAttribute("title") || imgEl.getAttribute("alt") || "") : "");
+        if (matchesPreferred(name)) {
+          const btn = card.querySelector("button.green, .contractLink button.green, a.build");
+          if (canClick(btn)) {
+            btn.click();
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    // Prefer earlier preferredKeys by scanning one key at a time.
+    for (const wanted of preferredKeys) {
+      const matched = (() => {
+        const tableItems = document.querySelectorAll("table.new_building, #contract_building table.new_building");
+        for (const table of tableItems) {
+          const img = table.querySelector("td.bimg img.building, td.bimg img[title], td.bimg img[alt]");
+          const name = img ? (img.getAttribute("title") || img.getAttribute("alt") || "") : "";
+          if (compact(name).includes(wanted)) {
+            const link = table.querySelector("td.link a.build, a.build[href*='?b='], a.build[href*='&b=']");
+            if (canClick(link)) {
+              link.click();
+              return true;
+            }
+          }
+        }
+        const cards = document.querySelectorAll(".buildingList .building, #contract_building .building, .buildingList .innerBox");
+        for (const card of cards) {
+          const nameEl = card.querySelector("h2, .name, .tit a, .tit");
+          const imgEl = card.querySelector("img.building, img[title], img[alt]");
+          const name = nameEl
+            ? nameEl.textContent
+            : (imgEl ? (imgEl.getAttribute("title") || imgEl.getAttribute("alt") || "") : "");
+          if (compact(name).includes(wanted)) {
+            const btn = card.querySelector("button.green, .contractLink button.green, a.build");
+            if (canClick(btn)) {
+              btn.click();
+              return true;
+            }
+          }
+        }
+        return false;
+      })();
+      if (matched) {
+        return true;
       }
     }
 
-    const cards = document.querySelectorAll(".buildingList .building, #contract_building .building, .buildingList .innerBox");
-    for (const card of cards) {
-      const nameEl = card.querySelector("h2, .name, .tit a, .tit");
-      const imgEl = card.querySelector("img.building, img[title], img[alt]");
-      const name = nameEl
-        ? nameEl.textContent
-        : (imgEl ? (imgEl.getAttribute("title") || imgEl.getAttribute("alt") || "") : "");
-      if (isResidence(name)) {
-        const btn = card.querySelector("button.green, .contractLink button.green, a.build");
-        if (canClick(btn)) {
-          btn.click();
-          return true;
-        }
-      }
-    }
+    return tryClickFromTables() || tryClickFromCards();
+  }, preferred);
+}
 
-    return false;
-  });
+async function clickResidenceConstruction(page) {
+  return clickSettlerBuildingConstruction(page, ["palace", "residence"]);
 }
 
 async function clickResidenceUpgrade(page) {
@@ -444,53 +539,65 @@ function calculateResourceDeficit(stock, costs) {
   return deficit;
 }
 
-async function ensureResidenceLevel10(page, village) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function ensureResidenceLevel10(page, village, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const slotInfo = await readResidencePage(page, baseUrl, village.id);
-  const isResidence = normalizeText(slotInfo.buildingName).includes("residence");
+  const buildingLabel = describeSettlerBuilding(slotInfo);
+  const isSettlerBuilding = isSettlerBuildingName(slotInfo.buildingName);
+  const treatAsEmpty =
+    Boolean(slotInfo.isEmptySlot) || isBlankBuildingName(slotInfo.buildingName);
 
-  if (isResidence && slotInfo.currentLevel >= 10) {
+  if (isSettlerBuilding && slotInfo.currentLevel >= 10) {
     return {
       status: "residence_ready",
       phase: "residence",
       residenceLevel: slotInfo.currentLevel,
-      message: `Residence level ${slotInfo.currentLevel} is ready.`
+      buildingName: buildingLabel,
+      message: `${buildingLabel} level ${slotInfo.currentLevel} is ready.`
     };
   }
 
-  if (!isResidence && !slotInfo.isEmptySlot) {
+  if (!isSettlerBuilding && !treatAsEmpty) {
     return {
       status: "residence_slot_mismatch",
       phase: "residence",
-      message: `Slot ${RESIDENCE_SLOT} is '${slotInfo.buildingName}', not an empty slot/Residence.`
+      message: `Slot ${RESIDENCE_SLOT} is '${slotInfo.buildingName}', not an empty slot/Residence/Palace.`
     };
   }
 
-  if (slotInfo.isEmptySlot) {
-    const hasResidenceOption = (slotInfo.newBuildingLinks || []).some((opt) =>
-      normalizeText(opt.name).includes("residence")
-    );
-    if (!hasResidenceOption) {
+  if (treatAsEmpty) {
+    const links = slotInfo.newBuildingLinks || [];
+    const hasPalaceOption = links.some((opt) => compactBuildingKey(opt.name).includes("palace"));
+    const hasResidenceOption = links.some((opt) => compactBuildingKey(opt.name).includes("residence"));
+    // Prefer Palace when the slot is blank/empty (empire expansion capital path).
+    const preferredNames = hasPalaceOption
+      ? ["palace"]
+      : hasResidenceOption
+        ? ["residence"]
+        : [];
+    if (!preferredNames.length) {
       return {
         status: "residence_unavailable",
         phase: "residence",
-        message: "Residence is not currently available in this slot."
+        message: "Palace/Residence is not currently available in this slot."
       };
     }
 
-    const built = await clickResidenceConstruction(page);
+    const built = await clickSettlerBuildingConstruction(page, preferredNames);
     if (!built) {
       return {
         status: "residence_build_click_failed",
         phase: "residence",
-        message: "Could not click Residence construction button."
+        message: `Could not click ${preferredNames[0]} construction button.`
       };
     }
     await page.waitForTimeout(1500);
+    const startedLabel = preferredNames[0] === "palace" ? "Palace" : "Residence";
     return {
       status: "residence_started",
       phase: "residence",
-      message: "Started Residence construction at slot 25."
+      buildingName: startedLabel,
+      message: `Started ${startedLabel} construction at slot 25.`
     };
   }
 
@@ -503,21 +610,23 @@ async function ensureResidenceLevel10(page, village) {
         status: "need_residence_resources",
         phase: "residence_resources",
         residenceLevel: slotInfo.currentLevel,
+        buildingName: buildingLabel,
         stock: slotInfo.stock,
         warehouseCap: slotInfo.warehouseCap,
         granaryCap: slotInfo.granaryCap,
         required: slotInfo.costs || {},
         deficit,
         message: deficitEntries.length
-          ? `Residence upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
-          : "Residence upgrade is currently only available via Master Builder. Waiting for resources to use normal build queue."
+          ? `${buildingLabel} upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
+          : `${buildingLabel} upgrade is currently only available via Master Builder. Waiting for resources to use normal build queue.`
       };
     }
     return {
       status: "residence_upgrade_blocked",
       phase: "residence",
       residenceLevel: slotInfo.currentLevel,
-      message: `Residence is level ${slotInfo.currentLevel}, but upgrade button is unavailable or disabled.`
+      buildingName: buildingLabel,
+      message: `${buildingLabel} is level ${slotInfo.currentLevel}, but upgrade button is unavailable or disabled.`
     };
   }
   await page.waitForTimeout(1500);
@@ -525,18 +634,20 @@ async function ensureResidenceLevel10(page, village) {
     status: "residence_upgrading",
     phase: "residence",
     residenceLevel: slotInfo.currentLevel,
-    message: `Queued Residence upgrade from level ${slotInfo.currentLevel}.`
+    buildingName: buildingLabel,
+    message: `Queued ${buildingLabel} upgrade from level ${slotInfo.currentLevel}.`
   };
 }
 
-async function trainSettlers(page, village, needed = SETTLERS_NEEDED) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function trainSettlers(page, village, needed = SETTLERS_NEEDED, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const slotInfo = await readResidencePage(page, baseUrl, village.id);
+  const buildingLabel = describeSettlerBuilding(slotInfo);
 
-  if (!normalizeText(slotInfo.buildingName).includes("residence")) {
+  if (!isSettlerBuildingName(slotInfo.buildingName)) {
     return {
       status: "no_residence",
-      message: `Slot ${RESIDENCE_SLOT} is '${slotInfo.buildingName}', not Residence.`
+      message: `Slot ${RESIDENCE_SLOT} is '${slotInfo.buildingName}', not Residence/Palace.`
     };
   }
 
@@ -544,7 +655,7 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED) {
     return {
       status: "residence_too_low",
       currentLevel: slotInfo.currentLevel,
-      message: `Residence level ${slotInfo.currentLevel} < 10.`
+      message: `${buildingLabel} level ${slotInfo.currentLevel} < 10.`
     };
   }
 
@@ -634,19 +745,19 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED) {
   };
 }
 
-async function getResidenceStatus(page, village) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function getResidenceStatus(page, village, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const slotInfo = await readResidencePage(page, baseUrl, village.id);
 
-  const isResidence = normalizeText(slotInfo.buildingName).includes("residence");
+  const isSettlerBuilding = isSettlerBuildingName(slotInfo.buildingName);
   const settlerEntry = Object.entries(slotInfo.troopCounts).find(([name]) =>
     normalizeText(name).includes("settler")
   );
   let settlerCount = settlerEntry ? settlerEntry[1] : 0;
   let stock = slotInfo.stock;
 
-  if (isResidence && slotInfo.currentLevel >= 10) {
-    const overview = await readVillageOverviewDetails(page, village);
+  if (isSettlerBuilding && slotInfo.currentLevel >= 10) {
+    const overview = await readVillageOverviewDetails(page, village, settings);
     settlerCount = Math.max(settlerCount, Number(overview.settlerCount) || 0);
     if (overview.stock) {
       stock = overview.stock;
@@ -654,16 +765,17 @@ async function getResidenceStatus(page, village) {
 
     // Keep rally point as a final fallback if overview still reports low settlers.
     if (settlerCount < SETTLERS_NEEDED) {
-      const rallyPointSettlers = await getSettlerCountFromRallyPoint(page, village);
+      const rallyPointSettlers = await getSettlerCountFromRallyPoint(page, village, settings);
       settlerCount = Math.max(settlerCount, Number(rallyPointSettlers) || 0);
     }
   }
 
   return {
-    isResidence,
+    isResidence: isSettlerBuilding,
+    buildingName: describeSettlerBuilding(slotInfo),
     residenceLevel: slotInfo.currentLevel,
     settlerCount,
-    canTrainSettlers: isResidence && slotInfo.currentLevel >= 10,
+    canTrainSettlers: isSettlerBuilding && slotInfo.currentLevel >= 10,
     unitOptions: slotInfo.unitOptions,
     stock,
     warehouseCap: slotInfo.warehouseCap > 0 ? slotInfo.warehouseCap : null,
@@ -971,13 +1083,18 @@ async function isSettlementConfirmationContext(page) {
   });
 }
 
-async function openMapTile(page, x, y) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function openMapTile(page, x, y, settingsOrBaseUrl = {}) {
+  const baseUrl = typeof settingsOrBaseUrl === "string"
+    ? settingsOrBaseUrl
+    : resolveExpansionBaseUrl(settingsOrBaseUrl);
   const tileUrl = buildMapTileUrl(baseUrl, x, y);
   await page.goto(tileUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 }
 
-async function openMapSettlementPage(page, targetX, targetY) {
+async function openMapSettlementPage(page, targetX, targetY, settingsOrBaseUrl = {}) {
+  const baseUrl = typeof settingsOrBaseUrl === "string"
+    ? settingsOrBaseUrl
+    : resolveExpansionBaseUrl(settingsOrBaseUrl);
   const resolveFoundVillageHref = async () => page.evaluate(({ x, y }) => {
     const normalize = (value) =>
       String(value || "")
@@ -1017,7 +1134,7 @@ async function openMapSettlementPage(page, targetX, targetY) {
 
   // 2) Otherwise open the map and try opening target tile details.
   if (!href) {
-    await openMapTile(page, targetX, targetY);
+    await openMapTile(page, targetX, targetY, baseUrl);
     await page.waitForTimeout(200);
 
     const openedByLeftClick = await page.evaluate(({ x, y }) => {
@@ -1215,8 +1332,8 @@ function buildMapTileUrl(baseUrl, x, y) {
   }
 }
 
-async function readEnhancedMapSettleCandidates(page, village) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function readEnhancedMapSettleCandidates(page, village, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const originX = Number(village && village.x);
   const originY = Number(village && village.y);
   if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
@@ -1365,8 +1482,8 @@ function isExcludedCoord(excluded, x, y) {
   return set.has(coordKey(x, y));
 }
 
-async function findSettleableByDirectRingSweep(page, village, excludedCoords = [], radius = AUTO_SETTLE_SEARCH_RADIUS) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function findSettleableByDirectRingSweep(page, village, excludedCoords = [], radius = AUTO_SETTLE_SEARCH_RADIUS, settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const originX = Number(village && village.x);
   const originY = Number(village && village.y);
   if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
@@ -1499,7 +1616,7 @@ async function inspectCurrentTileViewForSettlement(page) {
 }
 
 async function findClosestFreeSettlementTileViaEnhancedMap(page, village, options = {}) {
-  const baseUrl = "https://nexian.world/village2.php";
+  const baseUrl = resolveExpansionBaseUrl(options.settings || options);
   const originX = Number(village && village.x);
   const originY = Number(village && village.y);
   if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
@@ -1609,7 +1726,7 @@ async function findClosestFreeSettlementTileViaEnhancedMap(page, village, option
 }
 
 async function findClosestFreeSettlementTile(page, village, options = {}) {
-  const baseUrl = "https://nexian.world/village2.php";
+  const baseUrl = resolveExpansionBaseUrl(options.settings || options);
   const originX = Number(village && village.x);
   const originY = Number(village && village.y);
   if (!Number.isFinite(originX) || !Number.isFinite(originY)) {
@@ -1625,7 +1742,11 @@ async function findClosestFreeSettlementTile(page, village, options = {}) {
   const excluded = Array.isArray(options.excludedCoords) ? options.excludedCoords : [];
 
   // First try the enhanced-map tile grid if present (fast local view).
-  const enhancedCandidates = await readEnhancedMapSettleCandidates(page, village);
+  const enhancedCandidates = await readEnhancedMapSettleCandidates(
+    page,
+    village,
+    options.settings || options
+  );
   if (enhancedCandidates.length > 0) {
     // Prefer enhanced map candidates directly. We already filtered own/war/invalid tiles.
     const directCandidate = enhancedCandidates.find((candidate) => candidate.distance <= radius) || null;
@@ -1669,11 +1790,11 @@ async function findClosestFreeSettlementTile(page, village, options = {}) {
   return null;
 }
 
-async function findFirstSettleablePreferredTarget(page, preferredTargets = []) {
-  const baseUrl = "https://nexian.world/village2.php";
+async function findFirstSettleablePreferredTarget(page, preferredTargets = [], excludedCoords = [], settings = {}) {
+  const baseUrl = resolveExpansionBaseUrl(settings);
   const normalizedTargets = Array.isArray(preferredTargets) ? preferredTargets : [];
   const excluded = new Set(
-    (Array.isArray(arguments[2]) ? arguments[2] : [])
+    (Array.isArray(excludedCoords) ? excludedCoords : [])
       .map((value) => String(value))
   );
   for (let i = 0; i < normalizedTargets.length; i += 1) {
@@ -1695,7 +1816,7 @@ async function findFirstSettleablePreferredTarget(page, preferredTargets = []) {
 }
 
 async function sendSettlersToFoundVillage(page, village, targetX, targetY, options = {}) {
-  const baseUrl = "https://nexian.world/village2.php";
+  const baseUrl = resolveExpansionBaseUrl(options.settings || options);
   const radius = Math.max(1, Math.floor(Number(options.radius) || AUTO_SETTLE_SEARCH_RADIUS));
   let resolvedTargetX = Number(targetX);
   let resolvedTargetY = Number(targetY);
@@ -1715,7 +1836,8 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
       const preferred = await findFirstSettleablePreferredTarget(
         page,
         options.preferredTargets || [],
-        excludedList
+        excludedList,
+        options.settings || options
       );
       if (preferred) {
         picked = {
@@ -1764,7 +1886,8 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
         page,
         village,
         Array.from(excludedCoords.values()),
-        radius
+        radius,
+        options.settings || options
       );
       if (sweep) {
         resolvedTargetX = sweep.x;
@@ -1809,7 +1932,12 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
   }
 
   // Map-only flow: open target tile -> click Found new village (v2v) -> send settlers.
-  const openedMapSettlePage = await openMapSettlementPage(page, resolvedTargetX, resolvedTargetY);
+  const openedMapSettlePage = await openMapSettlementPage(
+    page,
+    resolvedTargetX,
+    resolvedTargetY,
+    baseUrl
+  );
   if (!openedMapSettlePage) {
     return {
       status: "settle_target_unavailable",
@@ -1902,15 +2030,15 @@ async function runExpansionStep(getPage, settings, village) {
     throw new Error("Session page is unavailable.");
   }
 
-  const residencePrep = await ensureResidenceLevel10(page, village);
+  const residencePrep = await ensureResidenceLevel10(page, village, settings);
   if (residencePrep.status !== "residence_ready") {
     return residencePrep;
   }
 
-  const status = await getResidenceStatus(page, village);
+  const status = await getResidenceStatus(page, village, settings);
 
   if (status.settlerCount < SETTLERS_NEEDED) {
-    const trainResult = await trainSettlers(page, village, SETTLERS_NEEDED);
+    const trainResult = await trainSettlers(page, village, SETTLERS_NEEDED, settings);
     return {
       status: trainResult.status,
       phase: "train",
