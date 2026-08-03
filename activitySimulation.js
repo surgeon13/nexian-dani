@@ -66,7 +66,7 @@ function buildPatternUrl(pattern, settings, villageId) {
     case "reports":
       return `${origin}/report`;
     case "statistics":
-      return `${origin}/statistics`;
+      return `${origin}/statistics.php`;
     default:
       return withVillageId(settings.villageStatusUrl, villageId);
   }
