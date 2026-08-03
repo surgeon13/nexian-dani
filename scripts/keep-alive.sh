@@ -129,8 +129,9 @@ while true; do
   elif ! dashboard_ok; then
     restart_bot "dashboard API down"
   else
+    age=$(file_age_minutes "$ROOT/log.jsonl")
+    log "heartbeat bot=up dash=up log_age=${age}m"
     if automation_expected; then
-      age=$(file_age_minutes "$ROOT/log.jsonl")
       if [[ "$age" -ge "$STALE_MINUTES" ]]; then
         # During intentional session rest, automation is paused — don't thrash.
         paused=$(curl -sf --max-time 5 "$DASH_URL" 2>/dev/null | python3 -c 'import json,sys
