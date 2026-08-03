@@ -9242,7 +9242,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   selectedVillage,
                   undefined,
                   undefined,
-                  { preferredTargets }
+                  { preferredTargets, settings }
                 ),
               () => cancelRequested
             );
