@@ -585,10 +585,13 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
 
     const built = await clickSettlerBuildingConstruction(page, preferredNames);
     if (!built) {
+      const wanted = preferredNames[0];
+      const option = links.find((opt) => compactBuildingKey(opt.name).includes(wanted));
+      const optionHint = option && option.name ? ` (${option.name} is listed but not constructible yet)` : "";
       return {
         status: "residence_build_click_failed",
         phase: "residence",
-        message: `Could not click ${preferredNames[0]} construction button.`
+        message: `Could not click ${wanted} construction button${optionHint}. Check prerequisites (e.g. Main Building / Embassy) and build queue.`
       };
     }
     await page.waitForTimeout(1500);
