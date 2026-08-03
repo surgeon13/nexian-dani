@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Nexian Dashboard</title>
-  <link rel="stylesheet" href="/style.css?v=1.5.12" />
+  <link rel="stylesheet" href="/style.css?v=1.5.13" />
   <script>
     (function () {
       try {
@@ -34,6 +34,7 @@
 
   <nav class="tabs">
     <button type="button" class="tab-btn active" data-tab="dashboard" data-label-full="Dashboard" data-label-short="Dash">Dashboard</button>
+    <button type="button" class="tab-btn" data-tab="top10" data-label-full="Top 10" data-label-short="T10">Top 10</button>
     <button type="button" class="tab-btn" data-tab="settings" data-label-full="Settings" data-label-short="Set">Settings</button>
     <button type="button" class="tab-btn" data-tab="troops" data-label-full="Troop Templates" data-label-short="Troops">Troop Templates</button>
   </nav>
@@ -181,6 +182,58 @@
     </section>
   </div>
 
+  <div id="tab-top10" class="layout tab-view">
+    <section class="panel top10-panel">
+      <div class="panel-head top10-panel-head">
+        <div>
+          <h2>Top 10 tracking</h2>
+          <p class="hint top10-hint">Live rankings and your progress — updated from scheduled snapshots.</p>
+        </div>
+        <div class="top10-head-actions">
+          <span id="top10-pill" class="pill pill-paused">OFF</span>
+          <button type="button" id="top10-refresh-btn" class="secondary-btn">Refresh</button>
+          <button type="button" id="top10-snapshot-btn" class="primary-btn">Snapshot now</button>
+        </div>
+      </div>
+
+      <div id="top10-stats" class="troop-rr-stats top10-stats">
+        <div class="troop-rr-stat">
+          <div class="troop-rr-stat-label">Status</div>
+          <div id="top10-status-text" class="troop-rr-stat-value">—</div>
+        </div>
+        <div class="troop-rr-stat">
+          <div class="troop-rr-stat-label">Interval</div>
+          <div id="top10-interval" class="troop-rr-stat-value">—</div>
+        </div>
+        <div class="troop-rr-stat troop-rr-stat-next">
+          <div class="troop-rr-stat-label">Next snapshot</div>
+          <div id="top10-next" class="troop-rr-stat-value troop-rr-next-value">—</div>
+        </div>
+        <div class="troop-rr-stat">
+          <div class="troop-rr-stat-label">Snapshots</div>
+          <div id="top10-completed" class="troop-rr-stat-value">0</div>
+        </div>
+        <div class="troop-rr-stat">
+          <div class="troop-rr-stat-label">Last update</div>
+          <div id="top10-updated" class="troop-rr-stat-value">—</div>
+        </div>
+      </div>
+
+      <h3 class="subsection-title">Your standings</h3>
+      <div id="top10-standings" class="top10-standings"></div>
+
+      <div class="top10-board-head">
+        <h3 class="subsection-title">Leaderboard</h3>
+        <div id="top10-category-tabs" class="top10-category-tabs" role="tablist" aria-label="Top 10 categories"></div>
+      </div>
+      <div id="top10-podium" class="top10-podium"></div>
+      <div id="top10-board" class="top10-board"></div>
+
+      <h3 class="subsection-title">Your trend</h3>
+      <div id="top10-trend" class="top10-trend"></div>
+    </section>
+  </div>
+
   <div id="tab-troops" class="layout tab-view">
     <section class="panel troop-panel">
       <div class="panel-head">
@@ -238,6 +291,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=1.6.1"></script>
+  <script src="/app.js?v=1.6.2"></script>
 </body>
 </html>

@@ -12,6 +12,7 @@ const ACTIONS = [
   { action: "relogin", key: "r", label: "Relogin", shortLabel: "Relog" },
   { action: "relogin-status", key: "R", label: "Relogin + status", shortLabel: "R+St" },
   { action: "logs", key: "L", label: "Log summary", shortLabel: "Log" },
+  { action: "top10", key: "O", label: "Top 10 snapshot", shortLabel: "Top10" },
   { action: "stop-builder", key: "X", label: "Stop builder", shortLabel: "Stop", danger: true },
   { action: "quit", key: "Q", label: "Quit", shortLabel: "Quit", danger: true }
 ];
@@ -63,6 +64,19 @@ const els = {
   displayCompact: document.getElementById("display-compact"),
   displayModeBadge: document.getElementById("display-mode-badge"),
   villagePicker: document.getElementById("village-picker"),
+  top10Pill: document.getElementById("top10-pill"),
+  top10StatusText: document.getElementById("top10-status-text"),
+  top10Interval: document.getElementById("top10-interval"),
+  top10Next: document.getElementById("top10-next"),
+  top10Completed: document.getElementById("top10-completed"),
+  top10Updated: document.getElementById("top10-updated"),
+  top10Standings: document.getElementById("top10-standings"),
+  top10CategoryTabs: document.getElementById("top10-category-tabs"),
+  top10Podium: document.getElementById("top10-podium"),
+  top10Board: document.getElementById("top10-board"),
+  top10Trend: document.getElementById("top10-trend"),
+  top10RefreshBtn: document.getElementById("top10-refresh-btn"),
+  top10SnapshotBtn: document.getElementById("top10-snapshot-btn"),
   toast: document.getElementById("toast")
 };
 
@@ -288,6 +302,7 @@ function renderStatusNow(status) {
         { label: "Troop", value: loopLabelShort(status.loops && status.loops.troop) },
         { label: "Cranny", value: loopLabelShort(status.loops && status.loops.cranny) },
         { label: "Activity", value: loopLabelShort(status.loops && status.loops.activity) },
+        { label: "Top10", value: loopLabelShort(status.loops && status.loops.top10) },
         {
           label: "Now",
           value: starting
@@ -314,6 +329,7 @@ function renderStatusNow(status) {
     { label: "Troop RR", value: loopLabel(status.loops && status.loops.troop) },
     { label: "Cranny RR", value: loopLabel(status.loops && status.loops.cranny) },
     { label: "Activity", value: loopLabel(status.loops && status.loops.activity) },
+    { label: "Top 10", value: loopLabel(status.loops && status.loops.top10) },
     {
       label: "Current action",
       value: status.actionInProgress ? status.currentActionLabel || "…" : "Idle"
@@ -370,6 +386,9 @@ function renderStatusNow(status) {
   }
   if (activeTab === "troops" && status.loops && status.loops.troop) {
     renderTroopLoopPanel(status.loops.troop);
+  }
+  if (status.top10Tracking || (status.loops && status.loops.top10)) {
+    renderTop10LoopPanel(status.top10Tracking || status.loops.top10);
   }
 }
 
@@ -534,6 +553,9 @@ function startHeavyTabPolling() {
           }
         })
         .catch(() => {});
+    }
+    if (activeTab === "top10") {
+      refreshTop10Dashboard({ silent: true }).catch(() => {});
     }
   }, 12000);
 }
@@ -2184,10 +2206,414 @@ function setupDisplaySettings() {
   }
 }
 
+// --- Top 10 tracking tab ---------------------------------------------------
+
+let top10LoadedOnce = false;
+let latestTop10Data = null;
+let selectedTop10Category = "attackers";
+let top10SnapshotBusy = false;
+
+function formatTop10When(ts) {
+  if (!ts) {
+    return "—";
+  }
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) {
+    return String(ts);
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+
+function formatTop10Number(value, fallback = "—") {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return fallback;
+  }
+  return Number(value).toLocaleString("en-US");
+}
+
+function formatTop10Delta(delta, options = {}) {
+  if (delta == null || !Number.isFinite(Number(delta))) {
+    return { text: "—", className: "flat" };
+  }
+  const n = Number(delta);
+  if (n === 0) {
+    return { text: "0", className: "flat" };
+  }
+  const improved = Boolean(options.improved);
+  const prefix = n > 0 ? "+" : "";
+  return {
+    text: `${prefix}${Math.round(n)}`,
+    className: improved ? "up" : "down"
+  };
+}
+
+function buildSparklineSvg(values, options = {}) {
+  const width = options.width || 72;
+  const height = options.height || 28;
+  const invert = Boolean(options.invert);
+  const stroke = options.stroke || "var(--cyan)";
+  const points = (values || []).filter((v) => v != null && Number.isFinite(Number(v))).map(Number);
+  if (points.length < 2) {
+    return `<svg class="top10-spark" viewBox="0 0 ${width} ${height}" aria-hidden="true"></svg>`;
+  }
+  let min = Math.min(...points);
+  let max = Math.max(...points);
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  const coords = points
+    .map((value, index) => {
+      const x = (index / (points.length - 1)) * (width - 2) + 1;
+      const ratio = (value - min) / (max - min);
+      const y = invert ? 1 + ratio * (height - 2) : height - 1 - ratio * (height - 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return `
+    <svg class="top10-spark" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+      <polyline fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${coords}"></polyline>
+    </svg>`;
+}
+
+function buildTrendChartSvg(history, options = {}) {
+  const width = options.width || 640;
+  const height = options.height || 120;
+  const useRank = Boolean(options.useRank);
+  const points = (history || [])
+    .map((point) => ({
+      ts: point.epochMs || (point.ts ? Date.parse(point.ts) : null),
+      value: useRank ? point.selfRank : point.selfValue
+    }))
+    .filter((point) => point.value != null && Number.isFinite(Number(point.value)));
+
+  if (points.length < 2) {
+    return `<div class="top10-empty">Not enough history yet — keep snapshots running.</div>`;
+  }
+
+  let min = Math.min(...points.map((p) => p.value));
+  let max = Math.max(...points.map((p) => p.value));
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  const padX = 8;
+  const padY = 10;
+  const coords = points
+    .map((point, index) => {
+      const x = padX + (index / (points.length - 1)) * (width - padX * 2);
+      const ratio = (point.value - min) / (max - min);
+      const y = useRank
+        ? padY + ratio * (height - padY * 2)
+        : height - padY - ratio * (height - padY * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const last = points[points.length - 1];
+  const first = points[0];
+  return `
+    <svg class="top10-trend-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Trend chart">
+      <polyline fill="none" stroke="rgba(61,214,245,0.9)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${coords}"></polyline>
+    </svg>
+    <div class="top10-trend-legend">
+      <span>Start <strong>${escapeHtml(formatTop10Number(first.value))}</strong></span>
+      <span>Now <strong>${escapeHtml(formatTop10Number(last.value))}</strong></span>
+      <span>Samples <strong>${points.length}</strong></span>
+    </div>`;
+}
+
+function getSelectedTop10Category(data) {
+  const categories = (data && data.categories) || [];
+  const found = categories.find((cat) => cat.id === selectedTop10Category);
+  if (found) {
+    return found;
+  }
+  return categories[0] || null;
+}
+
+function renderTop10LoopPanel(tracking) {
+  if (!els.top10Pill) {
+    return;
+  }
+  const enabled = Boolean(tracking && tracking.enabled);
+  els.top10Pill.textContent = enabled ? "ON" : "OFF";
+  els.top10Pill.classList.toggle("pill-running", enabled);
+  els.top10Pill.classList.toggle("pill-paused", !enabled);
+
+  if (els.top10StatusText) {
+    els.top10StatusText.textContent = enabled ? "Tracking" : "Paused";
+  }
+  if (els.top10Interval) {
+    const min = tracking && tracking.minMinutes;
+    const max = tracking && tracking.maxMinutes;
+    els.top10Interval.textContent =
+      min != null && max != null ? `every ${min}-${max}m` : "—";
+  }
+  if (els.top10Next) {
+    const next = tracking && tracking.nextInMinutes;
+    els.top10Next.textContent =
+      next == null ? "—" : next <= 0 ? "due now" : `${next}m`;
+  }
+  if (els.top10Completed) {
+    const completed =
+      (tracking && tracking.completedCount) ||
+      (latestTop10Data && latestTop10Data.snapshotCount) ||
+      0;
+    els.top10Completed.textContent = String(completed);
+  }
+}
+
+function renderTop10Standings(data) {
+  if (!els.top10Standings) {
+    return;
+  }
+  const standings = (data && data.standings) || [];
+  if (!standings.length) {
+    els.top10Standings.innerHTML =
+      '<div class="top10-empty">No personal rankings yet. Run a snapshot to populate this board.</div>';
+    return;
+  }
+
+  els.top10Standings.innerHTML = standings
+    .map((item) => {
+      const rankLabel =
+        item.rank != null ? `#${item.rank}` : item.rankText || "?";
+      const delta = formatTop10Delta(item.rankDelta, { improved: item.rankImproved });
+      const spark = buildSparklineSvg(item.sparkline, {
+        invert: false,
+        stroke: item.inTop10 ? "var(--green)" : "var(--cyan)"
+      });
+      return `
+        <button type="button" class="top10-standing-card${item.inTop10 ? " is-top" : ""}" data-top10-cat="${escapeHtml(item.category)}">
+          <div class="top10-standing-label">${escapeHtml(item.label)}</div>
+          <div class="top10-standing-rank">${escapeHtml(rankLabel)}</div>
+          <div class="top10-standing-value">${escapeHtml(item.valueText || formatTop10Number(item.value))} <span style="color:var(--muted);font-weight:500;font-size:0.75rem">${escapeHtml(item.metric)}</span></div>
+          <div class="top10-standing-meta">
+            <span class="top10-delta ${delta.className}">${escapeHtml(delta.text)} rank</span>
+            ${spark}
+          </div>
+        </button>`;
+    })
+    .join("");
+
+  els.top10Standings.querySelectorAll("[data-top10-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectedTop10Category = btn.getAttribute("data-top10-cat") || selectedTop10Category;
+      renderTop10CategoryViews(latestTop10Data);
+    });
+  });
+}
+
+function renderTop10CategoryTabs(data) {
+  if (!els.top10CategoryTabs) {
+    return;
+  }
+  const categories = (data && data.categories) || [];
+  els.top10CategoryTabs.innerHTML = categories
+    .map((cat) => {
+      const active = cat.id === selectedTop10Category ? " active" : "";
+      return `<button type="button" class="top10-cat-btn${active}" data-top10-cat="${escapeHtml(cat.id)}">${escapeHtml(cat.label)}</button>`;
+    })
+    .join("");
+  els.top10CategoryTabs.querySelectorAll("[data-top10-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectedTop10Category = btn.getAttribute("data-top10-cat") || selectedTop10Category;
+      renderTop10CategoryViews(latestTop10Data);
+    });
+  });
+}
+
+function renderTop10Podium(category) {
+  if (!els.top10Podium) {
+    return;
+  }
+  const top = ((category && category.top10) || []).slice(0, 3);
+  if (top.length < 3) {
+    els.top10Podium.innerHTML = "";
+    els.top10Podium.classList.add("hidden");
+    return;
+  }
+  els.top10Podium.classList.remove("hidden");
+  const medals = ["gold", "silver", "bronze"];
+  els.top10Podium.innerHTML = top
+    .map((row, index) => {
+      const place = index + 1;
+      return `
+        <div class="top10-podium-card place-${place}">
+          <div class="top10-podium-place">${place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}</div>
+          <div class="top10-podium-name">${escapeHtml(row.name)}</div>
+          <div class="top10-podium-value">${escapeHtml(row.valueText || formatTop10Number(row.value))}</div>
+        </div>`;
+    })
+    .join("");
+}
+
+function renderTop10Board(category) {
+  if (!els.top10Board) {
+    return;
+  }
+  if (!category || !category.ok || !category.top10 || !category.top10.length) {
+    els.top10Board.innerHTML =
+      '<div class="top10-empty">No ranking rows for this category yet.</div>';
+    return;
+  }
+
+  const selfName = category.self && category.self.name ? category.self.name.toLowerCase() : "";
+  const rowsHtml = category.top10
+    .map((row) => {
+      const isSelf =
+        Boolean(selfName) && String(row.name || "").toLowerCase() === selfName;
+      const rankClass =
+        row.rank === 1 ? "gold" : row.rank === 2 ? "silver" : row.rank === 3 ? "bronze" : "";
+      return `
+        <tr class="${isSelf ? "is-self" : ""}">
+          <td class="rank-cell ${rankClass}">${escapeHtml(row.rank != null ? `#${row.rank}` : row.rankText || "—")}</td>
+          <td class="name-cell">${escapeHtml(row.name)}${isSelf ? " · you" : ""}</td>
+          <td class="ally-cell">${escapeHtml(row.alliance || "—")}</td>
+          <td class="value-cell">${escapeHtml(row.valueText || formatTop10Number(row.value))}</td>
+        </tr>`;
+    })
+    .join("");
+
+  let selfFooter = "";
+  if (category.self && (category.self.rank == null || category.self.rank > 10)) {
+    selfFooter = `
+      <tr class="is-self">
+        <td class="rank-cell">${escapeHtml(
+          category.self.rank != null ? `#${category.self.rank}` : category.self.rankText || "?"
+        )}</td>
+        <td class="name-cell">${escapeHtml(category.self.name)} · you</td>
+        <td class="ally-cell">${escapeHtml(category.self.alliance || "—")}</td>
+        <td class="value-cell">${escapeHtml(
+          category.self.valueText || formatTop10Number(category.self.value)
+        )}</td>
+      </tr>`;
+  }
+
+  els.top10Board.innerHTML = `
+    <table class="top10-table">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Name</th>
+          <th>Alliance</th>
+          <th>${escapeHtml(category.metric || "Value")}</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}${selfFooter}</tbody>
+    </table>`;
+}
+
+function renderTop10Trend(category) {
+  if (!els.top10Trend) {
+    return;
+  }
+  if (!category) {
+    els.top10Trend.innerHTML = '<div class="top10-empty">Select a category to see your trend.</div>';
+    return;
+  }
+  const useRank = category.id === "climbers" || (category.self && category.self.value == null);
+  const chart = buildTrendChartSvg(category.history || [], { useRank });
+  els.top10Trend.innerHTML = `
+    <div class="top10-trend-head">
+      <div class="top10-trend-title">${escapeHtml(category.label)} · your ${useRank ? "rank" : category.metric.toLowerCase()}</div>
+      <div class="top10-trend-sub">Updated ${escapeHtml(formatTop10When(category.updatedAt))}</div>
+    </div>
+    ${chart}`;
+}
+
+function renderTop10CategoryViews(data) {
+  renderTop10CategoryTabs(data);
+  const category = getSelectedTop10Category(data);
+  if (category) {
+    selectedTop10Category = category.id;
+  }
+  renderTop10Podium(category);
+  renderTop10Board(category);
+  renderTop10Trend(category);
+}
+
+function renderTop10Dashboard(data) {
+  latestTop10Data = data;
+  if (!data) {
+    return;
+  }
+  renderTop10LoopPanel(data.tracking || {});
+  if (els.top10Updated) {
+    els.top10Updated.textContent = formatTop10When(data.latestTs || (data.tracking && data.tracking.lastActionAt));
+  }
+  if (els.top10Completed && data.snapshotCount != null) {
+    els.top10Completed.textContent = String(
+      Math.max(Number(data.tracking && data.tracking.completedCount) || 0, Number(data.snapshotCount) || 0)
+    );
+  }
+  renderTop10Standings(data);
+  renderTop10CategoryViews(data);
+}
+
+async function refreshTop10Dashboard(options = {}) {
+  const data = await api("/api/top10?limit=700");
+  renderTop10Dashboard(data);
+  if (!options.silent) {
+    showToast("Top 10 dashboard refreshed");
+  }
+  return data;
+}
+
+async function runTop10SnapshotFromDashboard() {
+  if (top10SnapshotBusy) {
+    return;
+  }
+  top10SnapshotBusy = true;
+  if (els.top10SnapshotBtn) {
+    els.top10SnapshotBtn.disabled = true;
+  }
+  try {
+    await api("/api/action", {
+      method: "POST",
+      body: JSON.stringify({ action: "top10" })
+    });
+    showToast("Top 10 snapshot started");
+    setTimeout(() => {
+      refreshTop10Dashboard({ silent: true }).catch(() => {});
+    }, 8000);
+    setTimeout(() => {
+      refreshTop10Dashboard({ silent: true }).catch(() => {});
+    }, 20000);
+  } catch (error) {
+    showToast(error.message || "Snapshot failed");
+  } finally {
+    top10SnapshotBusy = false;
+    if (els.top10SnapshotBtn) {
+      els.top10SnapshotBtn.disabled = false;
+    }
+  }
+}
+
+function setupTop10Tab() {
+  if (els.top10RefreshBtn) {
+    els.top10RefreshBtn.addEventListener("click", () => {
+      refreshTop10Dashboard().catch((error) => showToast(error.message || "Refresh failed"));
+    });
+  }
+  if (els.top10SnapshotBtn) {
+    els.top10SnapshotBtn.addEventListener("click", () => {
+      runTop10SnapshotFromDashboard();
+    });
+  }
+}
+
 function setupTabs() {
   const buttons = Array.from(document.querySelectorAll(".tab-btn"));
   const views = {
     dashboard: document.getElementById("tab-dashboard"),
+    top10: document.getElementById("tab-top10"),
     settings: document.getElementById("tab-settings"),
     troops: document.getElementById("tab-troops")
   };
@@ -2204,6 +2630,12 @@ function setupTabs() {
       if (tab === "troops" && !troopsLoadedOnce) {
         troopsLoadedOnce = true;
         refreshTroopForm();
+      }
+      if (tab === "top10") {
+        refreshTop10Dashboard({ silent: top10LoadedOnce }).catch((error) =>
+          showToast(error.message || "Could not load Top 10")
+        );
+        top10LoadedOnce = true;
       }
       if (tab === "settings") {
         refreshActivitySettingsPanel();
@@ -2224,6 +2656,7 @@ function tickClock() {
 renderActions(false);
 setupDisplaySettings();
 setupTabs();
+setupTop10Tab();
 setupTroopForm();
 setupActivityForm();
 setupProxyForm();

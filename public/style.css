@@ -2346,7 +2346,8 @@ body.compact-view .tab-view.active {
   }
 
   :is(html, body).compact-view #tab-settings.layout,
-  :is(html, body).compact-view #tab-troops.layout {
+  :is(html, body).compact-view #tab-troops.layout,
+  :is(html, body).compact-view #tab-top10.layout {
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -2355,5 +2356,344 @@ body.compact-view .tab-view.active {
 @media (max-width: 479px) {
   body.compact-view {
     --dash-edge-x: 0.55rem;
+  }
+}
+
+/* --- Top 10 tracking tab ------------------------------------------------- */
+
+.top10-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.top10-panel-head h2 {
+  margin: 0;
+}
+
+.top10-hint {
+  margin: 0.35rem 0 0;
+}
+
+.top10-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.top10-stats {
+  margin-top: 0.25rem;
+}
+
+.top10-standings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.top10-standing-card {
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 6.5rem;
+}
+
+.top10-standing-card.is-top {
+  border-color: rgba(61, 214, 245, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(61, 214, 245, 0.08);
+}
+
+.top10-standing-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.top10-standing-rank {
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.top10-standing-value {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.top10-standing-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.top10-delta {
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.top10-delta.up {
+  color: var(--green);
+}
+
+.top10-delta.down {
+  color: var(--red);
+}
+
+.top10-delta.flat {
+  color: var(--muted);
+}
+
+.top10-spark {
+  width: 72px;
+  height: 28px;
+  display: block;
+  flex-shrink: 0;
+}
+
+.top10-board-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.top10-category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.top10-cat-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.top10-cat-btn:hover {
+  color: var(--text);
+  border-color: rgba(88, 166, 255, 0.4);
+}
+
+.top10-cat-btn.active {
+  color: var(--cyan);
+  border-color: rgba(61, 214, 245, 0.55);
+  background: rgba(61, 214, 245, 0.12);
+}
+
+.top10-podium {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+  align-items: end;
+}
+
+.top10-podium-card {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.18));
+  padding: 0.75rem 0.7rem 0.85rem;
+  text-align: center;
+  min-height: 6.25rem;
+}
+
+.top10-podium-card.place-1 {
+  order: 2;
+  min-height: 7.25rem;
+  border-color: rgba(212, 167, 44, 0.55);
+  background: linear-gradient(180deg, rgba(212, 167, 44, 0.18), rgba(0, 0, 0, 0.2));
+}
+
+.top10-podium-card.place-2 {
+  order: 1;
+  border-color: rgba(139, 156, 179, 0.45);
+}
+
+.top10-podium-card.place-3 {
+  order: 3;
+  border-color: rgba(205, 127, 50, 0.45);
+}
+
+.top10-podium-place {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.top10-podium-name {
+  font-weight: 700;
+  font-size: 0.98rem;
+  margin-bottom: 0.2rem;
+  word-break: break-word;
+}
+
+.top10-podium-value {
+  color: var(--cyan);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.top10-board {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 1.25rem;
+}
+
+.top10-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.top10-table th,
+.top10-table td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid rgba(45, 58, 77, 0.85);
+  text-align: left;
+}
+
+.top10-table th {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.top10-table tr:last-child td {
+  border-bottom: none;
+}
+
+.top10-table tr.is-self {
+  background: rgba(61, 214, 245, 0.1);
+}
+
+.top10-table .rank-cell {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  width: 3.2rem;
+}
+
+.top10-table .rank-cell.gold {
+  color: #e3b341;
+}
+
+.top10-table .rank-cell.silver {
+  color: #c0c8d4;
+}
+
+.top10-table .rank-cell.bronze {
+  color: #cd7f32;
+}
+
+.top10-table .value-cell {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--cyan);
+  text-align: right;
+}
+
+.top10-table .name-cell {
+  font-weight: 600;
+}
+
+.top10-table .ally-cell {
+  color: var(--muted);
+}
+
+.top10-empty {
+  color: var(--muted);
+  padding: 1rem;
+  text-align: center;
+}
+
+.top10-trend {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem 1rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.top10-trend-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.65rem;
+}
+
+.top10-trend-title {
+  font-weight: 700;
+}
+
+.top10-trend-sub {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.top10-trend-chart {
+  width: 100%;
+  height: 120px;
+  display: block;
+}
+
+.top10-trend-legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.top10-trend-legend span strong {
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .top10-podium {
+    grid-template-columns: 1fr;
+  }
+
+  .top10-podium-card.place-1,
+  .top10-podium-card.place-2,
+  .top10-podium-card.place-3 {
+    order: initial;
+    min-height: 0;
+  }
+
+  .top10-head-actions {
+    width: 100%;
+  }
+
+  .top10-head-actions .primary-btn,
+  .top10-head-actions .secondary-btn {
+    flex: 1;
   }
 }
