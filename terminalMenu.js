@@ -4152,6 +4152,23 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   }
 
   const rows = await page.evaluate((rowSelector) => {
+    const parseStock = (id) => {
+      const el = document.querySelector(id);
+      if (!el) {
+        return NaN;
+      }
+      const digits = String(el.textContent || "")
+        .split("/")[0]
+        .replace(/[^\d]/g, "");
+      return digits ? Number(digits) : NaN;
+    };
+    const stock = {
+      wood: parseStock("#l4"),
+      clay: parseStock("#l3"),
+      iron: parseStock("#l2"),
+      crop: parseStock("#l1")
+    };
+
     return Array.from(document.querySelectorAll(rowSelector))
       .map((row) => {
         const tit = row.querySelector("td.desc .tit");
@@ -4161,7 +4178,9 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
         if (!troopName && unitImg) {
           troopName = String(unitImg.getAttribute("title") || unitImg.getAttribute("alt") || "").trim();
         }
-        const inputEl = row.querySelector("td.val input.text[type='text'], td.val input.text");
+        const inputEl = row.querySelector(
+          "td.val input.text[type='text'], td.val input.text, td.val input[type='text']"
+        );
         const maxLink = row.querySelector("td.max a");
         const inputName = inputEl ? inputEl.getAttribute("name") : "";
         const maxText = maxLink ? maxLink.textContent : "";
@@ -4176,19 +4195,55 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
             String(onclickText).match(/\bvalue\s*=\s*(\d+)/i);
           return m ? Number(m[1]) : NaN;
         })();
-        let maxTrainable = Number.isFinite(maxFromText)
-          ? maxFromText
-          : Number.isFinite(maxFromOnclick)
-            ? maxFromOnclick
-            : 0;
+
+        const costSpans = Array.from(row.querySelectorAll("td.desc .details span.little_res"));
+        const costs = costSpans
+          .map((el) => Number(String(el.textContent || "").replace(/[^\d]/g, "")))
+          .filter((n) => Number.isFinite(n));
+        // Nexian cost order: wood | clay | iron | crop (| upkeep | time…)
+        let maxFromCosts = NaN;
+        if (costs.length >= 4) {
+          const caps = [];
+          const pairs = [
+            [stock.wood, costs[0]],
+            [stock.clay, costs[1]],
+            [stock.iron, costs[2]],
+            [stock.crop, costs[3]]
+          ];
+          for (const [have, need] of pairs) {
+            if (!Number.isFinite(have) || !Number.isFinite(need) || need <= 0) {
+              continue;
+            }
+            caps.push(Math.floor(have / need));
+          }
+          if (caps.length) {
+            maxFromCosts = Math.max(0, Math.min(...caps));
+          }
+        }
+
+        // Prefer game max-link / onclick; fall back to cost math; Available: N last.
+        const fromUi = [maxFromText, maxFromOnclick].filter((n) => Number.isFinite(n) && n >= 0);
+        let maxTrainable = fromUi.length ? Math.max(...fromUi) : 0;
+        if (maxTrainable <= 0 && Number.isFinite(maxFromCosts)) {
+          maxTrainable = maxFromCosts;
+        } else if (maxTrainable > 0 && Number.isFinite(maxFromCosts)) {
+          maxTrainable = Math.min(maxTrainable, maxFromCosts);
+        }
+
         const availEl = row.querySelector(".tit span.info span[id^='availCount_']");
         const availDigits = availEl ? String(availEl.textContent || "").replace(/\D/g, "").trim() : "";
         const availableNow = availDigits !== "" ? Number(availDigits) : NaN;
         if (Number.isFinite(availableNow)) {
           if (availableNow <= 0) {
             maxTrainable = 0;
-          } else {
+          } else if (maxTrainable > 0) {
             maxTrainable = Math.min(maxTrainable, availableNow);
+          } else {
+            // Max link missing/unparsed — Available: N is the game's affordance hint.
+            maxTrainable = availableNow;
+            if (Number.isFinite(maxFromCosts) && maxFromCosts >= 0) {
+              maxTrainable = Math.min(maxTrainable, maxFromCosts);
+            }
           }
         }
         return { troopName, inputName, maxTrainable };
@@ -5168,10 +5223,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let farmlistResumeWaitLogged = false;
     let farmlistShortRetriesLeft = 0;
     const FARMLIST_SHORT_RETRY_MS = 120000;
-    /** Max time troop auto waits for another action (manual menu, Top10 snapshot, etc.) before skipping this tick. */
-    const TROOP_AUTO_ACTION_IDLE_WAIT_MS = 10000;
+    /** Max time troop auto waits for another action before preempting builder / skipping. */
+    const TROOP_AUTO_ACTION_IDLE_WAIT_MS = 45000;
     const TROOP_AUTO_BUSY_RETRY_MIN_MS = 15000;
     const TROOP_AUTO_BUSY_RETRY_JITTER_MS = 10000;
+    /** When clay/wood can't cover a full TT batch, retry sooner than the plan interval. */
+    const TROOP_AUTO_RESOURCE_RETRY_MIN_MS = 2 * 60 * 1000;
+    const TROOP_AUTO_RESOURCE_RETRY_JITTER_MS = 2 * 60 * 1000;
     let nextBuilderRunAt = null;
     let lastBuilderDelayMinutes = null;
     let nextCrannyDefenseRunAt = null;
@@ -7457,7 +7515,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 }
               }
             },
-            { raidGuardPriority: true }
+            // Preempt resource builder so 1–3m builder RR does not starve troop training.
+            { raidGuardPriority: true, preemptAutoBuilder: true }
           );
 
           if (troopExecuted) {
@@ -7501,7 +7560,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return "executed";
         }
 
-        return troopExecuted ? "executed" : "busy";
+        if (!troopExecuted) {
+          return "busy";
+        }
+
+        const trained = outcomes.filter((o) => o && o.status === "trained");
+        const noResources = outcomes.some((o) => o && o.status === "no_resources");
+        const cappedShort = trained.some((o) => o && o.cappedByResources);
+        if (noResources || cappedShort) {
+          return "resource_wait";
+        }
+        return "executed";
       });
     };
 
@@ -7572,6 +7641,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           state.nextRunAt = Date.now() + retryMs;
           logInfo(
             `[Troop Auto] ${villageDisplayName(village)} — navigation interrupted, retrying in ${formatDelayMs(retryMs)}.`
+          );
+          state.timer = setTimeout(() => void runTroopVillageScheduledTick(), retryMs);
+        } else if (outcome === "resource_wait") {
+          const retryMs =
+            TROOP_AUTO_RESOURCE_RETRY_MIN_MS +
+            Math.floor(Math.random() * TROOP_AUTO_RESOURCE_RETRY_JITTER_MS);
+          state.nextRunAt = Date.now() + retryMs;
+          logInfo(
+            `[Troop Auto] ${villageDisplayName(village)} — waiting on resources, retrying in ${formatDelayMs(retryMs)}.`
           );
           state.timer = setTimeout(() => void runTroopVillageScheduledTick(), retryMs);
         } else {
