@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.9] — 2026-08-03
+
+### Release
+
+**v1.8.9** — Top 10 results dashboard with poll-to-poll Δ and per-hour pace, 24/7 keep-alive watchdog, session-rest proxy visibility, farmlist village pinning, and Palace expansion on realm host.
+
+### Added
+
+- **Top 10 dashboard tab** (`top10Dashboard.js`, `/api/top10`): standings cards, podium, leaderboard, and trend chart for all seven ranking categories. Manual **Snapshot now** from the web UI (same as menu **[O]**).
+- **Top 10 Δ and `/h` pace:** deltas are computed from **every polled log entry** in `top10.log` (first → latest), with a poll-by-poll interval table and a separate last-interval `/h`. Leaderboard rows match names across snapshots.
+- **24/7 keep-alive watchdog** (`scripts/keep-alive.sh`, `npm run start:24-7` / `npm run keep-alive`):
+  - Polls every **60s** (`CHECK_SECONDS`)
+  - Restarts the bot if `login.js` is dead, the dashboard API is down, or `log.jsonl` is stale **≥20m** (`STALE_MINUTES`) while automation is expected
+  - Skips restart when automation is paused (session rest)
+  - Writes heartbeats and restart reasons to `keep-alive.log`
+- **In-process overdue-loop watchdog** — reschedules farmlist / builder / activity / Top 10 when timers stall.
+- **Session wake recovery** — login timeout + proxy-rotate retries when the session loop resumes from rest; clears resting state after resume.
+- **Proxy rotate-on-rest status** — session/proxy status exposes whether the next rest will rotate egress; wake logs the next proxy.
+
+### Fixed
+
+- **Top 10 scrape URLs** — uses Nexian `statistics.php` tables (`?t=5`, population, alliances, villages) instead of SPA `/statistics/...` paths that returned empty boards.
+- **Farmlist sender reporting and village pinning** — clearer send results; pin auto-send to a rally-point village via `FARMLIST_VILLAGE_ID`.
+- **Palace expansion on realm host** — empty slot 25 / Palace construction works against the configured `GAME_HOST` realm.
+
 ## [1.8.8] — 2026-07-15
 
 ### Release
