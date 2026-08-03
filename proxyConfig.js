@@ -81,7 +81,8 @@ function proxyEnvValues(settings) {
     PROXY_SERVER: String(settings.proxyServer || ""),
     PROXY_USERNAME: String(settings.proxyUsername || ""),
     PROXY_PASSWORD: String(settings.proxyPassword || ""),
-    PROXY_BYPASS: String(settings.proxyBypass || "")
+    PROXY_BYPASS: String(settings.proxyBypass || ""),
+    PROXY_ROTATE_ON_SESSION_REST: settings.proxyRotateOnSessionRest === false ? "false" : "true"
   };
 }
 
@@ -92,6 +93,7 @@ function buildProxySettingsPayload(settings) {
     bypass: store.bypass || settings.proxyBypass || "",
     activeIndex: store.activeIndex,
     count: store.proxies.length,
+    rotateOnSessionRest: settings.proxyRotateOnSessionRest !== false,
     activeDisplay: formatProxyDisplay(settings, store),
     active: active
       ? {
