@@ -2441,6 +2441,56 @@ body.compact-view .tab-view.active {
   margin-top: auto;
 }
 
+.top10-standing-rates {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+}
+
+.top10-board-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 0 0 0.55rem;
+}
+
+.top10-table .delta-cell,
+.top10-table .rate-cell,
+.top10-table .rank-move-cell {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.top10-pace {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0 0 0.85rem;
+}
+
+.top10-pace-item {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.top10-pace-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.top10-pace-value {
+  margin-top: 0.2rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
 .top10-delta {
   font-size: 0.75rem;
   font-weight: 700;
@@ -2695,5 +2745,9 @@ body.compact-view .tab-view.active {
   .top10-head-actions .primary-btn,
   .top10-head-actions .secondary-btn {
     flex: 1;
+  }
+
+  .top10-pace {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

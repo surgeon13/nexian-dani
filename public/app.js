@@ -2237,6 +2237,32 @@ function formatTop10Number(value, fallback = "—") {
   return Number(value).toLocaleString("en-US");
 }
 
+function formatTop10CompactSigned(value) {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return null;
+  }
+  const n = Number(value);
+  const abs = Math.abs(n);
+  let body;
+  if (abs >= 1_000_000_000) {
+    body = `${(n / 1_000_000_000).toFixed(abs >= 10_000_000_000 ? 0 : 1)}B`;
+  } else if (abs >= 1_000_000) {
+    body = `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  } else if (abs >= 10_000) {
+    body = `${Math.round(n / 1000)}K`;
+  } else if (abs >= 1000) {
+    body = Math.round(n).toLocaleString("en-US");
+  } else if (Number.isInteger(n) || abs >= 100) {
+    body = String(Math.round(n));
+  } else {
+    body = String(Math.round(n * 100) / 100);
+  }
+  if (n > 0 && !body.startsWith("+")) {
+    return `+${body}`;
+  }
+  return body;
+}
+
 function formatTop10Delta(delta, options = {}) {
   if (delta == null || !Number.isFinite(Number(delta))) {
     return { text: "—", className: "flat" };
@@ -2246,9 +2272,26 @@ function formatTop10Delta(delta, options = {}) {
     return { text: "0", className: "flat" };
   }
   const improved = Boolean(options.improved);
-  const prefix = n > 0 ? "+" : "";
+  const compact = formatTop10CompactSigned(n);
   return {
-    text: `${prefix}${Math.round(n)}`,
+    text: compact || `${n > 0 ? "+" : ""}${Math.round(n)}`,
+    className: improved ? "up" : "down"
+  };
+}
+
+function formatTop10Rate(perHour, options = {}) {
+  if (perHour == null || !Number.isFinite(Number(perHour))) {
+    return { text: "—/h", className: "flat" };
+  }
+  const n = Number(perHour);
+  if (n === 0) {
+    return { text: "0/h", className: "flat" };
+  }
+  const improved =
+    options.improved == null ? n > 0 : Boolean(options.improved);
+  const compact = formatTop10CompactSigned(n);
+  return {
+    text: `${compact || `${n > 0 ? "+" : ""}${Math.round(n)}`}/h`,
     className: improved ? "up" : "down"
   };
 }
@@ -2384,7 +2427,14 @@ function renderTop10Standings(data) {
     .map((item) => {
       const rankLabel =
         item.rank != null ? `#${item.rank}` : item.rankText || "?";
-      const delta = formatTop10Delta(item.rankDelta, { improved: item.rankImproved });
+      const rankDelta = formatTop10Delta(item.rankDelta, { improved: item.rankImproved });
+      const valueDelta = formatTop10Delta(item.valueDelta, { improved: item.valueImproved });
+      const lastRate = formatTop10Rate(item.valuePerHour, {
+        improved: item.valuePerHourImproved
+      });
+      const windowRate = formatTop10Rate(item.windowValuePerHour, {
+        improved: item.windowValueImproved
+      });
       const spark = buildSparklineSvg(item.sparkline, {
         invert: false,
         stroke: item.inTop10 ? "var(--green)" : "var(--cyan)"
@@ -2395,8 +2445,13 @@ function renderTop10Standings(data) {
           <div class="top10-standing-rank">${escapeHtml(rankLabel)}</div>
           <div class="top10-standing-value">${escapeHtml(item.valueText || formatTop10Number(item.value))} <span style="color:var(--muted);font-weight:500;font-size:0.75rem">${escapeHtml(item.metric)}</span></div>
           <div class="top10-standing-meta">
-            <span class="top10-delta ${delta.className}">${escapeHtml(delta.text)} rank</span>
+            <span class="top10-delta ${valueDelta.className}" title="Change since previous poll">${escapeHtml(valueDelta.text)}</span>
+            <span class="top10-delta ${lastRate.className}" title="Last poll normalized per hour">${escapeHtml(lastRate.text)}</span>
             ${spark}
+          </div>
+          <div class="top10-standing-rates">
+            <span class="top10-delta ${rankDelta.className}">${escapeHtml(rankDelta.text)} rank</span>
+            <span class="top10-delta ${windowRate.className}" title="Whole tracked window / hour">avg ${escapeHtml(windowRate.text)}</span>
           </div>
         </button>`;
     })
@@ -2465,24 +2520,57 @@ function renderTop10Board(category) {
   }
 
   const selfName = category.self && category.self.name ? category.self.name.toLowerCase() : "";
+  const lastPoll = category.deltas && category.deltas.lastPoll && category.deltas.lastPoll.value;
+  const pollHoursLabel =
+    category.pollIntervalHours != null
+      ? ` last poll ${category.pollIntervalHours}h`
+      : "";
   const rowsHtml = category.top10
     .map((row) => {
       const isSelf =
         Boolean(selfName) && String(row.name || "").toLowerCase() === selfName;
       const rankClass =
         row.rank === 1 ? "gold" : row.rank === 2 ? "silver" : row.rank === 3 ? "bronze" : "";
+      const delta = formatTop10Delta(row.valueDelta, {
+        improved: row.valueDelta != null ? row.valueDelta > 0 : false
+      });
+      const rate = formatTop10Rate(row.valuePerHour, {
+        improved: row.valuePerHour != null ? row.valuePerHour > 0 : false
+      });
+      let rankMove = { text: "—", className: "flat" };
+      if (row.rankDelta != null && Number.isFinite(Number(row.rankDelta))) {
+        const move = Number(row.rankDelta);
+        if (move === 0) {
+          rankMove = { text: "0", className: "flat" };
+        } else if (move < 0) {
+          rankMove = { text: `↑${Math.abs(move)}`, className: "up" };
+        } else {
+          rankMove = { text: `↓${move}`, className: "down" };
+        }
+      }
       return `
         <tr class="${isSelf ? "is-self" : ""}">
           <td class="rank-cell ${rankClass}">${escapeHtml(row.rank != null ? `#${row.rank}` : row.rankText || "—")}</td>
           <td class="name-cell">${escapeHtml(row.name)}${isSelf ? " · you" : ""}</td>
           <td class="ally-cell">${escapeHtml(row.alliance || "—")}</td>
           <td class="value-cell">${escapeHtml(row.valueText || formatTop10Number(row.value))}</td>
+          <td class="delta-cell"><span class="top10-delta ${delta.className}">${escapeHtml(delta.text)}</span></td>
+          <td class="rate-cell"><span class="top10-delta ${rate.className}">${escapeHtml(rate.text)}</span></td>
+          <td class="rank-move-cell"><span class="top10-delta ${rankMove.className}">${escapeHtml(rankMove.text)}</span></td>
         </tr>`;
     })
     .join("");
 
   let selfFooter = "";
   if (category.self && (category.self.rank == null || category.self.rank > 10)) {
+    const selfDelta = formatTop10Delta(
+      category.deltas && category.deltas.value,
+      { improved: category.deltas && category.deltas.valueImproved }
+    );
+    const selfRate = formatTop10Rate(
+      category.deltas && category.deltas.valuePerHour,
+      { improved: category.deltas && category.deltas.valuePerHourImproved }
+    );
     selfFooter = `
       <tr class="is-self">
         <td class="rank-cell">${escapeHtml(
@@ -2493,10 +2581,18 @@ function renderTop10Board(category) {
         <td class="value-cell">${escapeHtml(
           category.self.valueText || formatTop10Number(category.self.value)
         )}</td>
+        <td class="delta-cell"><span class="top10-delta ${selfDelta.className}">${escapeHtml(selfDelta.text)}</span></td>
+        <td class="rate-cell"><span class="top10-delta ${selfRate.className}">${escapeHtml(selfRate.text)}</span></td>
+        <td class="rank-move-cell">—</td>
       </tr>`;
   }
 
+  const pollRange =
+    lastPoll && lastPoll.fromTs
+      ? ` (${escapeHtml(formatTop10When(lastPoll.fromTs))} → ${escapeHtml(formatTop10When(lastPoll.toTs))})`
+      : "";
   els.top10Board.innerHTML = `
+    <div class="top10-board-note">Δ and /h compare the previous snapshot${escapeHtml(pollHoursLabel)}${pollRange}.</div>
     <table class="top10-table">
       <thead>
         <tr>
@@ -2504,6 +2600,9 @@ function renderTop10Board(category) {
           <th>Name</th>
           <th>Alliance</th>
           <th>${escapeHtml(category.metric || "Value")}</th>
+          <th>Δ</th>
+          <th>/h</th>
+          <th>Rank Δ</th>
         </tr>
       </thead>
       <tbody>${rowsHtml}${selfFooter}</tbody>
@@ -2520,10 +2619,52 @@ function renderTop10Trend(category) {
   }
   const useRank = category.id === "climbers" || (category.self && category.self.value == null);
   const chart = buildTrendChartSvg(category.history || [], { useRank });
+  const deltas = category.deltas || {};
+  const last = useRank
+    ? deltas.lastPoll && deltas.lastPoll.rank
+    : deltas.lastPoll && deltas.lastPoll.value;
+  const window = useRank
+    ? deltas.window && deltas.window.rank
+    : deltas.window && deltas.window.value;
+  const lastDelta = formatTop10Delta(last && last.delta, {
+    improved: useRank
+      ? last && last.delta != null && last.delta < 0
+      : last && last.delta != null && last.delta > 0
+  });
+  const lastRate = formatTop10Rate(last && last.perHour, {
+    improved: useRank
+      ? last && last.perHour != null && last.perHour < 0
+      : last && last.perHour != null && last.perHour > 0
+  });
+  const windowRate = formatTop10Rate(window && window.perHour, {
+    improved: useRank
+      ? window && window.perHour != null && window.perHour < 0
+      : window && window.perHour != null && window.perHour > 0
+  });
   els.top10Trend.innerHTML = `
     <div class="top10-trend-head">
       <div class="top10-trend-title">${escapeHtml(category.label)} · your ${useRank ? "rank" : category.metric.toLowerCase()}</div>
       <div class="top10-trend-sub">Updated ${escapeHtml(formatTop10When(category.updatedAt))}</div>
+    </div>
+    <div class="top10-pace">
+      <div class="top10-pace-item">
+        <div class="top10-pace-label">Last poll Δ</div>
+        <div class="top10-pace-value"><span class="top10-delta ${lastDelta.className}">${escapeHtml(lastDelta.text)}</span></div>
+      </div>
+      <div class="top10-pace-item">
+        <div class="top10-pace-label">Last poll /h</div>
+        <div class="top10-pace-value"><span class="top10-delta ${lastRate.className}">${escapeHtml(lastRate.text)}</span></div>
+      </div>
+      <div class="top10-pace-item">
+        <div class="top10-pace-label">Window avg /h</div>
+        <div class="top10-pace-value"><span class="top10-delta ${windowRate.className}">${escapeHtml(windowRate.text)}</span></div>
+      </div>
+      <div class="top10-pace-item">
+        <div class="top10-pace-label">Poll span</div>
+        <div class="top10-pace-value">${escapeHtml(
+          category.pollIntervalHours != null ? `${category.pollIntervalHours}h` : "—"
+        )}</div>
+      </div>
     </div>
     ${chart}`;
 }

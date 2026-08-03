@@ -104,6 +104,134 @@ function computeDelta(history, key) {
   return newest - previous;
 }
 
+function hoursBetween(fromMs, toMs) {
+  const from = Number(fromMs);
+  const to = Number(toMs);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return null;
+  }
+  const hours = (to - from) / 3_600_000;
+  return hours > 0 ? hours : null;
+}
+
+function roundRate(value) {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return null;
+  }
+  const n = Number(value);
+  const abs = Math.abs(n);
+  if (abs >= 1000) {
+    return Math.round(n);
+  }
+  if (abs >= 100) {
+    return Math.round(n * 10) / 10;
+  }
+  if (abs >= 10) {
+    return Math.round(n * 100) / 100;
+  }
+  return Math.round(n * 1000) / 1000;
+}
+
+function computeTimedRate(history, key) {
+  const points = (history || []).filter(
+    (point) => point[key] != null && Number.isFinite(Number(point[key])) && point.epochMs != null
+  );
+  if (points.length < 2) {
+    return null;
+  }
+  const previous = points[points.length - 2];
+  const newest = points[points.length - 1];
+  const hours = hoursBetween(previous.epochMs, newest.epochMs);
+  if (hours == null) {
+    return null;
+  }
+  const delta = Number(newest[key]) - Number(previous[key]);
+  return {
+    delta,
+    hours: Math.round(hours * 1000) / 1000,
+    perHour: roundRate(delta / hours),
+    fromTs: previous.ts || null,
+    toTs: newest.ts || null,
+    samples: 2
+  };
+}
+
+function computeWindowRate(history, key) {
+  const points = (history || []).filter(
+    (point) => point[key] != null && Number.isFinite(Number(point[key])) && point.epochMs != null
+  );
+  if (points.length < 2) {
+    return null;
+  }
+  const first = points[0];
+  const last = points[points.length - 1];
+  const hours = hoursBetween(first.epochMs, last.epochMs);
+  if (hours == null) {
+    return null;
+  }
+  const delta = Number(last[key]) - Number(first[key]);
+  return {
+    delta,
+    hours: Math.round(hours * 1000) / 1000,
+    perHour: roundRate(delta / hours),
+    fromTs: first.ts || null,
+    toTs: last.ts || null,
+    samples: points.length
+  };
+}
+
+function indexRowsByName(rows) {
+  const map = new Map();
+  for (const row of rows || []) {
+    const name = String((row && row.name) || "")
+      .trim()
+      .toLowerCase();
+    if (!name || name === "—") {
+      continue;
+    }
+    map.set(name, row);
+  }
+  return map;
+}
+
+function enrichTop10WithRates(latestRows, previousRows, hours) {
+  const previousByName = indexRowsByName(previousRows);
+  return (latestRows || []).map((row) => {
+    const key = String(row.name || "")
+      .trim()
+      .toLowerCase();
+    const previous = key ? previousByName.get(key) : null;
+    const valueDelta =
+      previous &&
+      previous.value != null &&
+      row.value != null &&
+      Number.isFinite(Number(previous.value)) &&
+      Number.isFinite(Number(row.value))
+        ? Number(row.value) - Number(previous.value)
+        : null;
+    const rankDelta =
+      previous &&
+      previous.rank != null &&
+      row.rank != null &&
+      Number.isFinite(Number(previous.rank)) &&
+      Number.isFinite(Number(row.rank))
+        ? Number(row.rank) - Number(previous.rank)
+        : null;
+    const perHour =
+      valueDelta != null && hours != null && hours > 0 ? roundRate(valueDelta / hours) : null;
+    return {
+      ...row,
+      valueDelta,
+      valueDeltaText: valueDelta == null ? null : formatCompactNumber(valueDelta),
+      valuePerHour: perHour,
+      valuePerHourText: perHour == null ? null : formatCompactNumber(perHour),
+      rankDelta,
+      previousRank: previous && previous.rank != null ? Number(previous.rank) : null,
+      previousValue: previous && previous.value != null ? Number(previous.value) : null
+    };
+  });
+}
+
 function buildTop10DashboardPayload(bridge, options = {}) {
   const logFilePath = resolveTop10LogPath(bridge, options.logFilePath);
   const limit = Math.max(50, Math.min(Number(options.limit) || 700, 2000));
@@ -125,13 +253,28 @@ function buildTop10DashboardPayload(bridge, options = {}) {
   const categories = CATEGORY_ORDER.map((id) => {
     const list = byCategory[id] || [];
     const latest = list.length ? list[list.length - 1] : null;
+    const previous = list.length > 1 ? list[list.length - 2] : null;
     const history = list.map(buildHistoryPoint);
     const recentHistory = history.slice(-48);
     const self = latest ? summarizeRow(latest.self) : null;
-    const top10 = latest && Array.isArray(latest.top10) ? latest.top10.map(summarizeRow).filter(Boolean) : [];
+    const previousTop10 =
+      previous && Array.isArray(previous.top10)
+        ? previous.top10.map(summarizeRow).filter(Boolean)
+        : [];
+    const latestTop10 =
+      latest && Array.isArray(latest.top10) ? latest.top10.map(summarizeRow).filter(Boolean) : [];
+    const pollHours = hoursBetween(
+      previous && previous.epochMs,
+      latest && latest.epochMs
+    );
+    const top10 = enrichTop10WithRates(latestTop10, previousTop10, pollHours);
     const meta = CATEGORY_META[id] || { label: id, metric: "Value", accent: "pop" };
     const rankDelta = computeDelta(recentHistory, "selfRank");
     const valueDelta = computeDelta(recentHistory, "selfValue");
+    const lastPollValueRate = computeTimedRate(recentHistory, "selfValue");
+    const lastPollRankRate = computeTimedRate(recentHistory, "selfRank");
+    const windowValueRate = computeWindowRate(recentHistory, "selfValue");
+    const windowRankRate = computeWindowRate(recentHistory, "selfRank");
 
     return {
       id,
@@ -150,12 +293,31 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       rankSparkline: recentHistory
         .map((point) => point.selfRank)
         .filter((value) => value != null),
+      pollIntervalHours: pollHours == null ? null : Math.round(pollHours * 1000) / 1000,
       deltas: {
         rank: rankDelta,
         // For ranks, lower is better — flip the "improved" flag.
         rankImproved: rankDelta == null ? null : rankDelta < 0,
         value: valueDelta,
-        valueImproved: valueDelta == null ? null : valueDelta > 0
+        valueImproved: valueDelta == null ? null : valueDelta > 0,
+        valuePerHour: lastPollValueRate ? lastPollValueRate.perHour : null,
+        valuePerHourImproved:
+          lastPollValueRate && lastPollValueRate.perHour != null
+            ? lastPollValueRate.perHour > 0
+            : null,
+        rankPerHour: lastPollRankRate ? lastPollRankRate.perHour : null,
+        rankPerHourImproved:
+          lastPollRankRate && lastPollRankRate.perHour != null
+            ? lastPollRankRate.perHour < 0
+            : null,
+        lastPoll: {
+          value: lastPollValueRate,
+          rank: lastPollRankRate
+        },
+        window: {
+          value: windowValueRate,
+          rank: windowRankRate
+        }
       },
       warnings:
         latest && latest.meta && Array.isArray(latest.meta.parseWarnings)
@@ -184,6 +346,19 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       rankImproved: cat.deltas.rankImproved,
       valueDelta: cat.deltas.value,
       valueImproved: cat.deltas.valueImproved,
+      valuePerHour: cat.deltas.valuePerHour,
+      valuePerHourImproved: cat.deltas.valuePerHourImproved,
+      windowValuePerHour:
+        cat.deltas.window && cat.deltas.window.value
+          ? cat.deltas.window.value.perHour
+          : null,
+      windowValueImproved:
+        cat.deltas.window &&
+        cat.deltas.window.value &&
+        cat.deltas.window.value.perHour != null
+          ? cat.deltas.window.value.perHour > 0
+          : null,
+      pollIntervalHours: cat.pollIntervalHours,
       sparkline: cat.sparkline
     }));
 
@@ -218,5 +393,9 @@ module.exports = {
   CATEGORY_META,
   resolveTop10LogPath,
   buildTop10DashboardPayload,
-  formatCompactNumber
+  formatCompactNumber,
+  hoursBetween,
+  computeTimedRate,
+  computeWindowRate,
+  enrichTop10WithRates
 };
