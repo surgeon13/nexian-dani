@@ -2456,6 +2456,22 @@ body.compact-view .tab-view.active {
   margin: 0 0 0.55rem;
 }
 
+.top10-poll-series {
+  margin: 0 0 0.85rem;
+}
+
+.top10-poll-series-title {
+  font-size: 0.78rem;
+  font-weight: 650;
+  margin: 0 0 0.4rem;
+  color: var(--text);
+}
+
+.top10-poll-table th,
+.top10-poll-table td {
+  font-size: 0.78rem;
+}
+
 .top10-table .delta-cell,
 .top10-table .rate-cell,
 .top10-table .rank-move-cell {
