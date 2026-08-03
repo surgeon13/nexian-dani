@@ -601,12 +601,9 @@ function syncSettingsGameHostFromPage(page, settings) {
   let origin;
   try {
     const parsed = new URL(page.url());
+    // Only realm hosts (s1.nexian.world, …). Never the marketing portal —
+    // nexian.world/village2.php redirects there and would poison all game URLs.
     if (/^s\d+\.nexian\.world$/i.test(parsed.hostname)) {
-      origin = parsed.origin;
-    } else if (
-      parsed.hostname.endsWith("nexian.world") &&
-      /village\d\.php|dorf\d\.php|build\.php|spieler\.php/i.test(parsed.pathname)
-    ) {
       origin = parsed.origin;
     } else {
       return null;

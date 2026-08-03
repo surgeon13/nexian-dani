@@ -1537,13 +1537,14 @@ async function sendFarmlists(getPage, settings, options = {}) {
 }
 
 function withVillageId(url, villageId) {
-  if (!villageId) {
+  const id = Number(villageId);
+  if (!Number.isFinite(id) || id <= 0) {
     return url;
   }
 
   try {
     const parsed = new URL(url);
-    parsed.searchParams.set("vid", String(villageId));
+    parsed.searchParams.set("vid", String(Math.trunc(id)));
     return parsed.toString();
   } catch (_error) {
     return url;
@@ -1596,8 +1597,9 @@ function resolveVillageStatusUrl(settings, villageState = null) {
   const preferredVid =
     villageState &&
     (villageState.selectedVillageId || villageState.activeVillageId || null);
-  return preferredVid
-    ? withVillageId(settings.villageStatusUrl, preferredVid)
+  const id = Number(preferredVid);
+  return Number.isFinite(id) && id > 0
+    ? withVillageId(settings.villageStatusUrl, id)
     : settings.villageStatusUrl;
 }
 
@@ -5322,6 +5324,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       return page.evaluate(() => {
+        const isValidVillageId = (value) => {
+          const id = Number(value);
+          return Number.isFinite(id) && id > 0;
+        };
+
         const rows = Array.from(document.querySelectorAll("#vlist tr[data-vid]"));
         let villages = rows.map((row) => {
           const villageId = Number(row.getAttribute("data-vid"));
@@ -5362,7 +5369,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           );
 
           return {
-            id: Number.isFinite(villageId) ? villageId : null,
+            id: isValidVillageId(villageId) ? villageId : null,
             name,
             groupName,
             isCapital,
@@ -5376,7 +5383,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             isActive,
             underAttack
           };
-        }).filter((village) => Number.isFinite(village.id));
+        }).filter((village) => isValidVillageId(village.id));
 
         // Fallback layout: some worlds/themes render villages in sidebar/dropdown links
         // without #vlist rows. Parse anchors with newdid/vid and infer basic meta.
@@ -5409,7 +5416,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 (absoluteHref && (absoluteHref.searchParams.get("newdid") || absoluteHref.searchParams.get("vid"))) ||
                 null;
               const villageId = Number(idRaw);
-              if (!Number.isFinite(villageId)) {
+              if (!isValidVillageId(villageId)) {
                 return null;
               }
 
@@ -5446,7 +5453,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 underAttack: false
               };
             })
-            .filter((village) => village && Number.isFinite(village.id));
+            .filter((village) => village && isValidVillageId(village.id));
         }
 
         // Last fallback: if no village list is rendered at all, infer current village from URL.
@@ -5456,13 +5463,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             const url = new URL(window.location.href);
             const raw = url.searchParams.get("vid") || url.searchParams.get("newdid");
             const parsed = Number(raw);
-            if (Number.isFinite(parsed)) {
+            if (isValidVillageId(parsed)) {
               inferredId = parsed;
             }
           } catch (_error) {
             inferredId = null;
           }
-          if (Number.isFinite(inferredId)) {
+          if (isValidVillageId(inferredId)) {
             villages = [
               {
                 id: inferredId,
@@ -5514,8 +5521,29 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       const snapshot = await fetchVillageSnapshotFromPage();
-      villageState.villages = snapshot.villages;
-      villageState.activeVillageId = snapshot.activeVillageId;
+      const nextVillages = (snapshot.villages || []).filter(
+        (village) => Number.isFinite(Number(village && village.id)) && Number(village.id) > 0
+      );
+      const priorGood = (villageState.villages || []).filter(
+        (village) => Number.isFinite(Number(village && village.id)) && Number(village.id) > 0
+      );
+
+      // Never replace a known-good village list with an empty/invalid scrape
+      // (portal pages, mid-navigation blanks, vid=0 placeholders).
+      if (!nextVillages.length && priorGood.length) {
+        if (!silent) {
+          logWarn(
+            `[Village] Refresh returned no valid villages — keeping previous ${priorGood.length} village(s).`
+          );
+        }
+        return villageState;
+      }
+
+      villageState.villages = nextVillages;
+      villageState.activeVillageId =
+        nextVillages.some((v) => Number(v.id) === Number(snapshot.activeVillageId))
+          ? snapshot.activeVillageId
+          : nextVillages.find((v) => v.isActive)?.id || (nextVillages[0] ? nextVillages[0].id : null);
       villageState.lastRefreshIso = new Date().toISOString();
 
       const selectedStillExists = villageState.villages.some(
@@ -5523,7 +5551,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       );
       if (!selectedStillExists) {
         villageState.selectedVillageId =
-          snapshot.activeVillageId || (villageState.villages[0] ? villageState.villages[0].id : null);
+          villageState.activeVillageId || (villageState.villages[0] ? villageState.villages[0].id : null);
       }
 
       if (!silent) {
@@ -5574,7 +5602,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const url = new URL(String(page.url() || ""));
         const raw = url.searchParams.get("vid") || url.searchParams.get("newdid");
         const parsed = Number(raw);
-        return Number.isFinite(parsed) ? parsed : null;
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
       } catch (_error) {
         return null;
       }
@@ -5618,7 +5646,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     /** Open status/overview for `village` in the browser (does not change menu selection). Round-robin builder needs this before slot reads. */
     const ensureVillageBrowserContext = async (village, sourceLabel = "Context") => {
-      if (!village || !Number.isFinite(Number(village.id))) {
+      if (!village || !Number.isFinite(Number(village.id)) || Number(village.id) <= 0) {
         return;
       }
       const page = getPage();
