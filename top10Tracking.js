@@ -49,7 +49,7 @@ const TRACKING_CATEGORIES = [
   {
     id: "alliances",
     label: "Alliances",
-    tableSelector: "#alliance, table.row_table_data",
+    tableSelector: "#alliance",
     tabPatterns: ["alliance", "alliances", "largest alliances"],
     urlPaths: ["/statistics.php?t=1"]
   },
@@ -216,17 +216,29 @@ async function navigateToCategory(page, settings, category) {
     try {
       await safeGotoWithRetry(page, url);
       await page.waitForTimeout(400).catch(() => {});
-      const pathOnly = (() => {
+
+      // Only click subtabs when the target URL has no category query already.
+      // Clicking after ?t=1 / ?t=2 can jump to unrelated pages (e.g. alliance.php).
+      const shouldClickTab = (() => {
         try {
-          return new URL(url).pathname;
+          const parsed = new URL(url);
+          if (!/statistics(\.php)?$/i.test(parsed.pathname)) {
+            return false;
+          }
+          return !parsed.searchParams.has("t") && !parsed.searchParams.has("id");
         } catch (_error) {
-          return url;
+          return false;
         }
       })();
-      if (/\/statistics\/?$/.test(pathOnly) || /statistics\.php$/.test(pathOnly)) {
+
+      if (shouldClickTab && !(await pageHasRankingTable(page, category.tableSelector))) {
         await clickCategoryTab(page, category);
       }
       if (await pageHasRankingTable(page, category.tableSelector)) {
+        return url;
+      }
+      // Fallback: accept any ranking table on this page.
+      if (await pageHasRankingTable(page, null)) {
         return url;
       }
     } catch (_error) {
@@ -360,21 +372,37 @@ async function scrapeCategoryRankings(page, options = {}) {
         return { name: fallback.replace(/\s*\([^)]*\)\s*$/, "").trim(), nameCellIndex: 1 };
       };
 
-      const extractMetricCell = (cells, nameCellIndex, rank) => {
-        let best = { value: null, valueText: "" };
-        for (let i = cells.length - 1; i >= 0; i -= 1) {
+      const extractMetricCell = (cells, nameCellIndex, rank, preferredIndexes) => {
+        const candidates = [];
+        for (let i = 0; i < cells.length; i += 1) {
           if (i === nameCellIndex || i === 0) {
             continue;
           }
-          const metric = parseMetricValue(cells[i].textContent || "");
-          if (metric.value != null && (rank == null || metric.value >= 0)) {
-            return metric;
+          // Skip alliance-like short labels without many digits.
+          const raw = normalize(cells[i].textContent || "");
+          if (raw && !/\d/.test(raw)) {
+            continue;
           }
-          if (metric.valueText && !best.valueText) {
-            best = metric;
+          const metric = parseMetricValue(raw);
+          if (metric.value == null) {
+            continue;
+          }
+          candidates.push({ index: i, ...metric });
+        }
+        if (!candidates.length) {
+          return { value: null, valueText: "" };
+        }
+        if (Array.isArray(preferredIndexes) && preferredIndexes.length) {
+          for (const idx of preferredIndexes) {
+            const hit = candidates.find((c) => c.index === idx);
+            if (hit) {
+              return { value: hit.value, valueText: hit.valueText };
+            }
           }
         }
-        return best;
+        // Prefer the largest numeric value (population/points/resources beat village counts).
+        candidates.sort((a, b) => b.value - a.value);
+        return { value: candidates[0].value, valueText: candidates[0].valueText };
       };
 
       const collectTables = () => {
@@ -402,6 +430,29 @@ async function scrapeCategoryRankings(page, options = {}) {
           push(table, 0);
         }
         return found;
+      };
+
+      const resolvePreferredMetricIndexes = (table) => {
+        const headerRow =
+          table.querySelector("thead tr:last-child") ||
+          Array.from(table.querySelectorAll("tr")).find((row) =>
+            /population|points|resources|ranks|villages|players|alliance/i.test(row.textContent || "")
+          );
+        if (!headerRow) {
+          return [];
+        }
+        const headers = Array.from(headerRow.querySelectorAll("td, th")).map((cell) =>
+          normalize(cell.textContent).toLowerCase()
+        );
+        const preferredNames = ["points", "resources", "ranks", "population", "pop"];
+        const indexes = [];
+        for (const name of preferredNames) {
+          const idx = headers.findIndex((h) => h === name || h.includes(name));
+          if (idx >= 0) {
+            indexes.push(idx);
+          }
+        }
+        return indexes;
       };
 
       const tables = collectTables();
@@ -432,6 +483,7 @@ async function scrapeCategoryRankings(page, options = {}) {
       }
 
       const table = candidates[0].table;
+      const preferredIndexes = resolvePreferredMetricIndexes(table);
       const rows = Array.from(table.querySelectorAll("tbody tr, tr")).filter(
         (row) => row.querySelectorAll("td").length >= 2
       );
@@ -464,7 +516,7 @@ async function scrapeCategoryRankings(page, options = {}) {
           continue;
         }
 
-        const metric = extractMetricCell(cells, nameCellIndex, rank);
+        const metric = extractMetricCell(cells, nameCellIndex, rank, preferredIndexes);
         const alliance = extractAlliance(cells, nameCellIndex);
         const tribeCell = cells.find((cell) =>
           /(roman|teuton|gaul|egyptian|hun|spartan|natar)/i.test(cell.textContent || "")
@@ -507,7 +559,7 @@ async function scrapeCategoryRankings(page, options = {}) {
           }
           const rankText = normalize(cells[0]?.textContent || "");
           const rank = parseRank(rankText);
-          const metric = extractMetricCell(cells, nameCellIndex, rank);
+          const metric = extractMetricCell(cells, nameCellIndex, rank, preferredIndexes);
           self = {
             rank,
             rankText: rankText || null,
