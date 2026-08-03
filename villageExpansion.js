@@ -1,6 +1,6 @@
 const { buildSlotUrl } = require("./villageBuilder");
 
-const RESIDENCE_SLOT = 25;
+const RESIDENCE_SLOT = 22;
 const SETTLERS_NEEDED = 3;
 const AUTO_SETTLE_SEARCH_RADIUS = 3;
 const SETTLEMENT_RESOURCE_REQUIREMENT = {
@@ -600,7 +600,7 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
       status: "residence_started",
       phase: "residence",
       buildingName: startedLabel,
-      message: `Started ${startedLabel} construction at slot 25.`
+      message: `Started ${startedLabel} construction at slot ${RESIDENCE_SLOT}.`
     };
   }
 
