@@ -19,7 +19,11 @@ KEEP_SESSION="${KEEP_SESSION:-nexian-keep}"
 DASH_URL="${DASH_URL:-http://127.0.0.1:3847/api/status}"
 STALE_MINUTES="${STALE_MINUTES:-20}"
 CHECK_SECONDS="${CHECK_SECONDS:-60}"
+# After a restart, wait this long before treating a still-old log.jsonl as stalled.
+# Prevents restart loops while the bot is logging in / waiting for the first loop tick.
+STALE_GRACE_MINUTES="${STALE_GRACE_MINUTES:-5}"
 LOG_FILE="${LOG_FILE:-$ROOT/keep-alive.log}"
+LAST_RESTART_EPOCH=0
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -56,6 +60,16 @@ file_age_minutes() {
   echo $(( (now - mtime) / 60 ))
 }
 
+minutes_since_restart() {
+  local now
+  now=$(date +%s)
+  if [[ "$LAST_RESTART_EPOCH" -le 0 ]]; then
+    echo 99999
+    return
+  fi
+  echo $(( (now - LAST_RESTART_EPOCH) / 60 ))
+}
+
 start_bot() {
   ensure_session "$BOT_SESSION"
   # Clear any leftover prompt, then launch dashboard mode.
@@ -79,12 +93,13 @@ restart_bot() {
   log "restarting bot ($reason)"
   stop_bot
   start_bot
+  LAST_RESTART_EPOCH=$(date +%s)
   # Wait for dashboard to come back.
   local i
   for i in $(seq 1 40); do
     sleep 3
     if dashboard_ok; then
-      log "bot dashboard healthy after restart"
+      log "bot dashboard healthy after restart (stale-check grace ${STALE_GRACE_MINUTES}m)"
       return 0
     fi
   done
@@ -112,7 +127,7 @@ automation_expected() {
   rg -q '^(FARMLIST_LOOP_ENABLED|BUILDER_LOOP_ENABLED|TROOP_TRAINING_ROUND_ROBIN_ENABLED|TOP10_TRACKING_ENABLED|ACTIVITY_SIMULATION_ENABLED)=true' "$ROOT/.env" 2>/dev/null
 }
 
-log "keep-alive starting (stale=${STALE_MINUTES}m check=${CHECK_SECONDS}s)"
+log "keep-alive starting (stale=${STALE_MINUTES}m check=${CHECK_SECONDS}s grace=${STALE_GRACE_MINUTES}m)"
 ensure_session "$BOT_SESSION"
 ensure_session "$NET_SESSION"
 start_net_usage
@@ -130,21 +145,26 @@ while true; do
     restart_bot "dashboard API down"
   else
     age=$(file_age_minutes "$ROOT/log.jsonl")
-    log "heartbeat bot=up dash=up log_age=${age}m"
+    grace_age=$(minutes_since_restart)
+    log "heartbeat bot=up dash=up log_age=${age}m restart_age=${grace_age}m"
     if automation_expected; then
       if [[ "$age" -ge "$STALE_MINUTES" ]]; then
-        # During intentional session rest, automation is paused — don't thrash.
-        paused=$(curl -sf --max-time 5 "$DASH_URL" 2>/dev/null | python3 -c 'import json,sys
+        if [[ "$grace_age" -lt "$STALE_GRACE_MINUTES" ]]; then
+          log "log.jsonl stale ${age}m but within ${STALE_GRACE_MINUTES}m post-restart grace — skip"
+        else
+          # During intentional session rest, automation is paused — don't thrash.
+          paused=$(curl -sf --max-time 5 "$DASH_URL" 2>/dev/null | python3 -c 'import json,sys
 try:
   d=json.load(sys.stdin)["status"]
   a=d.get("automation") or {}
   print("1" if a.get("paused") else "0")
 except Exception:
   print("0")' 2>/dev/null || echo 0)
-        if [[ "$paused" == "1" ]]; then
-          log "log.jsonl stale ${age}m but automation paused (likely session rest) — skip restart"
-        else
-          restart_bot "log.jsonl stale ${age}m while online"
+          if [[ "$paused" == "1" ]]; then
+            log "log.jsonl stale ${age}m but automation paused (likely session rest) — skip restart"
+          else
+            restart_bot "log.jsonl stale ${age}m while online"
+          fi
         fi
       fi
     fi
