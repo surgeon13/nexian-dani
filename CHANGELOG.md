@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.13] — 2026-08-04
+
+### Added
+
+- **Session presence report** — records each online window with start/end time, egress IP, and proxy:
+  - Stored in `session-presence.json` (gitignored)
+  - Dashboard **Session presence** panel on the main tab
+  - API: `GET /api/session-presence?limit=100`
+  - Tracks login, session-loop rest/wake, relogin, proxy changes, headless toggle, and shutdown
+  - Egress IP prefers Playwright context (follows proxy); falls back to direct ipify
+
 ## [1.8.12] — 2026-08-04
 
 ### Added

@@ -12,7 +12,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 |------|----------|
 | **Login / session** | Saves browser storage to `storageState.json` so you can skip full login after the first run. |
 | **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker, **proxy menu (`y`)**. |
-| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
+| **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat. |
@@ -58,6 +58,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `proxyPool.js` / `proxyConfig.js` | Proxy list parsing, pool file, dashboard/settings sync. |
 | `browserNavigation.js` | Shared transient navigation error detection and retry delays. |
 | `top10Tracking.js` | Server Top 10 / statistics scraping and timestamped `top10.log` output. |
+| `sessionPresence.js` | Online-window history: start/end times, egress IP, proxy (`session-presence.json`). |
 | `top10Dashboard.js` | Builds `/api/top10` payload: standings, history, Δ, and `/h` rates from the poll log. |
 | `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
 | `public/` | Dashboard HTML, CSS, and client JS (includes Top 10 tab). |
@@ -128,7 +129,7 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run cursor:ensure` | Cursor Cloud health check / restart (`cursor-cloud-ensure.sh`) |
 | `npm run cursor:start` | Materialize secrets + start 24/7 stack |
 | `npm run playwright:install` | Install Playwright Chromium only |
-| `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `templates/progress.json` |
+| `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `session-presence.json`, `templates/progress.json` |
 
 ---
 
@@ -178,6 +179,16 @@ Enable `TOP10_TRACKING_ENABLED=true` and set the interval (`TOP10_TRACKING_LOOP_
 - **Last /h** = newest poll interval only  
 
 API: `GET /api/top10` → `raidIncome` (Robbers) + `selfPace[]` (all categories with your row).
+
+### Session presence (online windows + IP)
+
+Each time the bot is online (after login / wake / relogin), a period is recorded with start time, end time, egress IP, and proxy label. History lives in `session-presence.json`.
+
+- Dashboard: **Session presence** panel on the main tab
+- API: `GET /api/session-presence?limit=100`
+- Optional env: `SESSION_PRESENCE_LOG_FILE`, `SESSION_PRESENCE_MAX_PERIODS` (default 500)
+
+Egress IP is measured through the Playwright browser context when possible (so a proxy’s exit IP is recorded), with a direct ipify fallback.
 
 Manual snapshot: menu **`O`**, dashboard **Snapshot now**, or `POST /api/action` with `{ "action": "top10" }`.
 
@@ -322,6 +333,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 
 - **Action log:** `log.jsonl` (or `NEXIAN_ACTION_LOG_FILE`) — bot actions (farmlists, troops, builder, …)
 - **Top 10 log:** `top10.log` (or `TOP10_TRACKING_LOG_FILE`) — one JSON object per line per ranking category per snapshot (`ts`, `epochMs`, `top10`, `self`). The dashboard aggregates these lines for Δ and `/h`.
+- **Session presence:** `session-presence.json` (or `SESSION_PRESENCE_LOG_FILE`) — online periods with start/end, egress IP, and proxy. API `GET /api/session-presence`.
 - **Keep-alive log:** `keep-alive.log` — watchdog heartbeats and restart reasons (gitignored)
 - **Rotation:** When `log.jsonl` exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), it is renamed into `log-archive/` and logging continues in a new empty file.
 - **Format:** append-only JSONL (action + Top 10); keep-alive is plain text timestamps

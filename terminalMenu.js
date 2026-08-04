@@ -8654,6 +8654,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         proxy: runtimeControls.getProxySettings
           ? runtimeControls.getProxySettings()
           : buildProxySettingsPayload(settings),
+        sessionPresence: runtimeControls.getSessionPresenceReport
+          ? runtimeControls.getSessionPresenceReport({ limit: 8 })
+          : null,
         villages: snapshotVillageList(),
         selectedVillageId: villageState.selectedVillageId,
         activeVillageId: villageState.activeVillageId,
@@ -8683,6 +8686,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
       if (runtimeControls.updateProxySettings) {
         dashboardBridge.setProxySettingsUpdater((patch) => runtimeControls.updateProxySettings(patch));
+      }
+      if (runtimeControls.getSessionPresenceReport) {
+        dashboardBridge.setSessionPresenceReportProvider((options) =>
+          runtimeControls.getSessionPresenceReport(options)
+        );
       }
     }
 

@@ -237,6 +237,24 @@ function startDashboardServer({
         return;
       }
 
+      if (req.method === "GET" && pathname === "/api/session-presence") {
+        const limit = Number(url.searchParams.get("limit") || 100);
+        try {
+          if (typeof bridge.getSessionPresenceReport === "function") {
+            sendJson(res, 200, bridge.getSessionPresenceReport({ limit }));
+            return;
+          }
+          const presence = require("./sessionPresence");
+          sendJson(res, 200, presence.buildReport({ limit }));
+        } catch (error) {
+          sendJson(res, 500, {
+            ok: false,
+            error: error && error.message ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/console") {
         const tail = Number(url.searchParams.get("tail") || 120);
         sendJson(res, 200, {
@@ -579,6 +597,7 @@ function startDashboardServer({
 module.exports = {
   startDashboardServer,
   getDashboardNetworkInfo,
+  fetchPublicIPv4,
   openDashboardInBrowser,
   ACTION_MAP
 };

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Nexian Dashboard</title>
-  <link rel="stylesheet" href="/style.css?v=1.5.13" />
+  <link rel="stylesheet" href="/style.css?v=1.5.14" />
   <script>
     (function () {
       try {
@@ -60,6 +60,22 @@
     <section class="panel logs-panel">
       <h2>Recent log</h2>
       <div id="log-list" class="log-list"></div>
+    </section>
+
+    <section class="panel presence-panel">
+      <div class="panel-head presence-panel-head">
+        <div>
+          <h2>Session presence</h2>
+          <p class="hint presence-hint">
+            When the bot was online and which egress IP / proxy each period used.
+          </p>
+        </div>
+        <div class="presence-head-actions">
+          <button type="button" id="presence-refresh-btn" class="secondary-btn">Refresh</button>
+        </div>
+      </div>
+      <div id="presence-summary" class="troop-rr-stats presence-summary"></div>
+      <div id="presence-list" class="presence-list"></div>
     </section>
   </main>
 
@@ -293,6 +309,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=1.6.2"></script>
+  <script src="/app.js?v=1.6.3"></script>
 </body>
 </html>

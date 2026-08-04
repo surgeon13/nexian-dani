@@ -10,6 +10,7 @@ node_modules/
 storageState.json
 log.jsonl
 top10.log
+session-presence.json
 log-archive/
 npm-debug.log*
 yarn-error.log*

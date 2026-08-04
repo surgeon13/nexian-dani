@@ -352,6 +352,96 @@ button.action-btn.danger:hover:not(:disabled) {
   color: var(--cyan);
 }
 
+.presence-panel-head {
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.presence-hint {
+  margin: 0.25rem 0 0;
+}
+
+.presence-head-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.presence-summary {
+  margin-bottom: 0.75rem;
+}
+
+.presence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.presence-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.55rem 0.65rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.presence-row.active {
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.presence-row-label {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.presence-row-value {
+  margin-top: 0.12rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.presence-row-value.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--cyan);
+}
+
+.presence-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.presence-badge.on {
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.4);
+}
+
+.presence-empty {
+  color: var(--muted);
+  font-size: 0.88rem;
+  padding: 0.35rem 0;
+}
+
+@media (max-width: 720px) {
+  .presence-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .modal {
   position: fixed;
   inset: 0;

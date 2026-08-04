@@ -18,6 +18,7 @@ function createDashboardBridge() {
   let displaySettingsUpdater = null;
   let proxySettingsProvider = null;
   let proxySettingsUpdater = null;
+  let sessionPresenceReportProvider = null;
   let lastSnapshotJson = null;
   let lastSnapshotObj = null;
   let lastSnapshotAt = 0;
@@ -105,6 +106,21 @@ function createDashboardBridge() {
       throw new Error("Proxy settings are not available");
     }
     return proxySettingsUpdater(patch || {});
+  }
+
+  function setSessionPresenceReportProvider(fn) {
+    sessionPresenceReportProvider = typeof fn === "function" ? fn : null;
+  }
+
+  function getSessionPresenceReport(options) {
+    try {
+      if (sessionPresenceReportProvider) {
+        return sessionPresenceReportProvider(options || {});
+      }
+    } catch (_error) {
+      /* fall through */
+    }
+    return require("./sessionPresence").buildReport(options || {});
   }
 
   function publishEvent(type, data) {
@@ -357,6 +373,8 @@ function createDashboardBridge() {
     setProxySettingsUpdater,
     getProxySettings,
     updateProxySettings,
+    setSessionPresenceReportProvider,
+    getSessionPresenceReport,
     ask,
     answerPrompt,
     clearPendingPrompt,
