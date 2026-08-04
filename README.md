@@ -59,7 +59,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `top10Dashboard.js` | Builds `/api/top10` payload: standings, history, Δ, and `/h` rates from the poll log. |
 | `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
 | `public/` | Dashboard HTML, CSS, and client JS (includes Top 10 tab). |
-| `scripts/keep-alive.sh` | 24/7 watchdog: restart dead/stale bot; heartbeats → `keep-alive.log`. |
+| `scripts/keep-alive.sh` | 24/7 watchdog: restart dead/stale bot (with post-restart grace); heartbeats → `keep-alive.log`. |
 | `scripts/start-24-7.sh` | Starts bot + network sampler + keep-alive in tmux sessions. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers); Palace on realm host. |

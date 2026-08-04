@@ -16,6 +16,7 @@ All notable changes to this project are documented in this file.
   - Polls every **60s** (`CHECK_SECONDS`)
   - Restarts the bot if `login.js` is dead, the dashboard API is down, or `log.jsonl` is stale **≥20m** (`STALE_MINUTES`) while automation is expected
   - Skips restart when automation is paused (session rest)
+  - **Post-restart grace** (`STALE_GRACE_MINUTES`, default 5): after a restart, do not immediately re-trigger on a still-old `log.jsonl` (avoids restart loops while login / first loop ticks)
   - Writes heartbeats and restart reasons to `keep-alive.log`
 - **In-process overdue-loop watchdog** — reschedules farmlist / builder / activity / Top 10 when timers stall.
 - **Session wake recovery** — login timeout + proxy-rotate retries when the session loop resumes from rest; clears resting state after resume.
