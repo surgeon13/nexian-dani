@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.14] — 2026-08-04
+
+### Changed
+
+- **Keep-alive polls every 15s** (was 60s) — faster heartbeats and quicker restart when the bot/dashboard dies. Override with `CHECK_SECONDS`.
+
 ## [1.8.13] — 2026-08-04
 
 ### Added
