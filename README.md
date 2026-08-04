@@ -26,7 +26,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
 - **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
-- **24/7 keep-alive** — `scripts/keep-alive.sh` polls every minute and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. Prefer `npm run start:24-7` on a long-lived host.
+- **24/7 keep-alive** — `scripts/keep-alive.sh` polls every minute and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
 
 ### What's new in 1.8.x (summary)
 
@@ -125,6 +125,8 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run dashboard:headed` | Dashboard with headed browser (default `.env`) |
 | `npm run start:24-7` | Start bot dashboard + network sampler + keep-alive watchdog (tmux) |
 | `npm run keep-alive` | Run the keep-alive watchdog only (expects bot already running) |
+| `npm run cursor:ensure` | Cursor Cloud health check / restart (`cursor-cloud-ensure.sh`) |
+| `npm run cursor:start` | Materialize secrets + start 24/7 stack |
 | `npm run playwright:install` | Install Playwright Chromium only |
 | `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `templates/progress.json` |
 
