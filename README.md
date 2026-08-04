@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.14** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.15** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -23,7 +23,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 - **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`U`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
-- **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
+- **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
 - **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
 - **24/7 keep-alive** — `scripts/keep-alive.sh` polls every **15s** and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
@@ -191,6 +191,37 @@ Each time the bot is online (after login / wake / relogin), a period is recorded
 Egress IP is measured through the Playwright browser context when possible (so a proxy’s exit IP is recorded), with a direct ipify fallback.
 
 Manual snapshot: menu **`O`**, dashboard **Snapshot now**, or `POST /api/action` with `{ "action": "top10" }`.
+
+### Proxy pool (rotate + check egress IP)
+
+Manage the pool from dashboard **Settings → Proxy**, terminal **`y`**, or the HTTP API while the dashboard is running.
+
+| Action | How |
+|--------|-----|
+| **Next proxy + relogin** | Dashboard **Next**, menu **`y` → [N]**, or `POST /api/proxy-settings` with `{"action":"next"}` |
+| **Apply current + relogin** | Dashboard **Apply**, menu **`y` → [A]**, or `{"action":"apply"}` |
+| **Disable (direct) + relogin** | Dashboard **Disable**, menu **`y` → [D]**, or `{"action":"disable"}` |
+| **Save list only** | `{"action":"save","proxyText":"…"}` (no relogin) |
+
+```bash
+# Rotate to the next pool entry and relogin (blocks until apply finishes)
+curl -sS -X POST http://127.0.0.1:3847/api/proxy-settings \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"next"}'
+
+# Current proxy + egress IP (wait until automation.reason is online)
+curl -sS http://127.0.0.1:3847/api/status | python3 -c '
+import json,sys
+s=json.load(sys.stdin)["status"]
+print("online:", s["automation"])
+print("proxy:", (s.get("proxy") or {}).get("activeDisplay"))
+print("IP:", (s.get("account") or {}).get("publicAddress"))
+'
+```
+
+`GET /api/status` → `proxy.activeDisplay` / `proxy.active.server` and `account.publicAddress`. Session presence records the change as `relogin_proxy_next` (or apply/disable) with the new IP.
+
+With `PROXY_ROTATE_ON_SESSION_REST=true` (default when a pool exists), the session loop also advances to the next proxy on each rest→wake cycle.
 
 ---
 
@@ -371,6 +402,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
 - **Bot crashed / dashboard dead:** run `npm run cursor:ensure` (or `npm run start:24-7`). Check `keep-alive.log` for `restarting bot (...)`.
+- **Wrong egress IP / stuck on old proxy:** `POST /api/proxy-settings` with `{"action":"next"}` (or **Apply**). Confirm `account.publicAddress` matches the new proxy host after `automation.reason` is `online`.
 - **Top 10 empty / no Δ:** need at least two successful snapshots in `top10.log`; confirm `TOP10_TRACKING_ENABLED` and that `/api/top10` returns `ok: true` categories.
 
 ---

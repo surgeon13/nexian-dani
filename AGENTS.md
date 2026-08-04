@@ -25,6 +25,25 @@ This repo is meant to keep the Nexian automation bot running **for the life of t
 - Poll every few minutes: `bash ./scripts/cursor-cloud-ensure.sh` and check `keep-alive.log` heartbeats.
 - Prefer changing live settings via the dashboard API / running session; restart only for code changes and say so.
 
+### Proxy rotate + check egress IP
+
+```bash
+# Next proxy in pool + logout/relogin
+curl -sS -X POST http://127.0.0.1:3847/api/proxy-settings \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"next"}'
+
+# After automation.reason is online:
+curl -sS http://127.0.0.1:3847/api/status | python3 -c '
+import json,sys
+s=json.load(sys.stdin)["status"]
+print((s.get("proxy") or {}).get("activeDisplay"))
+print((s.get("account") or {}).get("publicAddress"))
+'
+```
+
+Other actions: `apply`, `disable`, `save`. Do not commit `templates/proxy_list.json`.
+
 ### Secrets (Cursor dashboard → Cloud Agents → Secrets)
 
 | Secret | Purpose |
