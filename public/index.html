@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Nexian Dashboard</title>
-  <link rel="stylesheet" href="/style.css?v=1.5.14" />
+  <link rel="stylesheet" href="/style.css?v=1.5.15" />
   <script>
     (function () {
       try {
@@ -67,7 +67,8 @@
         <div>
           <h2>Session presence</h2>
           <p class="hint presence-hint">
-            When the bot was online and which egress IP / proxy each period used.
+            Timeline of login / logout / rest, with the egress IP used on each online stretch
+            (e.g. <code>10:00 login with IP1</code> → <code>10:49 logout</code> → <code>10:49 rest time</code>).
           </p>
         </div>
         <div class="presence-head-actions">
@@ -309,6 +310,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=1.6.3"></script>
+  <script src="/app.js?v=1.6.4"></script>
 </body>
 </html>
