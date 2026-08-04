@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.15] — 2026-08-04
+
+### Changed
+
+- **Docs: proxy rotate + egress IP ops** — README documents `POST /api/proxy-settings` actions (`next` / `apply` / `disable` / `save`) and how to read the live proxy + public IP from `GET /api/status`. AGENTS.md adds the same curl recipes for Cloud Agents.
+
 ## [1.8.14] — 2026-08-04
 
 ### Changed
