@@ -71,6 +71,7 @@ const els = {
   top10Completed: document.getElementById("top10-completed"),
   top10Updated: document.getElementById("top10-updated"),
   top10Standings: document.getElementById("top10-standings"),
+  top10RaidIncome: document.getElementById("top10-raid-income"),
   top10CategoryTabs: document.getElementById("top10-category-tabs"),
   top10Podium: document.getElementById("top10-podium"),
   top10Board: document.getElementById("top10-board"),
@@ -2210,7 +2211,7 @@ function setupDisplaySettings() {
 
 let top10LoadedOnce = false;
 let latestTop10Data = null;
-let selectedTop10Category = "attackers";
+let selectedTop10Category = "robbers";
 let top10SnapshotBusy = false;
 
 function formatTop10When(ts) {
@@ -2378,6 +2379,113 @@ function getSelectedTop10Category(data) {
     return found;
   }
   return categories[0] || null;
+}
+
+function formatTop10IntervalRange(range) {
+  if (!range || (range.min == null && range.max == null)) {
+    return "—";
+  }
+  if (range.min != null && range.max != null) {
+    return range.min === range.max ? `every ${range.min}m` : `every ${range.min}-${range.max}m`;
+  }
+  const value = range.min != null ? range.min : range.max;
+  return `every ${value}m`;
+}
+
+function renderTop10RaidIncome(data) {
+  if (!els.top10RaidIncome) {
+    return;
+  }
+  const raid = data && data.raidIncome;
+  if (!raid || raid.totalResources == null) {
+    els.top10RaidIncome.innerHTML =
+      '<div class="top10-empty">Raid income needs at least one Robbers snapshot with your score.</div>';
+    return;
+  }
+
+  const activeRate = formatTop10Rate(raid.activePerHour, {
+    improved: raid.activePerHour != null ? raid.activePerHour > 0 : false
+  });
+  const wallRate = formatTop10Rate(raid.wallPerHour, {
+    improved: raid.wallPerHour != null ? raid.wallPerHour > 0 : false
+  });
+  const lastRate = formatTop10Rate(
+    raid.lastInterval && raid.lastInterval.perHour,
+    {
+      improved:
+        raid.lastInterval && raid.lastInterval.perHour != null
+          ? raid.lastInterval.perHour > 0
+          : false
+    }
+  );
+  const gained = formatTop10Delta(raid.gained, {
+    improved: raid.gained != null ? raid.gained > 0 : false
+  });
+  const settings = raid.settings || {};
+  const spark = buildSparklineSvg(raid.sparkline, {
+    width: 160,
+    height: 36,
+    stroke: "var(--green)"
+  });
+
+  els.top10RaidIncome.innerHTML = `
+    <div class="top10-raid-hero">
+      <div class="top10-raid-hero-main">
+        <div class="top10-raid-kicker">Your raid income · Robbers</div>
+        <div class="top10-raid-rate">
+          <span class="top10-delta ${activeRate.className}">${escapeHtml(activeRate.text)}</span>
+          <span class="top10-raid-rate-unit">active</span>
+        </div>
+        <div class="top10-raid-sub">
+          Wall-clock ${escapeHtml(wallRate.text)}
+          · last interval ${escapeHtml(lastRate.text)}
+          · total ${escapeHtml(raid.totalResourcesText || formatTop10Number(raid.totalResources))}
+          · gained <span class="top10-delta ${gained.className}">${escapeHtml(gained.text)}</span>
+        </div>
+      </div>
+      <div class="top10-raid-hero-side">
+        ${spark}
+        <div class="top10-raid-meta">
+          <div><span>Active hours</span><strong>${escapeHtml(
+            raid.activeHours != null ? String(raid.activeHours) : "—"
+          )}</strong></div>
+          <div><span>Wall hours</span><strong>${escapeHtml(
+            raid.wallHours != null ? String(raid.wallHours) : "—"
+          )}</strong></div>
+          <div><span>Polls</span><strong>${escapeHtml(String(raid.pollCount || 0))}</strong></div>
+          <div><span>Downtime gaps</span><strong>${escapeHtml(
+            String(raid.downtimeIntervals || 0)
+          )}</strong></div>
+        </div>
+      </div>
+    </div>
+    <div class="top10-raid-settings">
+      <div class="top10-raid-setting">
+        <span class="top10-raid-setting-label">Top 10 polls</span>
+        <strong>${escapeHtml(formatTop10IntervalRange(settings.top10IntervalMinutes))}</strong>
+        <span class="top10-raid-setting-state">${settings.top10Enabled ? "ON" : "OFF"}</span>
+      </div>
+      <div class="top10-raid-setting">
+        <span class="top10-raid-setting-label">Farmlist loop</span>
+        <strong>${escapeHtml(formatTop10IntervalRange(settings.farmlistIntervalMinutes))}</strong>
+        <span class="top10-raid-setting-state">${settings.farmlistEnabled ? "ON" : "OFF"}</span>
+      </div>
+      <div class="top10-raid-setting">
+        <span class="top10-raid-setting-label">Active gap cap</span>
+        <strong>≤ ${escapeHtml(String(raid.maxActiveGapHours))}h</strong>
+        <span class="top10-raid-setting-state">excludes stalls</span>
+      </div>
+    </div>
+    <p class="top10-raid-note">
+      Active /h uses only poll intervals shorter than ${escapeHtml(String(raid.maxActiveGapHours))}h
+      (about 3× your Top 10 interval), so overnight stalls don’t dilute raid pace.
+      Wall /h divides total Robbers gain by full elapsed time.
+    </p>`;
+
+  els.top10RaidIncome.querySelector(".top10-raid-hero")?.addEventListener("click", () => {
+    selectedTop10Category = "robbers";
+    renderTop10CategoryViews(latestTop10Data);
+  });
 }
 
 function renderTop10LoopPanel(tracking) {
@@ -2643,6 +2751,7 @@ function renderTop10Trend(category) {
     return;
   }
   const useRank = category.id === "climbers" || (category.self && category.self.value == null);
+  const isRaid = category.id === "robbers";
   const chart = buildTrendChartSvg(category.history || [], { useRank });
   const deltas = category.deltas || {};
   const last = useRank
@@ -2675,6 +2784,13 @@ function renderTop10Trend(category) {
       ? window && window.perHour != null && window.perHour < 0
       : window && window.perHour != null && window.perHour > 0
   });
+  const raid = latestTop10Data && latestTop10Data.raidIncome;
+  const activeRate =
+    isRaid && raid
+      ? formatTop10Rate(raid.activePerHour, {
+          improved: raid.activePerHour != null ? raid.activePerHour > 0 : false
+        })
+      : null;
   const pollRows = pollSeries
     .map((item) => {
       const delta = formatTop10Delta(item.delta, {
@@ -2687,44 +2803,68 @@ function renderTop10Trend(category) {
           ? item.perHour != null && item.perHour < 0
           : item.perHour != null && item.perHour > 0
       });
+      const longGap =
+        isRaid &&
+        raid &&
+        item.hours != null &&
+        item.hours > Number(raid.maxActiveGapHours || 0);
       return `
-        <tr>
-          <td>${escapeHtml(formatTop10When(item.fromTs))} → ${escapeHtml(formatTop10When(item.toTs))}</td>
+        <tr class="${longGap ? "is-downtime" : ""}">
+          <td>${escapeHtml(formatTop10When(item.fromTs))} → ${escapeHtml(formatTop10When(item.toTs))}${
+            longGap ? ' <span class="top10-gap-tag">downtime</span>' : ""
+          }</td>
           <td>${escapeHtml(item.hours != null ? `${item.hours}h` : "—")}</td>
           <td><span class="top10-delta ${delta.className}">${escapeHtml(delta.text)}</span></td>
           <td><span class="top10-delta ${rate.className}">${escapeHtml(rate.text)}</span></td>
         </tr>`;
     })
     .join("");
+  const titleMetric = isRaid
+    ? "raid income"
+    : useRank
+      ? "rank"
+      : category.metric.toLowerCase();
   els.top10Trend.innerHTML = `
     <div class="top10-trend-head">
-      <div class="top10-trend-title">${escapeHtml(category.label)} · your ${useRank ? "rank" : category.metric.toLowerCase()}</div>
+      <div class="top10-trend-title">${escapeHtml(category.label)} · your ${escapeHtml(titleMetric)}</div>
       <div class="top10-trend-sub">Updated ${escapeHtml(formatTop10When(category.updatedAt))} · ${escapeHtml(
         String(category.pollCount || pollSeries.length + (pollSeries.length ? 1 : 0))
       )} polls</div>
     </div>
     <div class="top10-pace">
+      ${
+        activeRate
+          ? `<div class="top10-pace-item top10-pace-item-primary">
+        <div class="top10-pace-label">Active raid /h</div>
+        <div class="top10-pace-value"><span class="top10-delta ${activeRate.className}">${escapeHtml(activeRate.text)}</span></div>
+      </div>`
+          : ""
+      }
       <div class="top10-pace-item">
-        <div class="top10-pace-label">All polls Δ</div>
-        <div class="top10-pace-value"><span class="top10-delta ${windowDelta.className}">${escapeHtml(windowDelta.text)}</span></div>
-      </div>
-      <div class="top10-pace-item">
-        <div class="top10-pace-label">All polls /h</div>
+        <div class="top10-pace-label">${isRaid ? "Wall /h" : "All polls /h"}</div>
         <div class="top10-pace-value"><span class="top10-delta ${windowRate.className}">${escapeHtml(windowRate.text)}</span></div>
       </div>
       <div class="top10-pace-item">
-        <div class="top10-pace-label">Last poll Δ</div>
-        <div class="top10-pace-value"><span class="top10-delta ${lastDelta.className}">${escapeHtml(lastDelta.text)}</span></div>
+        <div class="top10-pace-label">${isRaid ? "Gained" : "All polls Δ"}</div>
+        <div class="top10-pace-value"><span class="top10-delta ${windowDelta.className}">${escapeHtml(windowDelta.text)}</span></div>
       </div>
       <div class="top10-pace-item">
         <div class="top10-pace-label">Last poll /h</div>
         <div class="top10-pace-value"><span class="top10-delta ${lastRate.className}">${escapeHtml(lastRate.text)}</span></div>
       </div>
+      ${
+        activeRate
+          ? ""
+          : `<div class="top10-pace-item">
+        <div class="top10-pace-label">Last poll Δ</div>
+        <div class="top10-pace-value"><span class="top10-delta ${lastDelta.className}">${escapeHtml(lastDelta.text)}</span></div>
+      </div>`
+      }
     </div>
     ${
       pollRows
         ? `<div class="top10-poll-series">
-      <div class="top10-poll-series-title">Poll-by-poll deltas</div>
+      <div class="top10-poll-series-title">${isRaid ? "Raid poll intervals" : "Poll-by-poll deltas"}</div>
       <table class="top10-table top10-poll-table">
         <thead><tr><th>Interval</th><th>Span</th><th>Δ</th><th>/h</th></tr></thead>
         <tbody>${pollRows}</tbody>
@@ -2760,6 +2900,7 @@ function renderTop10Dashboard(data) {
       Math.max(Number(data.tracking && data.tracking.completedCount) || 0, Number(data.snapshotCount) || 0)
     );
   }
+  renderTop10RaidIncome(data);
   renderTop10Standings(data);
   renderTop10CategoryViews(data);
 }
