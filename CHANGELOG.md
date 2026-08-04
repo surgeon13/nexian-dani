@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.12] — 2026-08-04
+
+### Added
+
+- **Cursor Cloud 24/7 Environment** — `.cursor/environment.json` installs deps and auto-starts the keep-alive stack on every Cloud Agent boot:
+  - `scripts/cursor-cloud-install.sh` — idempotent `npm ci` + Playwright Chromium
+  - `scripts/cursor-cloud-start.sh` — materialize secrets → `.env`, then `npm run start:24-7`
+  - `scripts/materialize-dotenv.sh` — prefer secret `NEXIAN_DOTENV` (full `.env` body)
+  - `scripts/cursor-cloud-ensure.sh` — health check / restart for Automations
+  - `AGENTS.md` — Cloud-specific keep-alive rules and Automation continuity notes
+
 ## [1.8.11] — 2026-08-04
 
 ### Added

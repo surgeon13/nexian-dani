@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.11** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.12** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -16,7 +16,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat. |
-| **24/7 keep-alive** | External watchdog (`npm run start:24-7`) restarts a dead or stalled bot; heartbeats in `keep-alive.log`. |
+| **24/7 keep-alive** | Watchdog (`npm run start:24-7`) + Cursor Cloud Environment auto-start; heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
 ### Automation modules
@@ -63,6 +63,9 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `public/` | Dashboard HTML, CSS, and client JS (includes Top 10 tab). |
 | `scripts/keep-alive.sh` | 24/7 watchdog: restart dead/stale bot (with post-restart grace); heartbeats → `keep-alive.log`. |
 | `scripts/start-24-7.sh` | Starts bot + network sampler + keep-alive in tmux sessions. |
+| `.cursor/environment.json` | Cursor Cloud: install deps + auto-start 24/7 stack on agent boot. |
+| `scripts/cursor-cloud-*.sh` | Cloud install / start / ensure helpers (`npm run cursor:*`). |
+| `AGENTS.md` | Cloud Agent keep-alive + Automation instructions. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers); Palace on realm host. |
 | `templates/` | Build templates; `templates/index.json` lists available plans. |
@@ -180,8 +183,6 @@ Manual snapshot: menu **`O`**, dashboard **Snapshot now**, or `POST /api/action`
 
 ## 24/7 keep-alive (crash recovery)
 
-The Cursor/cloud agent is **not** a 24/7 process supervisor. Use the keep-alive watchdog on a long-lived host (VPS, Pi, always-on PC).
-
 ```bash
 npm run start:24-7
 ```
@@ -202,7 +203,21 @@ This starts three tmux sessions by default:
 
 Heartbeats and restart reasons are appended to **`keep-alive.log`**.
 
-If keep-alive itself dies, nothing restarts the bot until you run `npm run start:24-7` (or `npm run keep-alive`) again. Pair with systemd/cron on production hosts if you need the watchdog supervised too.
+### Cursor Cloud (run inside Cursor)
+
+Cloud Agent VMs die when the agent run ends. To stay online **inside Cursor**:
+
+1. **Environment** — `.cursor/environment.json` installs deps on Build and runs `scripts/cursor-cloud-start.sh` on every agent boot (materializes `.env` + `start:24-7`).
+2. **Secrets** — In [Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents), add **`NEXIAN_DOTENV`** = full contents of your local `.env` (preferred). Optional: `NEXIAN_TROOP_PLANS_JSON`, `NEXIAN_PROXY_LIST_JSON`.
+3. **Keep a run open** — Leave a Cloud Agent / Automation session running while you want the bot up (see `AGENTS.md`).
+4. **Hourly Automation** — At [cursor.com/automations](https://cursor.com/automations), schedule something like: *Ensure `bash ./scripts/cursor-cloud-ensure.sh` is healthy; stay alive and monitor `keep-alive.log`; do not end the session.* Point it at this repo so a fresh VM restarts the stack if the previous run died.
+
+```bash
+npm run cursor:ensure   # health check / restart
+npm run cursor:start    # materialize secrets + start:24-7
+```
+
+On a VPS / Pi / always-on PC (outside Cursor), use `npm run start:24-7` under systemd/cron the same way.
 
 ### Is the bot down?
 
@@ -211,6 +226,7 @@ If keep-alive itself dies, nothing restarts the bot until you run `npm run start
 | `curl -sS http://127.0.0.1:3847/api/status` | HTTP 200; fresh `status.updatedAt` |
 | `pgrep -af 'login.js\|keep-alive'` | Both bot and keep-alive processes |
 | `tail -20 keep-alive.log` | `heartbeat bot=up dash=up` about every minute |
+| `bash ./scripts/cursor-cloud-ensure.sh` | Prints `ok — keep-alive + dashboard healthy` |
 | `log.jsonl` / `top10.log` mtime | Updating within your loop intervals |
 | `status.top10Tracking.lastAction.at` | Within ~`TOP10_TRACKING_*` minutes when enabled |
 
@@ -340,7 +356,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
-- **Bot crashed / dashboard dead:** run `npm run start:24-7` (or ensure `npm run keep-alive` is running). Check `keep-alive.log` for `restarting bot (...)`.
+- **Bot crashed / dashboard dead:** run `npm run cursor:ensure` (or `npm run start:24-7`). Check `keep-alive.log` for `restarting bot (...)`.
 - **Top 10 empty / no Δ:** need at least two successful snapshots in `top10.log`; confirm `TOP10_TRACKING_ENABLED` and that `/api/top10` returns `ok: true` categories.
 
 ---
