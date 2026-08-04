@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.10] — 2026-08-04
+
+### Added
+
+- **Raid income focus for Top 10** — dashboard hero + `raidIncome` on `/api/top10` normalize **your Robbers** score to resources/hour:
+  - **Active /h** excludes long downtime gaps (≈3× Top 10 poll interval)
+  - **Wall /h** uses full elapsed time across all polls
+  - Shows Top 10 + farmlist interval settings beside the pace
+  - Defaults the leaderboard tab to **Robbers**
+
 ## [1.8.9] — 2026-08-03
 
 ### Release

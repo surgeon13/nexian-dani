@@ -400,6 +400,102 @@ function enrichTop10WithRates(latestRows, previousRows, hours) {
   });
 }
 
+function buildRaidIncomeSummary(robbersCategory, options = {}) {
+  const self = robbersCategory && robbersCategory.self ? robbersCategory.self : null;
+  const deltas = (robbersCategory && robbersCategory.deltas) || {};
+  const window = deltas.window && deltas.window.value ? deltas.window.value : null;
+  const lastPoll = deltas.lastPoll && deltas.lastPoll.value ? deltas.lastPoll.value : null;
+  const pollSeries = (deltas.polls && deltas.polls.value) || [];
+
+  const pollMin = Number(options.pollMinMinutes);
+  const pollMax = Number(options.pollMaxMinutes);
+  const configuredPollMinutes =
+    Number.isFinite(pollMax) && pollMax > 0
+      ? pollMax
+      : Number.isFinite(pollMin) && pollMin > 0
+        ? pollMin
+        : 10;
+  // Gaps longer than this are treated as downtime (stall/rest), not active raiding.
+  const maxActiveGapHours = Math.max(1.5, (configuredPollMinutes * 3) / 60);
+
+  const activeIntervals = [];
+  const downtimeIntervals = [];
+  for (const interval of pollSeries) {
+    if (interval && Number(interval.hours) > 0 && Number(interval.hours) <= maxActiveGapHours) {
+      activeIntervals.push(interval);
+    } else if (interval) {
+      downtimeIntervals.push(interval);
+    }
+  }
+
+  const activeDelta = activeIntervals.reduce((sum, item) => sum + Number(item.delta || 0), 0);
+  const activeHoursRaw = activeIntervals.reduce((sum, item) => sum + Number(item.hours || 0), 0);
+  const downtimeHoursRaw = downtimeIntervals.reduce(
+    (sum, item) => sum + Number(item.hours || 0),
+    0
+  );
+  const activeHours = activeHoursRaw > 0 ? Math.round(activeHoursRaw * 1000) / 1000 : null;
+  const downtimeHours =
+    downtimeHoursRaw > 0 ? Math.round(downtimeHoursRaw * 1000) / 1000 : null;
+  const activePerHour =
+    activeHoursRaw > 0 ? roundRate(activeDelta / activeHoursRaw) : null;
+
+  const farmlist = options.farmlist || {};
+
+  return {
+    category: "robbers",
+    label: "Raid income",
+    metric: "Resources",
+    playerName: self && self.name ? self.name : options.playerName || null,
+    totalResources: self && self.value != null ? Number(self.value) : null,
+    totalResourcesText: self ? self.valueText : null,
+    gained: window ? window.delta : null,
+    gainedText: window && window.delta != null ? formatCompactNumber(window.delta) : null,
+    wallHours: window ? window.hours : null,
+    wallPerHour: window ? window.perHour : null,
+    wallPerHourText:
+      window && window.perHour != null ? formatCompactNumber(window.perHour) : null,
+    activeHours,
+    activeGained: activeIntervals.length ? activeDelta : null,
+    activePerHour,
+    activePerHourText: activePerHour == null ? null : formatCompactNumber(activePerHour),
+    downtimeHours,
+    downtimeIntervals: downtimeIntervals.length,
+    activeIntervals: activeIntervals.length,
+    lastInterval: lastPoll
+      ? {
+          delta: lastPoll.delta,
+          hours: lastPoll.hours,
+          perHour: lastPoll.perHour,
+          fromTs: lastPoll.fromTs,
+          toTs: lastPoll.toTs
+        }
+      : null,
+    pollCount: robbersCategory ? robbersCategory.pollCount : 0,
+    maxActiveGapHours: Math.round(maxActiveGapHours * 1000) / 1000,
+    settings: {
+      top10Enabled: Boolean(options.top10Enabled),
+      top10IntervalMinutes:
+        Number.isFinite(pollMin) || Number.isFinite(pollMax)
+          ? {
+              min: Number.isFinite(pollMin) ? pollMin : null,
+              max: Number.isFinite(pollMax) ? pollMax : null
+            }
+          : null,
+      farmlistEnabled: Boolean(farmlist.enabled),
+      farmlistIntervalMinutes:
+        farmlist.minMinutes != null || farmlist.maxMinutes != null
+          ? {
+              min: farmlist.minMinutes ?? null,
+              max: farmlist.maxMinutes ?? null
+            }
+          : null
+    },
+    sparkline: (robbersCategory && robbersCategory.sparkline) || [],
+    pollSeries
+  };
+}
+
 function buildTop10DashboardPayload(bridge, options = {}) {
   const logFilePath = resolveTop10LogPath(bridge, options.logFilePath);
   const limit = Math.max(50, Math.min(Number(options.limit) || 700, 2000));
@@ -555,6 +651,19 @@ function buildTop10DashboardPayload(bridge, options = {}) {
   const snap = bridge && typeof bridge.getSnapshot === "function" ? bridge.getSnapshot() : null;
   const tracking = (snap && snap.top10Tracking) || {};
   const loop = (snap && snap.loops && snap.loops.top10) || {};
+  const farmlistLoop = (snap && snap.loops && snap.loops.farmlist) || {};
+  const robbersCategory = categories.find((cat) => cat.id === "robbers") || null;
+  const raidIncome = buildRaidIncomeSummary(robbersCategory, {
+    playerName: tracking.playerName || null,
+    top10Enabled: Boolean(tracking.enabled ?? loop.enabled),
+    pollMinMinutes: tracking.minMinutes ?? loop.minMinutes ?? null,
+    pollMaxMinutes: tracking.maxMinutes ?? loop.maxMinutes ?? null,
+    farmlist: {
+      enabled: farmlistLoop.enabled,
+      minMinutes: farmlistLoop.minMinutes,
+      maxMinutes: farmlistLoop.maxMinutes
+    }
+  });
 
   return {
     ok: true,
@@ -572,6 +681,7 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       playerName: tracking.playerName || null,
       lastActionAt: tracking.lastAction && tracking.lastAction.at ? tracking.lastAction.at : latestTs
     },
+    raidIncome,
     standings,
     categories,
     categoryOrder: CATEGORY_ORDER
@@ -583,6 +693,7 @@ module.exports = {
   CATEGORY_META,
   resolveTop10LogPath,
   buildTop10DashboardPayload,
+  buildRaidIncomeSummary,
   formatCompactNumber,
   hoursBetween,
   computeTimedRate,

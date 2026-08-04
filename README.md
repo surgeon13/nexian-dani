@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.9** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.10** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -25,11 +25,12 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
-- **Top 10 tracking** — Scheduled or manual snapshots of server rankings (attackers, defenders, robbers, climbers, population, alliances, villages) appended to `top10.log`. Dashboard **Top 10** tab shows standings, leaderboards, poll-to-poll **Δ**, and **per-hour** pace from the full log history. Settings **[O]** or main menu / dashboard **Snapshot now**.
+- **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
 - **24/7 keep-alive** — `scripts/keep-alive.sh` polls every minute and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. Prefer `npm run start:24-7` on a long-lived host.
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.10:** Raid income hero — your Robbers loot normalized to active vs wall-clock `/h`, with settings context.
 - **1.8.9:** Top 10 dashboard + Δ/`/h` from all polls; 24/7 keep-alive; session wake recovery; proxy rotate-on-rest visibility; farmlist village pin; Palace expansion on realm host.
 - **Top 10 statistics tracking** — seven ranking categories logged to `top10.log` (JSONL lines with `ts` + `epochMs`).
 - **Farmlist auto-send pre-empts** builder, troop, cranny, and activity auto loops when due.
@@ -151,20 +152,26 @@ Exact labels are printed each run—use those as source of truth if keys change.
 
 ## Top 10 tracking and dashboard
 
+**Main goal:** measure **your** raid loot from the Robbers ranking and normalize it to **resources per hour**, so you can judge farmlist / raid settings.
+
 Enable `TOP10_TRACKING_ENABLED=true` and set the interval (`TOP10_TRACKING_LOOP_MIN/MAX_MINUTES`). Snapshots scrape Nexian `statistics.php` and append one JSONL line per category to `top10.log`.
 
 **Dashboard → Top 10 tab**
 
 | Panel | Meaning |
 |-------|---------|
-| Your standings | Rank / points per category, total **Δ** across all polls, **`/h`** pace, sparkline |
-| Leaderboard | Current top 10 + **Δ all**, **`/h`**, last-interval `/h`, rank move |
-| Your trend | All-polls Δ/`/h`, last-interval Δ/`/h`, poll-by-poll table, chart |
+| **Raid income** (hero) | Your Robbers total, **active /h** (stalls excluded), wall-clock /h, last interval /h, plus Top 10 + farmlist interval settings |
+| Your standings | Rank / points per category with Δ and `/h` |
+| Leaderboard | Current top 10 + Δ / `/h` (defaults to **Robbers**) |
+| Your trend | Poll-by-poll raid intervals; long gaps tagged as downtime |
 
-Rates use wall-clock hours between snapshot timestamps:  
-`(value_now − value_then) / hours_elapsed`.
+**How /h is calculated**
 
-Manual snapshot: menu **`O`**, dashboard **Snapshot now**, or `POST /api/action` with `{ "action": "top10" }`.
+- **Wall /h** = `(robbers_now − robbers_first) / wall_hours` across all polls  
+- **Active /h** = same math but **only intervals shorter than ~3× your Top 10 poll interval** (min 1.5h). Overnight stalls / dead bot time are excluded so pace reflects actual raiding.  
+- **Last /h** = newest poll interval only  
+
+Manual snapshot: menu **`O`**, dashboard **Snapshot now**, or `POST /api/action` with `{ "action": "top10" }`. API field: `raidIncome` on `GET /api/top10`.
 
 ---
 
