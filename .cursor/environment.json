@@ -1,0 +1,12 @@
+{
+  "name": "nexian-dani-24-7",
+  "install": "bash ./scripts/cursor-cloud-install.sh",
+  "start": "bash ./scripts/cursor-cloud-start.sh",
+  "terminals": [
+    {
+      "name": "keep-alive-log",
+      "command": "mkdir -p . && touch keep-alive.log && tail -n 20 -F keep-alive.log",
+      "description": "Nexian 24/7 keep-alive heartbeats. Dashboard http://127.0.0.1:3847 — do not kill tmux sessions nexian-dani, nexian-keep, or net-usage."
+    }
+  ]
+}

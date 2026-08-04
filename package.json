@@ -1,6 +1,6 @@
 {
   "name": "nexian",
-  "version": "1.8.11",
+  "version": "1.8.12",
   "description": "Menu-driven Playwright automation helper for Nexian",
   "main": "login.js",
   "scripts": {
@@ -19,6 +19,9 @@
     "dashboard:dev:nexian:headless": "node --max-old-space-size=768 login.js --dashboard --keep-open --env-file=.env.nexian",
     "start:24-7": "bash ./scripts/start-24-7.sh",
     "keep-alive": "bash ./scripts/keep-alive.sh",
+    "cursor:install": "bash ./scripts/cursor-cloud-install.sh",
+    "cursor:start": "bash ./scripts/cursor-cloud-start.sh",
+    "cursor:ensure": "bash ./scripts/cursor-cloud-ensure.sh",
     "export": "node export.js",
     "playwright:install": "npx playwright install chromium",
     "clean:runtime": "node -e \"const fs=require('fs');['storageState.json','log.jsonl','top10.log','templates/progress.json'].forEach(f=>{if(fs.existsSync(f))fs.rmSync(f,{force:true});});console.log('Removed runtime files: storageState.json, log.jsonl, top10.log, templates/progress.json');\"",
