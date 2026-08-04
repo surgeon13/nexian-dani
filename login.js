@@ -20,6 +20,7 @@ const {
   applyProxyToSettings,
   proxyPool
 } = require("./proxyConfig");
+const sessionPresence = require("./sessionPresence");
 
 function getArgValue(prefix) {
   const match = process.argv.find((arg) => arg.startsWith(prefix));
@@ -958,6 +959,81 @@ async function run() {
   let dashboardServer = null;
   let dashboardBridge = null;
   let dashboardAccount = null;
+  const presenceLogFile = sessionPresence.resolveLogFilePath(settings);
+
+  const presenceProxyMeta = () => {
+    const store = proxyPool.loadStore();
+    const active = proxyPool.getActiveProxy(store);
+    return {
+      proxyServer:
+        (active && active.server) ||
+        String(settings.proxyServer || "").trim() ||
+        null,
+      proxyDisplay: formatProxyDisplay(settings, store)
+    };
+  };
+
+  const recordPresenceOffline = (reason) => {
+    const ended = sessionPresence.endActivePeriod(
+      { endReason: reason, ...presenceProxyMeta() },
+      presenceLogFile
+    );
+    if (ended) {
+      console.log(
+        `[Presence] Offline ${ended.startedAt} → ${ended.endedAt}` +
+          ` · IP ${ended.publicIp || "unknown"}` +
+          ` · ${ended.proxyDisplay}` +
+          ` · ${ended.durationLabel}` +
+          ` (${ended.endReason})`
+      );
+    }
+    return ended;
+  };
+
+  const recordPresenceOnline = async (reason, activeSession = session) => {
+    const meta = presenceProxyMeta();
+    const period = sessionPresence.startPeriod(
+      {
+        startReason: reason,
+        publicIp: null,
+        ...meta
+      },
+      presenceLogFile
+    );
+    console.log(
+      `[Presence] Online from ${period.startedAt}` +
+        ` · ${meta.proxyDisplay}` +
+        ` (${period.startReason})`
+    );
+
+    // Resolve egress IP in the background (via browser proxy when available).
+    Promise.resolve()
+      .then(async () => {
+        const ip = await sessionPresence.resolvePublicIp(activeSession);
+        if (!ip) {
+          return;
+        }
+        const updated = sessionPresence.updateActivePeriod(
+          { publicIp: ip },
+          presenceLogFile
+        );
+        if (updated && updated.id === period.id) {
+          console.log(`[Presence] Egress IP ${ip}`);
+          if (dashboardAccount) {
+            dashboardAccount.publicAddress = ip;
+          }
+          if (dashboardBridge) {
+            dashboardBridge.publishSnapshot({ force: true });
+          }
+        }
+      })
+      .catch(() => null);
+
+    return period;
+  };
+
+  const getSessionPresenceReport = (options = {}) =>
+    sessionPresence.buildReport({ ...options, settings }, presenceLogFile);
 
   const cancelSessionLoopTimer = () => {
     if (sessionLoopTimer) {
@@ -997,6 +1073,7 @@ async function run() {
                 ? " (same proxy on wake)"
                 : " (direct / no proxy pool)")
         );
+        recordPresenceOffline("session_rest");
         await session.page.goto(settings.logoutUrl, {
           waitUntil: "domcontentloaded",
           timeout: 15000
@@ -1060,6 +1137,7 @@ async function run() {
         console.log(
           `[Session Loop] Re-login complete. Session resumed via ${formatProxyDisplay(settings)}.`
         );
+        await recordPresenceOnline("session_wake", nextSession);
         if (dashboardBridge) {
           dashboardBridge.publishSnapshot({ force: true });
         }
@@ -1268,6 +1346,7 @@ async function run() {
       const previousSession = session;
       try {
         console.log(`[Session] Re-login requested (${reason}).`);
+        recordPresenceOffline(`relogin_${reason}`);
 
         if (previousSession && previousSession.page && !previousSession.page.isClosed()) {
           await previousSession.page.goto(settings.logoutUrl, {
@@ -1284,6 +1363,7 @@ async function run() {
         session = nextSession;
         settings.headless = nextSession.headless;
         console.log("[Session] Re-login complete.");
+        await recordPresenceOnline(`relogin_${reason}`, nextSession);
 
         return {
           ok: true,
@@ -1636,8 +1716,13 @@ async function run() {
   };
 
   try {
+    sessionPresence.closeOpenPeriods(presenceLogFile, "interrupted");
+
     if (dashboardEnabled && keepOpen) {
       dashboardBridge = createDashboardBridge();
+      dashboardBridge.setSessionPresenceReportProvider((options) =>
+        getSessionPresenceReport(options)
+      );
       dashboardBridge.setSnapshotProvider(() => ({
         updatedAt: new Date().toISOString(),
         starting: startupPhase !== "ready",
@@ -1656,7 +1741,8 @@ async function run() {
               : startupPhase === "menu"
                 ? "starting"
                 : "online"
-        }
+        },
+        sessionPresence: getSessionPresenceReport({ limit: 5 })
       }));
       const dashboardNetwork = await getDashboardNetworkInfo(dashboardPort, "127.0.0.1", {
         skipPublicFetch: true
@@ -1697,6 +1783,7 @@ async function run() {
     session = await createSession(settings.headless);
     settings.headless = session.headless;
     startupPhase = "menu";
+    await recordPresenceOnline("login", session);
     if (dashboardBridge) {
       dashboardBridge.publishSnapshot({ force: true });
     }
@@ -1718,6 +1805,7 @@ async function run() {
           getSessionId: () => sessionId,
           getLogFilePath: () => actionLogFilePath,
           getSessionLoopStatus,
+          getSessionPresenceReport,
           getBrowserRefreshStatus,
           getAutomationStatus,
           setAutomationPaused,
@@ -1743,10 +1831,12 @@ async function run() {
           async toggleHeadlessMode() {
             const nextHeadless = !settings.headless;
             const previousSession = session;
+            recordPresenceOffline("headless_toggle");
             const nextSession = await createSession(nextHeadless);
             session = nextSession;
             settings.headless = nextSession.headless;
             await previousSession.browser.close();
+            await recordPresenceOnline("headless_toggle", nextSession);
             persistRuntimeSettings(["HEADLESS"]);
             return settings.headless;
           }
@@ -1762,6 +1852,7 @@ async function run() {
     loopStopped = true;
     cancelSessionLoopTimer();
     cancelBrowserRefreshTimer();
+    recordPresenceOffline("shutdown");
     if (dashboardServer) {
       try {
         if (typeof dashboardServer.closeAllConnections === "function") {

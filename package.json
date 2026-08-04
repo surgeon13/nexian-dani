@@ -1,6 +1,6 @@
 {
   "name": "nexian",
-  "version": "1.8.12",
+  "version": "1.8.13",
   "description": "Menu-driven Playwright automation helper for Nexian",
   "main": "login.js",
   "scripts": {
@@ -24,8 +24,8 @@
     "cursor:ensure": "bash ./scripts/cursor-cloud-ensure.sh",
     "export": "node export.js",
     "playwright:install": "npx playwright install chromium",
-    "clean:runtime": "node -e \"const fs=require('fs');['storageState.json','log.jsonl','top10.log','templates/progress.json'].forEach(f=>{if(fs.existsSync(f))fs.rmSync(f,{force:true});});console.log('Removed runtime files: storageState.json, log.jsonl, top10.log, templates/progress.json');\"",
-    "test": "echo \"No tests configured\""
+    "clean:runtime": "node -e \"const fs=require('fs');['storageState.json','log.jsonl','top10.log','session-presence.json','templates/progress.json'].forEach(f=>{if(fs.existsSync(f))fs.rmSync(f,{force:true});});console.log('Removed runtime files: storageState.json, log.jsonl, top10.log, session-presence.json, templates/progress.json');\"",
+    "test": "node scripts/test-session-presence.js"
   },
   "keywords": [],
   "author": "",

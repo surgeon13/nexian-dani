@@ -78,6 +78,9 @@ const els = {
   top10Trend: document.getElementById("top10-trend"),
   top10RefreshBtn: document.getElementById("top10-refresh-btn"),
   top10SnapshotBtn: document.getElementById("top10-snapshot-btn"),
+  presenceSummary: document.getElementById("presence-summary"),
+  presenceList: document.getElementById("presence-list"),
+  presenceRefreshBtn: document.getElementById("presence-refresh-btn"),
   toast: document.getElementById("toast")
 };
 
@@ -295,6 +298,10 @@ function renderStatusNow(status) {
     renderProxySettingsPanel(status.proxy);
   }
 
+  if (status.sessionPresence) {
+    renderSessionPresence(status.sessionPresence);
+  }
+
   const compact = isCompactView();
   const stats = compact
     ? [
@@ -508,6 +515,128 @@ async function refreshLogs() {
     renderLogs(data.entries || []);
   } catch (_error) {
     /* ignore */
+  }
+}
+
+function formatPresenceTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
+
+function renderSessionPresence(report) {
+  if (!els.presenceSummary || !els.presenceList) {
+    return;
+  }
+  if (!report) {
+    els.presenceSummary.innerHTML = "";
+    els.presenceList.innerHTML = `<div class="presence-empty">No presence data yet.</div>`;
+    return;
+  }
+
+  const active = report.active;
+  const uniqueIps = Array.isArray(report.uniqueIps) ? report.uniqueIps : [];
+  const summaryItems = [
+    {
+      label: "Now",
+      value: active
+        ? `ON · ${active.publicIp || "IP…"} · ${active.durationLabel || "—"}`
+        : "OFF"
+    },
+    {
+      label: "Periods",
+      value: String(report.periodCount != null ? report.periodCount : 0)
+    },
+    {
+      label: "Total online",
+      value: report.totalOnlineLabel || "—"
+    },
+    {
+      label: "IPs seen",
+      value: uniqueIps.length ? uniqueIps.join(", ") : "—"
+    }
+  ];
+
+  els.presenceSummary.innerHTML = summaryItems
+    .map(
+      (item) => `
+    <div class="troop-rr-stat">
+      <div class="troop-rr-stat-label">${escapeHtml(item.label)}</div>
+      <div class="troop-rr-stat-value">${escapeHtml(item.value)}</div>
+    </div>`
+    )
+    .join("");
+
+  const periods = Array.isArray(report.periods) ? report.periods : [];
+  if (!periods.length) {
+    els.presenceList.innerHTML = `<div class="presence-empty">No online periods recorded yet.</div>`;
+    return;
+  }
+
+  els.presenceList.innerHTML = periods
+    .map((period) => {
+      const endText = period.active
+        ? "still online"
+        : formatPresenceTime(period.endedAt);
+      const reasonBits = [period.startReason || "login"];
+      if (period.endReason) {
+        reasonBits.push(`→ ${period.endReason}`);
+      }
+      return `
+      <div class="presence-row${period.active ? " active" : ""}">
+        <div>
+          <div class="presence-row-label">Online window</div>
+          <div class="presence-row-value">${escapeHtml(formatPresenceTime(period.startedAt))} → ${escapeHtml(endText)}</div>
+          <div class="presence-row-label" style="margin-top:0.35rem">Duration · reason</div>
+          <div class="presence-row-value">${escapeHtml(period.durationLabel || "—")} · ${escapeHtml(reasonBits.join(" "))}</div>
+        </div>
+        <div>
+          <div class="presence-row-label">Egress IP</div>
+          <div class="presence-row-value mono">${escapeHtml(period.publicIp || "—")}</div>
+        </div>
+        <div>
+          <div class="presence-row-label">Proxy</div>
+          <div class="presence-row-value">${escapeHtml(period.proxyDisplay || "direct (none)")}</div>
+        </div>
+        <div>
+          <span class="presence-badge${period.active ? " on" : ""}">${period.active ? "ON" : "OFF"}</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+}
+
+async function refreshSessionPresence(options = {}) {
+  const silent = Boolean(options.silent);
+  try {
+    const data = await api("/api/session-presence?limit=80");
+    renderSessionPresence(data);
+    if (latestStatus) {
+      latestStatus.sessionPresence = data;
+    }
+  } catch (error) {
+    if (!silent) {
+      showToast(error.message || "Could not load session presence");
+    } else if (latestStatus && latestStatus.sessionPresence) {
+      renderSessionPresence(latestStatus.sessionPresence);
+    }
+  }
+}
+
+function setupSessionPresence() {
+  if (els.presenceRefreshBtn) {
+    els.presenceRefreshBtn.addEventListener("click", () => {
+      refreshSessionPresence().catch(() => {});
+    });
   }
 }
 
@@ -3054,13 +3183,16 @@ setupTop10Tab();
 setupTroopForm();
 setupActivityForm();
 setupProxyForm();
+setupSessionPresence();
 connectEvents();
 startHeavyTabPolling();
 startLoopCountdownTicker();
 tickClock();
 setInterval(tickClock, 1000);
 setInterval(refreshLogs, 20000);
+setInterval(() => refreshSessionPresence({ silent: true }), 60000);
 refreshLogs();
+refreshSessionPresence({ silent: true });
 
 api("/api/status")
   .then((data) => {
@@ -3074,5 +3206,8 @@ api("/api/status")
       renderProxySettingsPanel(status.proxy);
     }
     renderStatusNow(status);
+    if (status.sessionPresence) {
+      renderSessionPresence(status.sessionPresence);
+    }
   })
   .catch(() => showToast("Could not reach dashboard API"));
