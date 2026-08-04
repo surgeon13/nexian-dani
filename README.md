@@ -184,8 +184,8 @@ API: `GET /api/top10` → `raidIncome` (Robbers) + `selfPace[]` (all categories 
 
 Each time the bot is online (after login / wake / relogin), a period is recorded with start time, end time, egress IP, and proxy label. History lives in `session-presence.json`.
 
-- Dashboard: **Session presence** panel on the main tab
-- API: `GET /api/session-presence?limit=100`
+- Dashboard: **Session presence** panel on the main tab (login / logout / rest timeline)
+- API: `GET /api/session-presence?limit=100` → `timelineLines` like `10:00 login with 1.2.3.4`, `10:49 logout`, `10:49 rest time (10m)`
 - Optional env: `SESSION_PRESENCE_LOG_FILE`, `SESSION_PRESENCE_MAX_PERIODS` (default 500)
 
 Egress IP is measured through the Playwright browser context when possible (so a proxy’s exit IP is recorded), with a direct ipify fallback.

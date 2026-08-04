@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
   - API: `GET /api/session-presence?limit=100`
   - Tracks login, session-loop rest/wake, relogin, proxy changes, headless toggle, and shutdown
   - Egress IP prefers Playwright context (follows proxy); falls back to direct ipify
+  - Timeline lines shaped like: `10:00 login with IP1` → `10:49 logout` → `10:49 rest time` → `10:59 login with IP2`
 
 ## [1.8.12] — 2026-08-04
 

@@ -78,6 +78,62 @@ try {
   assert.strictEqual(presence.normalizeIp("<html>"), null);
   assert.ok(presence.formatDuration(3661000).includes("h"));
 
+  // Timeline shaped like:
+  // 10:00 login with IP1
+  // 10:49 logout
+  // 10:49 rest time
+  // 10:59 login with IP2
+  const timelineFile = path.join(tmpDir, "timeline-presence.json");
+  presence.startPeriod(
+    { startReason: "login", publicIp: "203.0.113.10", proxyDisplay: "direct (none)" },
+    timelineFile
+  );
+  // Force deterministic timestamps for assertion readability.
+  const store = presence.loadStore(timelineFile);
+  store.periods[0].startedAt = "2026-08-04T10:00:00.000Z";
+  store.periods[0].endedAt = "2026-08-04T10:49:00.000Z";
+  store.periods[0].endReason = "session_rest";
+  store.periods[0].publicIp = "203.0.113.10";
+  store.periods.push({
+    id: "period-b",
+    startedAt: "2026-08-04T10:59:00.000Z",
+    endedAt: "2026-08-04T11:48:00.000Z",
+    startReason: "session_wake",
+    endReason: "session_rest",
+    publicIp: "198.51.100.20",
+    proxyServer: "http://proxy.example:8080",
+    proxyDisplay: "#2/2 http://proxy.example:8080"
+  });
+  store.periods.push({
+    id: "period-c",
+    startedAt: "2026-08-04T11:58:00.000Z",
+    endedAt: null,
+    startReason: "session_wake",
+    endReason: null,
+    publicIp: "198.51.100.20",
+    proxyServer: "http://proxy.example:8080",
+    proxyDisplay: "#2/2 http://proxy.example:8080"
+  });
+  presence.saveStore(store, timelineFile);
+
+  const timelineReport = presence.buildReport({ limit: 20 }, timelineFile);
+  assert.ok(Array.isArray(timelineReport.timelineChronological));
+  assert.ok(Array.isArray(timelineReport.timelineLines));
+  const events = timelineReport.timelineChronological;
+  assert.deepStrictEqual(
+    events.map((e) => e.type),
+    ["login", "logout", "rest", "login", "logout", "rest", "login"]
+  );
+  assert.strictEqual(events[0].text, "login with 203.0.113.10");
+  assert.strictEqual(events[1].text, "logout");
+  assert.strictEqual(events[2].text, "rest time (10m)");
+  assert.strictEqual(events[3].text, "login with 198.51.100.20");
+  assert.strictEqual(events[4].text, "logout");
+  assert.strictEqual(events[5].text, "rest time (10m)");
+  assert.strictEqual(events[6].text, "login with 198.51.100.20");
+  assert.ok(timelineReport.timelineLines[0].includes("login with 203.0.113.10"));
+  assert.ok(timelineReport.timelineLines.some((line) => line.includes("rest time")));
+
   console.log("sessionPresence tests passed");
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });

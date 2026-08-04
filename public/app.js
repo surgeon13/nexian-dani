@@ -533,6 +533,14 @@ function formatPresenceTime(iso) {
   });
 }
 
+function formatPresenceClock(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function renderSessionPresence(report) {
   if (!els.presenceSummary || !els.presenceList) {
     return;
@@ -576,40 +584,48 @@ function renderSessionPresence(report) {
     )
     .join("");
 
-  const periods = Array.isArray(report.periods) ? report.periods : [];
-  if (!periods.length) {
+  const timeline = Array.isArray(report.timelineChronological)
+    ? report.timelineChronological
+    : Array.isArray(report.timeline)
+      ? report.timeline.slice().reverse()
+      : [];
+
+  if (!timeline.length) {
     els.presenceList.innerHTML = `<div class="presence-empty">No online periods recorded yet.</div>`;
     return;
   }
 
-  els.presenceList.innerHTML = periods
-    .map((period) => {
-      const endText = period.active
-        ? "still online"
-        : formatPresenceTime(period.endedAt);
-      const reasonBits = [period.startReason || "login"];
-      if (period.endReason) {
-        reasonBits.push(`→ ${period.endReason}`);
+  // Show newest first so the latest login/rest is at the top.
+  const newestFirst = timeline.slice().reverse();
+  els.presenceList.innerHTML = newestFirst
+    .map((event) => {
+      const type = String(event.type || "event");
+      const clock = event.clock || formatPresenceClock(event.at);
+      const text = event.text || type;
+      const detailParts = [];
+      if (type === "login" && event.proxyDisplay) {
+        detailParts.push(event.proxyDisplay);
       }
+      if (type === "login" && event.at) {
+        detailParts.push(formatPresenceTime(event.at));
+      }
+      if (type === "logout" && event.reason && event.reason !== "logout") {
+        detailParts.push(event.reason.replace(/_/g, " "));
+      }
+      if (type === "rest" && event.endedAt) {
+        detailParts.push(`until ${formatPresenceClock(event.endedAt)}`);
+      }
+      const detail = detailParts.length
+        ? `<div class="presence-event-detail">${escapeHtml(detailParts.join(" · "))}</div>`
+        : "";
       return `
-      <div class="presence-row${period.active ? " active" : ""}">
-        <div>
-          <div class="presence-row-label">Online window</div>
-          <div class="presence-row-value">${escapeHtml(formatPresenceTime(period.startedAt))} → ${escapeHtml(endText)}</div>
-          <div class="presence-row-label" style="margin-top:0.35rem">Duration · reason</div>
-          <div class="presence-row-value">${escapeHtml(period.durationLabel || "—")} · ${escapeHtml(reasonBits.join(" "))}</div>
+      <div class="presence-event presence-event-${escapeHtml(type)}${event.active ? " active" : ""}">
+        <div class="presence-event-clock">${escapeHtml(clock)}</div>
+        <div class="presence-event-body">
+          <div class="presence-event-text">${escapeHtml(text)}</div>
+          ${detail}
         </div>
-        <div>
-          <div class="presence-row-label">Egress IP</div>
-          <div class="presence-row-value mono">${escapeHtml(period.publicIp || "—")}</div>
-        </div>
-        <div>
-          <div class="presence-row-label">Proxy</div>
-          <div class="presence-row-value">${escapeHtml(period.proxyDisplay || "direct (none)")}</div>
-        </div>
-        <div>
-          <span class="presence-badge${period.active ? " on" : ""}">${period.active ? "ON" : "OFF"}</span>
-        </div>
+        <div class="presence-event-tag">${escapeHtml(type)}</div>
       </div>`;
     })
     .join("");

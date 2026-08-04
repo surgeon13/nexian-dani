@@ -106,13 +106,13 @@ function formatDuration(ms) {
   const minutes = Math.floor((seconds % 3600) / 60);
   const secs = seconds % 60;
   if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m`;
+    return hours > 0 ? `${days}d ${hours}h ${minutes}m` : `${days}d ${minutes}m`;
   }
   if (hours > 0) {
-    return `${hours}h ${minutes}m`;
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
   }
   if (minutes > 0) {
-    return `${minutes}m ${secs}s`;
+    return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
   }
   return `${secs}s`;
 }
@@ -229,15 +229,130 @@ function listPeriods(options = {}, logFilePath) {
   return newestFirst.slice(0, limit);
 }
 
+function isRestTransition(endReason, nextStartReason) {
+  const end = String(endReason || "").toLowerCase();
+  const next = String(nextStartReason || "").toLowerCase();
+  if (end === "session_rest") {
+    return true;
+  }
+  if (next === "session_wake") {
+    return true;
+  }
+  return false;
+}
+
+function formatClock(iso) {
+  if (!iso) {
+    return "—";
+  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return String(iso);
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Expand online periods into a readable timeline:
+ *   10:00 login with IP1
+ *   10:49 logout
+ *   10:49 rest time
+ *   10:59 login with IP2
+ *
+ * `periodsNewestFirst` matches listPeriods(); internally walks oldest→newest.
+ */
+function buildTimeline(periodsNewestFirst = [], nowMs = Date.now()) {
+  const periods = (Array.isArray(periodsNewestFirst) ? periodsNewestFirst : [])
+    .slice()
+    .reverse();
+  const events = [];
+
+  for (let i = 0; i < periods.length; i += 1) {
+    const period = periods[i];
+    if (!period || !period.startedAt) {
+      continue;
+    }
+
+    const ipLabel = period.publicIp || "unknown IP";
+    const loginText = `login with ${ipLabel}`;
+    events.push({
+      at: period.startedAt,
+      clock: formatClock(period.startedAt),
+      type: "login",
+      text: loginText,
+      publicIp: period.publicIp || null,
+      proxyDisplay: period.proxyDisplay || null,
+      proxyServer: period.proxyServer || null,
+      periodId: period.id || null,
+      reason: period.startReason || "login"
+    });
+
+    if (!period.endedAt) {
+      continue;
+    }
+
+    events.push({
+      at: period.endedAt,
+      clock: formatClock(period.endedAt),
+      type: "logout",
+      text: "logout",
+      publicIp: period.publicIp || null,
+      proxyDisplay: period.proxyDisplay || null,
+      periodId: period.id || null,
+      reason: period.endReason || "logout"
+    });
+
+    const next = periods[i + 1] || null;
+    if (!isRestTransition(period.endReason, next && next.startReason)) {
+      continue;
+    }
+
+    const restEndedAt = next && next.startedAt ? next.startedAt : null;
+    const restMs = durationMs(
+      { startedAt: period.endedAt, endedAt: restEndedAt },
+      nowMs
+    );
+    const restActive = !restEndedAt;
+    const restText = restActive
+      ? `rest time (ongoing${restMs != null ? `, ${formatDuration(restMs)}` : ""})`
+      : `rest time${restMs != null ? ` (${formatDuration(restMs)})` : ""}`;
+
+    events.push({
+      at: period.endedAt,
+      endedAt: restEndedAt,
+      clock: formatClock(period.endedAt),
+      type: "rest",
+      text: restText,
+      active: restActive,
+      durationMs: restMs,
+      durationLabel: restMs == null ? null : formatDuration(restMs),
+      periodId: period.id || null,
+      reason: period.endReason || "session_rest"
+    });
+  }
+
+  const lines = events.map((event) => `${event.clock} ${event.text}`);
+  return {
+    events,
+    lines,
+    /** Newest event first — useful for dashboard “latest activity”. */
+    eventsNewestFirst: events.slice().reverse(),
+    linesNewestFirst: lines.slice().reverse()
+  };
+}
+
 function buildReport(options = {}, logFilePath) {
   const filePath = logFilePath || resolveLogFilePath(options.settings || null);
   const periods = listPeriods(options, filePath);
+  const nowMs = Date.now();
   const active = periods.find((p) => p.active) || null;
   const completed = periods.filter((p) => !p.active);
   const totalOnlineMs = periods.reduce((sum, p) => sum + (Number(p.durationMs) || 0), 0);
   const uniqueIps = [
     ...new Set(periods.map((p) => p.publicIp).filter(Boolean))
   ];
+  const timeline = buildTimeline(periods, nowMs);
 
   return {
     ok: true,
@@ -249,7 +364,11 @@ function buildReport(options = {}, logFilePath) {
     uniqueIps,
     totalOnlineMs,
     totalOnlineLabel: formatDuration(totalOnlineMs),
-    periods
+    periods,
+    timeline: timeline.eventsNewestFirst,
+    timelineChronological: timeline.events,
+    timelineLines: timeline.lines,
+    timelineLinesNewestFirst: timeline.linesNewestFirst
   };
 }
 
@@ -319,10 +438,13 @@ module.exports = {
   updateActivePeriod,
   getActivePeriod,
   listPeriods,
+  buildTimeline,
   buildReport,
   enrichPeriod,
   formatDuration,
+  formatClock,
   durationMs,
+  isRestTransition,
   fetchEgressIpDirect,
   fetchEgressIpViaContext,
   resolvePublicIp,
