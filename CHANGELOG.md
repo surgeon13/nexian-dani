@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.11] — 2026-08-04
+
+### Added
+
+- **Your pace for all Top 10 categories** — attack points, defense points, climbers, alliance points, population, villages (plus raid income):
+  - `selfPace[]` on `/api/top10` with active /h, wall /h, Δ, totals
+  - Dashboard cards under the raid-income hero
+  - Same stall-excluding active-gap logic as Robbers
+
 ## [1.8.10] — 2026-08-04
 
 ### Added

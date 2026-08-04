@@ -2523,6 +2523,73 @@ body.compact-view .tab-view.active {
   letter-spacing: 0.04em;
 }
 
+.top10-pace-grid-head {
+  margin: 0.9rem 0 0.45rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 650;
+}
+
+.top10-pace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.55rem;
+}
+
+.top10-pace-card {
+  text-align: left;
+  padding: 0.65rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  cursor: pointer;
+}
+
+.top10-pace-card:hover {
+  border-color: rgba(61, 214, 245, 0.35);
+}
+
+.top10-pace-card-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 650;
+}
+
+.top10-pace-card-rate {
+  margin-top: 0.2rem;
+  font-size: 1.15rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.top10-pace-card-rate .top10-delta {
+  font-size: inherit;
+}
+
+.top10-pace-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.top10-pace-card-total {
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.top10-pace-card-total span {
+  color: var(--muted);
+}
+
 @media (max-width: 720px) {
   .top10-raid-hero,
   .top10-raid-settings {

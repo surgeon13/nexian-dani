@@ -400,13 +400,52 @@ function enrichTop10WithRates(latestRows, previousRows, hours) {
   });
 }
 
-function buildRaidIncomeSummary(robbersCategory, options = {}) {
-  const self = robbersCategory && robbersCategory.self ? robbersCategory.self : null;
-  const deltas = (robbersCategory && robbersCategory.deltas) || {};
-  const window = deltas.window && deltas.window.value ? deltas.window.value : null;
-  const lastPoll = deltas.lastPoll && deltas.lastPoll.value ? deltas.lastPoll.value : null;
-  const pollSeries = (deltas.polls && deltas.polls.value) || [];
+const SELF_PACE_META = {
+  attackers: {
+    shortLabel: "Attack points",
+    heroLabel: "Your attack points",
+    unit: "points",
+    primary: "value"
+  },
+  defenders: {
+    shortLabel: "Defense points",
+    heroLabel: "Your defense points",
+    unit: "points",
+    primary: "value"
+  },
+  climbers: {
+    shortLabel: "Climbers",
+    heroLabel: "Your climber score",
+    unit: "ranks",
+    primary: "value"
+  },
+  robbers: {
+    shortLabel: "Raid income",
+    heroLabel: "Your raid income",
+    unit: "resources",
+    primary: "value"
+  },
+  population: {
+    shortLabel: "Population",
+    heroLabel: "Your population",
+    unit: "pop",
+    primary: "value"
+  },
+  alliances: {
+    shortLabel: "Alliance points",
+    heroLabel: "Your alliance points",
+    unit: "points",
+    primary: "value"
+  },
+  villages: {
+    shortLabel: "Village pop",
+    heroLabel: "Your village population",
+    unit: "pop",
+    primary: "value"
+  }
+};
 
+function resolveMaxActiveGapHours(options = {}) {
   const pollMin = Number(options.pollMinMinutes);
   const pollMax = Number(options.pollMaxMinutes);
   const configuredPollMinutes =
@@ -415,84 +454,168 @@ function buildRaidIncomeSummary(robbersCategory, options = {}) {
       : Number.isFinite(pollMin) && pollMin > 0
         ? pollMin
         : 10;
-  // Gaps longer than this are treated as downtime (stall/rest), not active raiding.
-  const maxActiveGapHours = Math.max(1.5, (configuredPollMinutes * 3) / 60);
+  return Math.max(1.5, (configuredPollMinutes * 3) / 60);
+}
 
+function splitActivePollSeries(pollSeries, maxActiveGapHours) {
   const activeIntervals = [];
   const downtimeIntervals = [];
-  for (const interval of pollSeries) {
+  for (const interval of pollSeries || []) {
     if (interval && Number(interval.hours) > 0 && Number(interval.hours) <= maxActiveGapHours) {
       activeIntervals.push(interval);
     } else if (interval) {
       downtimeIntervals.push(interval);
     }
   }
-
   const activeDelta = activeIntervals.reduce((sum, item) => sum + Number(item.delta || 0), 0);
   const activeHoursRaw = activeIntervals.reduce((sum, item) => sum + Number(item.hours || 0), 0);
   const downtimeHoursRaw = downtimeIntervals.reduce(
     (sum, item) => sum + Number(item.hours || 0),
     0
   );
-  const activeHours = activeHoursRaw > 0 ? Math.round(activeHoursRaw * 1000) / 1000 : null;
-  const downtimeHours =
-    downtimeHoursRaw > 0 ? Math.round(downtimeHoursRaw * 1000) / 1000 : null;
-  const activePerHour =
-    activeHoursRaw > 0 ? roundRate(activeDelta / activeHoursRaw) : null;
+  return {
+    activeIntervals,
+    downtimeIntervals,
+    activeDelta,
+    activeHours: activeHoursRaw > 0 ? Math.round(activeHoursRaw * 1000) / 1000 : null,
+    downtimeHours: downtimeHoursRaw > 0 ? Math.round(downtimeHoursRaw * 1000) / 1000 : null,
+    activePerHour: activeHoursRaw > 0 ? roundRate(activeDelta / activeHoursRaw) : null
+  };
+}
 
-  const farmlist = options.farmlist || {};
+function buildSelfPaceSummary(category, options = {}) {
+  if (!category || !category.self) {
+    return null;
+  }
+  const paceMeta = SELF_PACE_META[category.id] || {
+    shortLabel: category.label || category.id,
+    heroLabel: category.label || category.id,
+    unit: (category.metric || "value").toLowerCase(),
+    primary: "value"
+  };
+  const deltas = category.deltas || {};
+  const valueWindow = deltas.window && deltas.window.value ? deltas.window.value : null;
+  const rankWindow = deltas.window && deltas.window.rank ? deltas.window.rank : null;
+  const valueLast = deltas.lastPoll && deltas.lastPoll.value ? deltas.lastPoll.value : null;
+  const rankLast = deltas.lastPoll && deltas.lastPoll.rank ? deltas.lastPoll.rank : null;
+  const valueSeries = (deltas.polls && deltas.polls.value) || [];
+  const rankSeries = (deltas.polls && deltas.polls.rank) || [];
+  const maxActiveGapHours = resolveMaxActiveGapHours(options);
+  const valueActive = splitActivePollSeries(valueSeries, maxActiveGapHours);
+  const rankActive = splitActivePollSeries(rankSeries, maxActiveGapHours);
+  const hasValue = category.self.value != null;
+  const hasRank = category.self.rank != null;
 
   return {
-    category: "robbers",
-    label: "Raid income",
-    metric: "Resources",
-    playerName: self && self.name ? self.name : options.playerName || null,
-    totalResources: self && self.value != null ? Number(self.value) : null,
-    totalResourcesText: self ? self.valueText : null,
-    gained: window ? window.delta : null,
-    gainedText: window && window.delta != null ? formatCompactNumber(window.delta) : null,
-    wallHours: window ? window.hours : null,
-    wallPerHour: window ? window.perHour : null,
+    category: category.id,
+    label: paceMeta.shortLabel,
+    heroLabel: paceMeta.heroLabel,
+    metric: category.metric,
+    unit: paceMeta.unit,
+    accent: category.accent,
+    playerName: category.self.name || options.playerName || null,
+    total: hasValue ? Number(category.self.value) : null,
+    totalText: hasValue ? category.self.valueText : null,
+    rank: hasRank ? Number(category.self.rank) : null,
+    rankText: category.self.rankText || null,
+    gained: valueWindow ? valueWindow.delta : null,
+    gainedText:
+      valueWindow && valueWindow.delta != null ? formatCompactNumber(valueWindow.delta) : null,
+    wallHours: valueWindow
+      ? valueWindow.hours
+      : rankWindow
+        ? rankWindow.hours
+        : null,
+    wallPerHour: valueWindow ? valueWindow.perHour : null,
     wallPerHourText:
-      window && window.perHour != null ? formatCompactNumber(window.perHour) : null,
-    activeHours,
-    activeGained: activeIntervals.length ? activeDelta : null,
-    activePerHour,
-    activePerHourText: activePerHour == null ? null : formatCompactNumber(activePerHour),
-    downtimeHours,
-    downtimeIntervals: downtimeIntervals.length,
-    activeIntervals: activeIntervals.length,
-    lastInterval: lastPoll
+      valueWindow && valueWindow.perHour != null
+        ? formatCompactNumber(valueWindow.perHour)
+        : null,
+    activeHours: valueActive.activeHours,
+    activeGained: valueActive.activeIntervals.length ? valueActive.activeDelta : null,
+    activePerHour: valueActive.activePerHour,
+    activePerHourText:
+      valueActive.activePerHour == null ? null : formatCompactNumber(valueActive.activePerHour),
+    downtimeHours: valueActive.downtimeHours,
+    downtimeIntervals: valueActive.downtimeIntervals.length,
+    activeIntervals: valueActive.activeIntervals.length,
+    rankGained: rankWindow ? rankWindow.delta : null,
+    rankWallPerHour: rankWindow ? rankWindow.perHour : null,
+    rankActivePerHour: rankActive.activePerHour,
+    // For ranks, lower is better.
+    rankImproved:
+      rankWindow && rankWindow.delta != null ? rankWindow.delta < 0 : null,
+    lastInterval: valueLast
       ? {
-          delta: lastPoll.delta,
-          hours: lastPoll.hours,
-          perHour: lastPoll.perHour,
-          fromTs: lastPoll.fromTs,
-          toTs: lastPoll.toTs
+          delta: valueLast.delta,
+          hours: valueLast.hours,
+          perHour: valueLast.perHour,
+          fromTs: valueLast.fromTs,
+          toTs: valueLast.toTs
         }
-      : null,
-    pollCount: robbersCategory ? robbersCategory.pollCount : 0,
+      : rankLast
+        ? {
+            delta: rankLast.delta,
+            hours: rankLast.hours,
+            perHour: rankLast.perHour,
+            fromTs: rankLast.fromTs,
+            toTs: rankLast.toTs,
+            kind: "rank"
+          }
+        : null,
+    pollCount: category.pollCount || 0,
     maxActiveGapHours: Math.round(maxActiveGapHours * 1000) / 1000,
-    settings: {
-      top10Enabled: Boolean(options.top10Enabled),
-      top10IntervalMinutes:
-        Number.isFinite(pollMin) || Number.isFinite(pollMax)
-          ? {
-              min: Number.isFinite(pollMin) ? pollMin : null,
-              max: Number.isFinite(pollMax) ? pollMax : null
-            }
-          : null,
-      farmlistEnabled: Boolean(farmlist.enabled),
-      farmlistIntervalMinutes:
-        farmlist.minMinutes != null || farmlist.maxMinutes != null
-          ? {
-              min: farmlist.minMinutes ?? null,
-              max: farmlist.maxMinutes ?? null
-            }
-          : null
-    },
-    sparkline: (robbersCategory && robbersCategory.sparkline) || [],
-    pollSeries
+    sparkline: category.sparkline || [],
+    rankSparkline: category.rankSparkline || [],
+    pollSeries: valueSeries.length ? valueSeries : rankSeries,
+    available: hasValue || hasRank
+  };
+}
+
+function buildRaidIncomeSummary(robbersCategory, options = {}) {
+  const pace = buildSelfPaceSummary(robbersCategory, options);
+  if (!pace) {
+    return {
+      category: "robbers",
+      label: "Raid income",
+      metric: "Resources",
+      playerName: options.playerName || null,
+      totalResources: null,
+      settings: buildSelfPaceSettings(options)
+    };
+  }
+  const farmlist = options.farmlist || {};
+  return {
+    ...pace,
+    label: "Raid income",
+    // Back-compat aliases used by the existing dashboard hero.
+    totalResources: pace.total,
+    totalResourcesText: pace.totalText,
+    settings: buildSelfPaceSettings(options)
+  };
+}
+
+function buildSelfPaceSettings(options = {}) {
+  const pollMin = Number(options.pollMinMinutes);
+  const pollMax = Number(options.pollMaxMinutes);
+  const farmlist = options.farmlist || {};
+  return {
+    top10Enabled: Boolean(options.top10Enabled),
+    top10IntervalMinutes:
+      Number.isFinite(pollMin) || Number.isFinite(pollMax)
+        ? {
+            min: Number.isFinite(pollMin) ? pollMin : null,
+            max: Number.isFinite(pollMax) ? pollMax : null
+          }
+        : null,
+    farmlistEnabled: Boolean(farmlist.enabled),
+    farmlistIntervalMinutes:
+      farmlist.minMinutes != null || farmlist.maxMinutes != null
+        ? {
+            min: farmlist.minMinutes ?? null,
+            max: farmlist.maxMinutes ?? null
+          }
+        : null
   };
 }
 
@@ -652,8 +775,7 @@ function buildTop10DashboardPayload(bridge, options = {}) {
   const tracking = (snap && snap.top10Tracking) || {};
   const loop = (snap && snap.loops && snap.loops.top10) || {};
   const farmlistLoop = (snap && snap.loops && snap.loops.farmlist) || {};
-  const robbersCategory = categories.find((cat) => cat.id === "robbers") || null;
-  const raidIncome = buildRaidIncomeSummary(robbersCategory, {
+  const paceOptions = {
     playerName: tracking.playerName || null,
     top10Enabled: Boolean(tracking.enabled ?? loop.enabled),
     pollMinMinutes: tracking.minMinutes ?? loop.minMinutes ?? null,
@@ -663,7 +785,13 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       minMinutes: farmlistLoop.minMinutes,
       maxMinutes: farmlistLoop.maxMinutes
     }
-  });
+  };
+  const robbersCategory = categories.find((cat) => cat.id === "robbers") || null;
+  const raidIncome = buildRaidIncomeSummary(robbersCategory, paceOptions);
+  const selfPace = CATEGORY_ORDER.map((id) => {
+    const cat = categories.find((item) => item.id === id);
+    return buildSelfPaceSummary(cat, paceOptions);
+  }).filter(Boolean);
 
   return {
     ok: true,
@@ -682,6 +810,7 @@ function buildTop10DashboardPayload(bridge, options = {}) {
       lastActionAt: tracking.lastAction && tracking.lastAction.at ? tracking.lastAction.at : latestTs
     },
     raidIncome,
+    selfPace,
     standings,
     categories,
     categoryOrder: CATEGORY_ORDER
@@ -691,9 +820,11 @@ function buildTop10DashboardPayload(bridge, options = {}) {
 module.exports = {
   CATEGORY_ORDER,
   CATEGORY_META,
+  SELF_PACE_META,
   resolveTop10LogPath,
   buildTop10DashboardPayload,
   buildRaidIncomeSummary,
+  buildSelfPaceSummary,
   formatCompactNumber,
   hoursBetween,
   computeTimedRate,
