@@ -26,7 +26,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
 - **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
-- **24/7 keep-alive** — `scripts/keep-alive.sh` polls every minute and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
+- **24/7 keep-alive** — `scripts/keep-alive.sh` polls every **15s** and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
 
 ### What's new in 1.8.x (summary)
 
@@ -208,7 +208,7 @@ This starts three tmux sessions by default:
 | `nexian-keep` | `scripts/keep-alive.sh` watchdog |
 | `net-usage` | Optional network sampler |
 
-**Keep-alive checks every 60s** (`CHECK_SECONDS`):
+**Keep-alive checks every 15s** (`CHECK_SECONDS`):
 
 1. Is `login.js` running? → else restart  
 2. Does `http://127.0.0.1:3847/api/status` answer? → else restart  
@@ -238,7 +238,7 @@ On a VPS / Pi / always-on PC (outside Cursor), use `npm run start:24-7` under sy
 |-------|----------------|
 | `curl -sS http://127.0.0.1:3847/api/status` | HTTP 200; fresh `status.updatedAt` |
 | `pgrep -af 'login.js\|keep-alive'` | Both bot and keep-alive processes |
-| `tail -20 keep-alive.log` | `heartbeat bot=up dash=up` about every minute |
+| `tail -20 keep-alive.log` | `heartbeat bot=up dash=up` about every 15s |
 | `bash ./scripts/cursor-cloud-ensure.sh` | Prints `ok — keep-alive + dashboard healthy` |
 | `log.jsonl` / `top10.log` mtime | Updating within your loop intervals |
 | `status.top10Tracking.lastAction.at` | Within ~`TOP10_TRACKING_*` minutes when enabled |

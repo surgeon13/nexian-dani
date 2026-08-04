@@ -18,7 +18,7 @@ NET_SESSION="${NET_SESSION:-net-usage}"
 KEEP_SESSION="${KEEP_SESSION:-nexian-keep}"
 DASH_URL="${DASH_URL:-http://127.0.0.1:3847/api/status}"
 STALE_MINUTES="${STALE_MINUTES:-20}"
-CHECK_SECONDS="${CHECK_SECONDS:-60}"
+CHECK_SECONDS="${CHECK_SECONDS:-15}"
 # After a restart, wait this long before treating a still-old log.jsonl as stalled.
 # Prevents restart loops while the bot is logging in / waiting for the first loop tick.
 STALE_GRACE_MINUTES="${STALE_GRACE_MINUTES:-5}"
