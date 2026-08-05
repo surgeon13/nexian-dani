@@ -57,13 +57,18 @@ Never commit `.env`, `storageState.json`, proxy lists, or troop plans.
 
 ### Continuity limit (honest)
 
-Cursor Cloud VMs are **per agent run**. When the run is archived/killed, the VM dies and the bot stops. Inside Cursor, continuity means:
+Cursor Cloud VMs are **per agent run**. When the run is archived/killed, the VM dies and the bot stops.
 
-1. Environment auto-starts the bot on each new agent boot (this repo’s `.cursor/environment.json`).
-2. Keep at least one Cloud Agent / Automation run **open** while you want the bot online.
-3. Add a scheduled Automation (e.g. hourly) whose prompt is: ensure `cursor-cloud-ensure.sh` is healthy and **stay alive monitoring** — so a fresh VM picks up if the previous run died.
+**Preferred for 24/7:** run on an always-on **PC** (or VPS):
 
-Dashboard: https://cursor.com/automations · Environments: https://cursor.com/dashboard/cloud-agents#environments
+```bash
+npm run setup:pc
+npm run start:24-7:pc
+# Windows: setup-pc.cmd then start-24-7.cmd
+# Optional Windows logon task: .\scripts\register-pc-task.ps1
+```
+
+Inside Cursor, continuity means Environment auto-start + a kept-open / scheduled Automation — use that only as a backup; the PC process is the source of truth.
 
 ### Do not
 

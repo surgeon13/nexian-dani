@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.16] — 2026-08-05
+
+### Added
+
+- **PC 24/7 host (no tmux)** — run consistently on an always-on Windows/macOS/Linux PC:
+  - `scripts/keep-alive.js` / `scripts/start-24-7.js` — cross-platform Node watchdog + starter
+  - `start-24-7.cmd`, `setup-pc.cmd` — Windows double-click setup/start
+  - `scripts/register-pc-task.ps1` — optional Windows Task Scheduler at logon
+  - `npm run start:24-7:pc`, `keep-alive:pc`, `setup:pc`
+  - README: **Run 24/7 on your PC** (recommended over Cursor Cloud for uptime)
+
 ## [1.8.15] — 2026-08-04
 
 ### Changed

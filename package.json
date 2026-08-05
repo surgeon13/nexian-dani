@@ -1,6 +1,6 @@
 {
   "name": "nexian",
-  "version": "1.8.15",
+  "version": "1.8.16",
   "description": "Menu-driven Playwright automation helper for Nexian",
   "main": "login.js",
   "scripts": {
@@ -18,10 +18,13 @@
     "dashboard:dev:nexian": "node --max-old-space-size=768 login.js --dashboard --headed --keep-open --env-file=.env.nexian",
     "dashboard:dev:nexian:headless": "node --max-old-space-size=768 login.js --dashboard --keep-open --env-file=.env.nexian",
     "start:24-7": "bash ./scripts/start-24-7.sh",
+    "start:24-7:pc": "node ./scripts/start-24-7.js",
     "keep-alive": "bash ./scripts/keep-alive.sh",
+    "keep-alive:pc": "node ./scripts/keep-alive.js",
     "cursor:install": "bash ./scripts/cursor-cloud-install.sh",
     "cursor:start": "bash ./scripts/cursor-cloud-start.sh",
     "cursor:ensure": "bash ./scripts/cursor-cloud-ensure.sh",
+    "setup:pc": "npm install --no-audit --no-fund && npx playwright install chromium",
     "export": "node export.js",
     "playwright:install": "npx playwright install chromium",
     "clean:runtime": "node -e \"const fs=require('fs');['storageState.json','log.jsonl','top10.log','session-presence.json','templates/progress.json'].forEach(f=>{if(fs.existsSync(f))fs.rmSync(f,{force:true});});console.log('Removed runtime files: storageState.json, log.jsonl, top10.log, session-presence.json, templates/progress.json');\"",
