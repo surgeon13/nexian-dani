@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.18] — 2026-08-05
+
+### Fixed
+
+- **Keep-alive respects session rest** — stale `log.jsonl` during play/rest cycles no longer kills a healthy rest/relogin. Treats `paused` plus reasons `resting` / `relogin` / `reconnecting` / `logging_in` as intentional off. Default stale threshold raised to **25m** (above max rest 20m). Arms restart-grace when keep-alive starts while the bot is already up.
+
 ## [1.8.17] — 2026-08-05
 
 ### Fixed
@@ -39,7 +45,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- **Keep-alive polls every 15s** (was 60s) — faster heartbeats and quicker restart when the bot/dashboard dies. Override with `CHECK_SECONDS`.
+- **Keep-alive polls every 15s** (default) — faster heartbeats and quicker restart when the bot/dashboard dies. Override with `CHECK_SECONDS`. Stale-log threshold defaults to **25m** so session-rest (≤20m) is not mistaken for a hang; keep-alive skips restarts while automation is resting/relogging.
 
 ## [1.8.13] — 2026-08-04
 
