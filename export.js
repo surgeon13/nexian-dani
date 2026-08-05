@@ -24,6 +24,7 @@ const exclude = new Set([
   "log.jsonl",
   "top10.log",
   "session-presence.json",
+  "keep-alive.log",
   "log-archive",
   ".DS_Store",
   "Thumbs.db"
