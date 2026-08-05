@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.15** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.16** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -16,7 +16,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat. |
-| **24/7 keep-alive** | Watchdog (`npm run start:24-7`) + Cursor Cloud Environment auto-start; heartbeats in `keep-alive.log`. |
+| **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
 ### Automation modules
@@ -62,11 +62,14 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `top10Dashboard.js` | Builds `/api/top10` payload: standings, history, Δ, and `/h` rates from the poll log. |
 | `dashboardServer.js` / `dashboardBridge.js` | Local web dashboard (SSE, REST API). |
 | `public/` | Dashboard HTML, CSS, and client JS (includes Top 10 tab). |
-| `scripts/keep-alive.sh` | 24/7 watchdog: restart dead/stale bot (with post-restart grace); heartbeats → `keep-alive.log`. |
-| `scripts/start-24-7.sh` | Starts bot + network sampler + keep-alive in tmux sessions. |
+| `scripts/keep-alive.sh` | 24/7 watchdog (bash/tmux): restart dead/stale bot; heartbeats → `keep-alive.log`. |
+| `scripts/keep-alive.js` | Cross-platform Node keep-alive for PCs (no tmux). |
+| `scripts/start-24-7.sh` | tmux: bot + network sampler + keep-alive. |
+| `scripts/start-24-7.js` / `start-24-7.cmd` | PC starter (Node / Windows). |
+| `setup-pc.cmd` | Windows: npm install + Playwright Chromium. |
 | `.cursor/environment.json` | Cursor Cloud: install deps + auto-start 24/7 stack on agent boot. |
 | `scripts/cursor-cloud-*.sh` | Cloud install / start / ensure helpers (`npm run cursor:*`). |
-| `AGENTS.md` | Cloud Agent keep-alive + Automation instructions. |
+| `AGENTS.md` | Cloud Agent keep-alive + PC host + Automation instructions. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers); Palace on realm host. |
 | `templates/` | Build templates; `templates/index.json` lists available plans. |
@@ -124,8 +127,11 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run dashboard:nexian:headless` | Same with `.env.nexian` (Playwright headless + web UI) |
 | `npm run dashboard:nexian:headed` | Visible browser + dashboard |
 | `npm run dashboard:headed` | Dashboard with headed browser (default `.env`) |
-| `npm run start:24-7` | Start bot dashboard + network sampler + keep-alive watchdog (tmux) |
+| `npm run start:24-7` | Linux/macOS/Cursor: start bot + keep-alive in tmux |
+| `npm run start:24-7:pc` | **PC (Windows/macOS/Linux):** Node keep-alive, no tmux — preferred for always-on hosts |
 | `npm run keep-alive` | Run the keep-alive watchdog only (expects bot already running) |
+| `npm run keep-alive:pc` | Node keep-alive only (cross-platform) |
+| `npm run setup:pc` / `setup-pc.cmd` | Install deps + Playwright Chromium on a PC |
 | `npm run cursor:ensure` | Cursor Cloud health check / restart (`cursor-cloud-ensure.sh`) |
 | `npm run cursor:start` | Materialize secrets + start 24/7 stack |
 | `npm run playwright:install` | Install Playwright Chromium only |
@@ -225,13 +231,56 @@ With `PROXY_ROTATE_ON_SESSION_REST=true` (default when a pool exists), the sessi
 
 ---
 
+## Run 24/7 on your PC (recommended)
+
+Cursor Cloud agents are **ephemeral** — when the agent run ends, the VM dies and the bot stops. For consistent uptime, run the stack on your **always-on PC** (or a VPS / Pi).
+
+### Windows (quick start)
+
+1. Install [Node.js LTS](https://nodejs.org/).
+2. Clone or unzip this repo, then either:
+   - Double-click **`setup-pc.cmd`**, or run `npm run setup:pc`
+3. Copy `.env.example` → `.env` (if setup did not) and set `NEXIAN_USERNAME`, `NEXIAN_PASSWORD`, `GAME_HOST`, loops, etc.  
+   Or copy your working `.env` / `templates/proxy_list.json` / `templates/troop_plans.json` from the cloud VM.
+4. Start:
+   - Double-click **`start-24-7.cmd`**, or `npm run start:24-7:pc`
+5. Open **http://127.0.0.1:3847**
+
+Leave that window open. Optional — start at Windows logon:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+.\scripts\register-pc-task.ps1
+```
+
+### macOS / Linux PC
+
+```bash
+git pull
+npm run setup:pc
+# edit .env
+npm run start:24-7:pc
+```
+
+`start:24-7:pc` uses a **Node keep-alive** (`scripts/keep-alive.js`) — no tmux required. It starts `login.js --dashboard --keep-open` and restarts it if the process dies, the dashboard is down, or `log.jsonl` is stale (≥20m) while loops are enabled.
+
+Linux servers that already have tmux can keep using `npm run start:24-7` (bash + tmux).
+
+### After the PC is the host
+
+Use Cursor agents for code/docs and one-off API actions when you want; the PC process is the source of truth for farmlist/builder/proxy.
+
+---
+
 ## 24/7 keep-alive (crash recovery)
 
 ```bash
-npm run start:24-7
+npm run start:24-7:pc   # PC / Windows / no-tmux (recommended)
+# or
+npm run start:24-7      # Linux/macOS/Cursor with tmux
 ```
 
-This starts three tmux sessions by default:
+**PC path** runs `scripts/keep-alive.js` (Node). **tmux path** (`scripts/start-24-7.sh`) starts three sessions by default:
 
 | Session | Role |
 |---------|------|
@@ -261,7 +310,7 @@ npm run cursor:ensure   # health check / restart
 npm run cursor:start    # materialize secrets + start:24-7
 ```
 
-On a VPS / Pi / always-on PC (outside Cursor), use `npm run start:24-7` under systemd/cron the same way.
+On a VPS / Pi / always-on PC, prefer **`npm run start:24-7:pc`** (or `start-24-7.cmd` on Windows). Pair with Task Scheduler / systemd / launchd so it survives reboot.
 
 ### Is the bot down?
 
