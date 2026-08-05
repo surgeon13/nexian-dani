@@ -227,7 +227,16 @@ print("IP:", (s.get("account") or {}).get("publicAddress"))
 
 `GET /api/status` → `proxy.activeDisplay` / `proxy.active.server` and `account.publicAddress`. Session presence records the change as `relogin_proxy_next` (or apply/disable) with the new IP.
 
-With `PROXY_ROTATE_ON_SESSION_REST=true` (default when a pool exists), the session loop also advances to the next proxy on each rest→wake cycle.
+With `PROXY_ROTATE_ON_SESSION_REST=true` (default when a pool exists), the session loop advances to the **next** proxy on each rest→wake cycle (once per rest — wake retries keep the same entry so the full pool is visited in order). With `N` proxies, one full cycle ≈ `N × (avg play + avg rest)`.
+
+```bash
+# Live session loop + rotate-on-rest (no restart)
+curl -sS -X POST http://127.0.0.1:3847/api/session-loop \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"playMinMinutes":40,"playMaxMinutes":55,"restMinMinutes":10,"restMaxMinutes":20,"proxyRotateOnSessionRest":true}'
+
+curl -sS http://127.0.0.1:3847/api/session-loop
+```
 
 ---
 

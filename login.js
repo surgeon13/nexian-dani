@@ -1089,7 +1089,7 @@ async function run() {
           return;
         }
 
-        prepareProxyForSessionRestRelogin();
+        prepareProxyForSessionRestRelogin({ rotate: true });
 
         const loginWithTimeout = async (label) => {
           const timeoutMs = 180000;
@@ -1124,7 +1124,8 @@ async function run() {
               `[Session Loop] Wake login attempt ${attempt}/3 failed: ${error.message || error}`
             );
             if (attempt < 3) {
-              prepareProxyForSessionRestRelogin();
+              // Same proxy — do not rotate again or we skip pool addresses.
+              prepareProxyForSessionRestRelogin({ rotate: false });
               await waitMs(5000);
             }
           }
@@ -1152,11 +1153,18 @@ async function run() {
   };
 
   const updateSessionLoopConfig = async (nextConfig) => {
-    settings.sessionLoopEnabled = Boolean(nextConfig.enabled);
+    if (nextConfig.enabled !== undefined) {
+      settings.sessionLoopEnabled =
+        nextConfig.enabled === true || String(nextConfig.enabled).toLowerCase() === "true";
+    }
 
     const play = normalizeRange(
-      Number(nextConfig.playMinMinutes),
-      Number(nextConfig.playMaxMinutes),
+      nextConfig.playMinMinutes !== undefined
+        ? Number(nextConfig.playMinMinutes)
+        : settings.playMinMinutes,
+      nextConfig.playMaxMinutes !== undefined
+        ? Number(nextConfig.playMaxMinutes)
+        : settings.playMaxMinutes,
       settings.playMinMinutes,
       settings.playMaxMinutes
     );
@@ -1164,32 +1172,46 @@ async function run() {
     settings.playMaxMinutes = play.max;
 
     const rest = normalizeRange(
-      Number(nextConfig.restMinMinutes),
-      Number(nextConfig.restMaxMinutes),
+      nextConfig.restMinMinutes !== undefined
+        ? Number(nextConfig.restMinMinutes)
+        : settings.restMinMinutes,
+      nextConfig.restMaxMinutes !== undefined
+        ? Number(nextConfig.restMaxMinutes)
+        : settings.restMaxMinutes,
       settings.restMinMinutes,
       settings.restMaxMinutes
     );
     settings.restMinMinutes = rest.min;
     settings.restMaxMinutes = rest.max;
 
+    if (
+      nextConfig.proxyRotateOnSessionRest !== undefined ||
+      nextConfig.rotateOnSessionRest !== undefined
+    ) {
+      const raw =
+        nextConfig.proxyRotateOnSessionRest !== undefined
+          ? nextConfig.proxyRotateOnSessionRest
+          : nextConfig.rotateOnSessionRest;
+      settings.proxyRotateOnSessionRest =
+        raw === true || String(raw).toLowerCase() === "true";
+    }
+
     persistRuntimeSettings([
       "SESSION_LOOP_ENABLED",
       "SESSION_PLAY_MIN_MINUTES",
       "SESSION_PLAY_MAX_MINUTES",
       "SESSION_REST_MIN_MINUTES",
-      "SESSION_REST_MAX_MINUTES"
+      "SESSION_REST_MAX_MINUTES",
+      "PROXY_ROTATE_ON_SESSION_REST"
     ]);
 
     scheduleNextSessionCycle();
 
-    return {
-      enabled: settings.sessionLoopEnabled,
-      playMinMinutes: settings.playMinMinutes,
-      playMaxMinutes: settings.playMaxMinutes,
-      restMinMinutes: settings.restMinMinutes,
-      restMaxMinutes: settings.restMaxMinutes,
-      proxyRotateOnSessionRest: settings.proxyRotateOnSessionRest !== false
-    };
+    if (dashboardBridge) {
+      dashboardBridge.publishSnapshot({ force: true });
+    }
+
+    return getSessionLoopStatus();
   };
 
   const getSessionLoopStatus = () => {
@@ -1198,6 +1220,7 @@ async function run() {
       : null;
     const store = proxyPool.loadStore();
     const poolCount = Array.isArray(store.proxies) ? store.proxies.length : 0;
+    const activeIndex = poolCount ? Number(store.activeIndex) || 0 : null;
 
     return {
       enabled: settings.sessionLoopEnabled,
@@ -1208,6 +1231,8 @@ async function run() {
       restMaxMinutes: settings.restMaxMinutes,
       proxyRotateOnSessionRest: settings.proxyRotateOnSessionRest !== false,
       proxyPoolCount: poolCount,
+      proxyActiveIndex: activeIndex,
+      proxyActiveDisplay: formatProxyDisplay(settings, store),
       proxyWillRotateOnRest:
         settings.proxyRotateOnSessionRest !== false && poolCount > 1
     };
@@ -1387,15 +1412,21 @@ async function run() {
     }
   };
 
-  /** After session-loop rest, rotate proxy (if pool has 2+) and fresh-login through it. */
-  const prepareProxyForSessionRestRelogin = () => {
+  /** After session-loop rest, rotate proxy (if pool has 2+) and fresh-login through it.
+ *  Pass `{ rotate: false }` on wake retries so a failed login does not skip pool entries. */
+  const prepareProxyForSessionRestRelogin = (opts = {}) => {
+    const shouldRotate = opts.rotate !== false;
     const store = proxyPool.loadStore();
     if (!store.proxies.length) {
       clearSessionForProxyChange();
       return null;
     }
 
-    if (settings.proxyRotateOnSessionRest && store.proxies.length > 1) {
+    if (
+      shouldRotate &&
+      settings.proxyRotateOnSessionRest &&
+      store.proxies.length > 1
+    ) {
       proxyPool.rotateActive(store);
     }
 
@@ -1409,9 +1440,16 @@ async function run() {
       "PROXY_ROTATE_ON_SESSION_REST"
     ]);
     clearSessionForProxyChange();
+    const idx = Number(store.activeIndex) || 0;
+    const total = store.proxies.length;
     console.log(
       `[Session Loop] Re-login proxy: ${formatProxyDisplay(settings, store)}` +
-        (settings.proxyRotateOnSessionRest && store.proxies.length > 1 ? " (rotated)" : "")
+        ` (#${idx + 1}/${total})` +
+        (shouldRotate && settings.proxyRotateOnSessionRest && total > 1
+          ? " (rotated)"
+          : shouldRotate
+            ? ""
+            : " (retry same proxy)")
     );
     if (dashboardBridge) {
       dashboardBridge.publishSnapshot({ force: true });

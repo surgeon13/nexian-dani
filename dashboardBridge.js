@@ -18,6 +18,8 @@ function createDashboardBridge() {
   let displaySettingsUpdater = null;
   let proxySettingsProvider = null;
   let proxySettingsUpdater = null;
+  let sessionLoopProvider = null;
+  let sessionLoopUpdater = null;
   let sessionPresenceReportProvider = null;
   let lastSnapshotJson = null;
   let lastSnapshotObj = null;
@@ -106,6 +108,29 @@ function createDashboardBridge() {
       throw new Error("Proxy settings are not available");
     }
     return proxySettingsUpdater(patch || {});
+  }
+
+  function setSessionLoopProvider(fn) {
+    sessionLoopProvider = typeof fn === "function" ? fn : null;
+  }
+
+  function setSessionLoopUpdater(fn) {
+    sessionLoopUpdater = typeof fn === "function" ? fn : null;
+  }
+
+  function getSessionLoop() {
+    try {
+      return sessionLoopProvider ? sessionLoopProvider() : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function updateSessionLoop(patch) {
+    if (!sessionLoopUpdater) {
+      throw new Error("Session loop settings are not available");
+    }
+    return sessionLoopUpdater(patch || {});
   }
 
   function setSessionPresenceReportProvider(fn) {
@@ -373,6 +398,10 @@ function createDashboardBridge() {
     setProxySettingsUpdater,
     getProxySettings,
     updateProxySettings,
+    setSessionLoopProvider,
+    setSessionLoopUpdater,
+    getSessionLoop,
+    updateSessionLoop,
     setSessionPresenceReportProvider,
     getSessionPresenceReport,
     ask,

@@ -2102,7 +2102,7 @@ function printSettingsMenu(settings, villageState) {
 
   section("Session and Farm");
   console.log(
-    `  ${opt("5")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}`
+    `  ${opt("5")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}${settings.proxyRotateOnSessionRest !== false ? ` ${tag("proxy", "rotate")}` : ""}`
   );
   console.log(
     `  ${opt("6")}  Farmlist Loop      ${dim("[")}${onOff(settings.farmlistLoopEnabled)}${dim("]")}  ${tag("every", `${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes}m`)}`
@@ -3379,13 +3379,31 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       const nextRestMaxText = (
         await askQuestion(rl, "Rest MAX minutes (Enter keep): ")
       ).trim();
+      const rotateDefault =
+        settings.proxyRotateOnSessionRest !== false ? "Y" : "N";
+      const rotateText = (
+        await askQuestion(
+          rl,
+          `Rotate proxy on each rest→wake (cycles full pool)? (Y/N, Enter keep=${rotateDefault}): `
+        )
+      )
+        .trim()
+        .toUpperCase();
+
+      let nextRotate = settings.proxyRotateOnSessionRest !== false;
+      if (rotateText === "Y") {
+        nextRotate = true;
+      } else if (rotateText === "N") {
+        nextRotate = false;
+      }
 
       const nextConfig = {
         enabled: nextEnabled,
         playMinMinutes: nextPlayMinText ? Number(nextPlayMinText) : settings.playMinMinutes,
         playMaxMinutes: nextPlayMaxText ? Number(nextPlayMaxText) : settings.playMaxMinutes,
         restMinMinutes: nextRestMinText ? Number(nextRestMinText) : settings.restMinMinutes,
-        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes
+        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes,
+        proxyRotateOnSessionRest: nextRotate
       };
 
       try {
@@ -3395,9 +3413,16 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
         settings.playMaxMinutes = applied.playMaxMinutes;
         settings.restMinMinutes = applied.restMinMinutes;
         settings.restMaxMinutes = applied.restMaxMinutes;
+        settings.proxyRotateOnSessionRest = applied.proxyRotateOnSessionRest !== false;
 
+        const poolNote =
+          applied.proxyWillRotateOnRest && applied.proxyPoolCount
+            ? ` · rotate through ${applied.proxyPoolCount} proxies`
+            : applied.proxyRotateOnSessionRest
+              ? " · rotate on (need 2+ proxies)"
+              : " · same proxy on wake";
         logSuccess(
-          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m.`
+          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m${poolNote}.`
         );
       } catch (error) {
         logError(`Failed to update session loop: ${error.message || error}`);
@@ -8686,6 +8711,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
       if (runtimeControls.updateProxySettings) {
         dashboardBridge.setProxySettingsUpdater((patch) => runtimeControls.updateProxySettings(patch));
+      }
+      if (runtimeControls.getSessionLoopStatus) {
+        dashboardBridge.setSessionLoopProvider(() => runtimeControls.getSessionLoopStatus());
+      }
+      if (runtimeControls.updateSessionLoopConfig) {
+        dashboardBridge.setSessionLoopUpdater((patch) =>
+          runtimeControls.updateSessionLoopConfig(patch || {})
+        );
       }
       if (runtimeControls.getSessionPresenceReport) {
         dashboardBridge.setSessionPresenceReportProvider((options) =>

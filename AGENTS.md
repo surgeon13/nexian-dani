@@ -33,16 +33,23 @@ curl -sS -X POST http://127.0.0.1:3847/api/proxy-settings \
   -H 'Content-Type: application/json' \
   -d '{"action":"next"}'
 
+# Session loop: play/rest + rotate through full pool on each rest→wake
+curl -sS -X POST http://127.0.0.1:3847/api/session-loop \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"playMinMinutes":40,"playMaxMinutes":55,"restMinMinutes":10,"restMaxMinutes":20,"proxyRotateOnSessionRest":true}'
+
 # After automation.reason is online:
 curl -sS http://127.0.0.1:3847/api/status | python3 -c '
 import json,sys
 s=json.load(sys.stdin)["status"]
 print((s.get("proxy") or {}).get("activeDisplay"))
 print((s.get("account") or {}).get("publicAddress"))
+print("session:", s.get("sessionLoop"))
 '
 ```
 
-Other actions: `apply`, `disable`, `save`. Do not commit `templates/proxy_list.json`.
+Other proxy actions: `apply`, `disable`, `save`. Do not commit `templates/proxy_list.json`.
+Session rest rotates **once** per cycle (wake retries stay on the same `#N`); with a pool of N, all addresses are used in order over N rest cycles.
 
 ### Secrets (Cursor dashboard → Cloud Agents → Secrets)
 

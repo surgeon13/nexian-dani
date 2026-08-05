@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.17] — 2026-08-05
+
+### Fixed
+
+- **Session-rest proxy: rotate once per rest** — wake login retries reuse the same pool entry instead of advancing again, so failed logins no longer skip addresses. Logs show `#N/total` and `(rotated)` / `(retry same proxy)`.
+
+### Added
+
+- **`GET` / `POST /api/session-loop`** — live session play/rest + `proxyRotateOnSessionRest` without restart (same pattern as proxy-settings).
+- **Dashboard** — checkbox to rotate proxy on each session rest→wake; status strip shows play/rest ranges and rotate.
+- **Terminal menu [5]** — prompt for rotate-on-rest; confirms full-pool cycling when the pool has 2+.
+
+### Changed
+
+- Session-loop status includes `proxyActiveIndex`, `proxyActiveDisplay`, and `proxyWillRotateOnRest` for ops visibility.
+
 ## [1.8.16] — 2026-08-05
 
 ### Added

@@ -57,6 +57,7 @@ const els = {
   proxyText: document.getElementById("proxy-text"),
   proxyBypass: document.getElementById("proxy-bypass"),
   proxyActiveIndex: document.getElementById("proxy-active-index"),
+  proxyRotateRest: document.getElementById("proxy-rotate-rest"),
   proxyListPreview: document.getElementById("proxy-list-preview"),
   proxySaveBtn: document.getElementById("proxy-save-btn"),
   proxyNextBtn: document.getElementById("proxy-next-btn"),
@@ -192,6 +193,27 @@ function loopLabel(loop) {
       ? ` · ${loop.completedCount} done`
       : "";
   return `${on}${range}${next}${done}`;
+}
+
+function sessionLoopLabel(loop) {
+  if (!loop) return "OFF";
+  const on = loop.enabled ? "ON" : "OFF";
+  const play =
+    loop.playMinMinutes != null && loop.playMaxMinutes != null
+      ? ` play ${loop.playMinMinutes}-${loop.playMaxMinutes}m`
+      : "";
+  const rest =
+    loop.restMinMinutes != null && loop.restMaxMinutes != null
+      ? ` / rest ${loop.restMinMinutes}-${loop.restMaxMinutes}m`
+      : "";
+  const next =
+    loop.enabled && Number.isFinite(loop.nextInMinutes) ? ` · ${loop.nextInMinutes}m` : "";
+  const rot = loop.proxyWillRotateOnRest
+    ? ` · rotate ${loop.proxyPoolCount || ""}`
+    : loop.proxyRotateOnSessionRest
+      ? " · rotate on"
+      : "";
+  return `${on}${play}${rest}${next}${rot}`.replace(/\s+/g, " ").trim();
 }
 
 function formatIpList(account) {
@@ -331,7 +353,7 @@ function renderStatusNow(status) {
           ? `Paused (${status.automation.reason})`
           : "Online"
     },
-    { label: "Session loop", value: loopLabel(status.sessionLoop) },
+    { label: "Session loop", value: sessionLoopLabel(status.sessionLoop) },
     { label: "Farmlist", value: loopLabel(status.loops && status.loops.farmlist) },
     { label: "Builder", value: loopLabel(status.loops && status.loops.builder) },
     { label: "Troop RR", value: loopLabel(status.loops && status.loops.troop) },
@@ -2152,6 +2174,9 @@ function renderProxySettingsPanel(proxy) {
   } else if (els.proxyActiveIndex) {
     els.proxyActiveIndex.value = count ? "1" : "";
   }
+  if (els.proxyRotateRest) {
+    els.proxyRotateRest.checked = proxy.rotateOnSessionRest !== false;
+  }
   if (els.proxyListPreview) {
     const rows = Array.isArray(proxy.proxies) ? proxy.proxies : [];
     els.proxyListPreview.innerHTML = rows.length
@@ -2187,7 +2212,8 @@ function readProxyFormPayload(action) {
     action,
     proxyText: els.proxyText ? els.proxyText.value : "",
     bypass: els.proxyBypass ? els.proxyBypass.value : "",
-    activeIndex: Number.isFinite(activeIndexRaw) && activeIndexRaw > 0 ? activeIndexRaw - 1 : undefined
+    activeIndex: Number.isFinite(activeIndexRaw) && activeIndexRaw > 0 ? activeIndexRaw - 1 : undefined,
+    rotateOnSessionRest: els.proxyRotateRest ? Boolean(els.proxyRotateRest.checked) : undefined
   };
 }
 
