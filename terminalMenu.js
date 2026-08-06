@@ -135,7 +135,25 @@ function normalizeTargetObject(item) {
   if (x === null || y === null) {
     return null;
   }
-  return { x, y };
+  const out = { x, y };
+  const mapTileId = Number(item.mapTileId ?? item.tileId ?? item.id);
+  if (Number.isFinite(mapTileId) && mapTileId > 0) {
+    out.mapTileId = Math.floor(mapTileId);
+  }
+  const mapUrl = String(item.mapUrl || item.url || "").trim();
+  if (mapUrl) {
+    out.mapUrl = mapUrl;
+  }
+  if (item.fromVillageId !== undefined) {
+    out.fromVillageId = item.fromVillageId;
+  }
+  if (item.fromVillageName) {
+    out.fromVillageName = String(item.fromVillageName);
+  }
+  if (item.note) {
+    out.note = String(item.note);
+  }
+  return out;
 }
 
 function loadPlannedSettlementTargetsFromFile(filePath) {

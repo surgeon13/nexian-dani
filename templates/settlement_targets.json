@@ -3,6 +3,9 @@
     "x": 106,
     "y": 22,
     "mapTileId": 42423,
-    "note": "Settle from 4MMC (vid=86450). Target near 3MMC (105|22). Map: village3.php?id=42423"
+    "mapUrl": "https://s1.nexian.world/village3.php?id=42423",
+    "fromVillageId": 86450,
+    "fromVillageName": "4MMC",
+    "note": "Primary settle target next to capital 3MMC (105|22). Prefer mapUrl/id if coord navigation fails."
   }
 ]

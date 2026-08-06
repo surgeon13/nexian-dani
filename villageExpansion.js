@@ -1083,15 +1083,17 @@ async function isSettlementConfirmationContext(page) {
   });
 }
 
-async function openMapTile(page, x, y, settingsOrBaseUrl = {}) {
+async function openMapTile(page, x, y, settingsOrBaseUrl = {}, options = {}) {
   const baseUrl = typeof settingsOrBaseUrl === "string"
     ? settingsOrBaseUrl
     : resolveExpansionBaseUrl(settingsOrBaseUrl);
-  const tileUrl = buildMapTileUrl(baseUrl, x, y);
+  const byIdUrl = resolvePlannedMapTileUrl(baseUrl, options);
+  const tileUrl = byIdUrl || buildMapTileUrl(baseUrl, x, y);
   await page.goto(tileUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  return tileUrl;
 }
 
-async function openMapSettlementPage(page, targetX, targetY, settingsOrBaseUrl = {}) {
+async function openMapSettlementPage(page, targetX, targetY, settingsOrBaseUrl = {}, options = {}) {
   const baseUrl = typeof settingsOrBaseUrl === "string"
     ? settingsOrBaseUrl
     : resolveExpansionBaseUrl(settingsOrBaseUrl);
@@ -1132,7 +1134,17 @@ async function openMapSettlementPage(page, targetX, targetY, settingsOrBaseUrl =
   // 1) If we're already on the right tile detail page, use it directly.
   let href = await resolveFoundVillageHref();
 
-  // 2) Otherwise open the map and try opening target tile details.
+  // 2) Prefer direct village3.php?id=… when provided (more reliable than map coords).
+  if (!href) {
+    const directTileUrl = resolvePlannedMapTileUrl(baseUrl, options);
+    if (directTileUrl) {
+      await page.goto(directTileUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForTimeout(200);
+      href = await resolveFoundVillageHref();
+    }
+  }
+
+  // 3) Otherwise open the map and try opening target tile details.
   if (!href) {
     await openMapTile(page, targetX, targetY, baseUrl);
     await page.waitForTimeout(200);
@@ -1163,7 +1175,7 @@ async function openMapSettlementPage(page, targetX, targetY, settingsOrBaseUrl =
       href = await resolveFoundVillageHref();
     }
 
-    // 3) Fallback: context menu -> View Tile (server variant often binds this reliably).
+    // 4) Fallback: context menu -> View Tile (server variant often binds this reliably).
     if (!href && openedByLeftClick) {
       const openedByContextMenu = await page.evaluate(({ x, y }) => {
         const tile = document.querySelector(
@@ -1330,6 +1342,34 @@ function buildMapTileUrl(baseUrl, x, y) {
     const base = String(baseUrl || "").replace(/\/[^/]*$/, "");
     return `${base}/map.php?x=${encodeURIComponent(String(x))}&y=${encodeURIComponent(String(y))}`;
   }
+}
+
+/** Direct tile detail link (e.g. https://s1.nexian.world/village3.php?id=42423). */
+function buildMapTileUrlById(baseUrl, mapTileId) {
+  const id = Math.floor(Number(mapTileId));
+  if (!Number.isFinite(id) || id <= 0) {
+    return null;
+  }
+  try {
+    const parsed = new URL(baseUrl);
+    return `${parsed.origin}/village3.php?id=${id}`;
+  } catch (_error) {
+    const base = String(baseUrl || "").replace(/\/[^/]*$/, "");
+    return `${base}/village3.php?id=${id}`;
+  }
+}
+
+function resolvePlannedMapTileUrl(baseUrl, target = {}) {
+  const raw = String((target && (target.mapUrl || target.url)) || "").trim();
+  if (raw) {
+    try {
+      const absolute = new URL(raw, baseUrl);
+      return absolute.toString();
+    } catch (_error) {
+      return raw;
+    }
+  }
+  return buildMapTileUrlById(baseUrl, target && target.mapTileId);
 }
 
 async function readEnhancedMapSettleCandidates(page, village, settings = {}) {
@@ -1509,8 +1549,9 @@ async function findSettleableByDirectRingSweep(page, village, excludedCoords = [
   return null;
 }
 
-async function inspectMapTileForSettlement(page, baseUrl, x, y) {
-  const tileUrl = buildMapTileUrl(baseUrl, x, y);
+async function inspectMapTileForSettlement(page, baseUrl, x, y, options = {}) {
+  const directTileUrl = resolvePlannedMapTileUrl(baseUrl, options);
+  const tileUrl = directTileUrl || buildMapTileUrl(baseUrl, x, y);
   await page.goto(tileUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
   return page.evaluate(() => {
@@ -1807,9 +1848,15 @@ async function findFirstSettleablePreferredTarget(page, preferredTargets = [], e
     if (excluded.has(coordKey(x, y))) {
       continue;
     }
-    const verdict = await inspectMapTileForSettlement(page, baseUrl, x, y);
+    const verdict = await inspectMapTileForSettlement(page, baseUrl, x, y, candidate);
     if (verdict && verdict.settleable) {
-      return { x, y, plannedIndex: i };
+      return {
+        x,
+        y,
+        plannedIndex: i,
+        mapTileId: candidate.mapTileId || null,
+        mapUrl: candidate.mapUrl || candidate.url || null
+      };
     }
   }
   return null;
@@ -1822,12 +1869,17 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
   let resolvedTargetY = Number(targetY);
   let targetSource = "manual";
   let plannedTargetIndex = null;
+  let selectedTargetMeta = {};
   const excludedCoords = new Set();
   const attemptedTargets = [];
 
   const manualTargetProvided = Number.isFinite(resolvedTargetX) && Number.isFinite(resolvedTargetY);
   if (manualTargetProvided) {
     targetSource = "manual";
+    selectedTargetMeta = {
+      mapTileId: options.mapTileId || null,
+      mapUrl: options.mapUrl || options.url || null
+    };
   } else {
     const maxAttempts = 20;
     let picked = null;
@@ -1844,7 +1896,9 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
           x: preferred.x,
           y: preferred.y,
           source: "planned",
-          plannedIndex: preferred.plannedIndex
+          plannedIndex: preferred.plannedIndex,
+          mapTileId: preferred.mapTileId || null,
+          mapUrl: preferred.mapUrl || null
         };
       } else {
         const nearest = await findClosestFreeSettlementTile(page, village, {
@@ -1862,7 +1916,7 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
         };
       }
 
-      const verdict = await inspectMapTileForSettlement(page, baseUrl, picked.x, picked.y);
+      const verdict = await inspectMapTileForSettlement(page, baseUrl, picked.x, picked.y, picked);
       attemptedTargets.push(`${picked.x}|${picked.y}`);
       if (
         verdict &&
@@ -1874,6 +1928,10 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
         resolvedTargetY = picked.y;
         targetSource = picked.source;
         plannedTargetIndex = picked.plannedIndex;
+        selectedTargetMeta = {
+          mapTileId: picked.mapTileId || null,
+          mapUrl: picked.mapUrl || null
+        };
         break;
       }
 
@@ -1915,7 +1973,13 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
   }
 
   // Hard safety gate: do not try settling occupied/oasis targets.
-  const targetVerdict = await inspectMapTileForSettlement(page, baseUrl, resolvedTargetX, resolvedTargetY);
+  const targetVerdict = await inspectMapTileForSettlement(
+    page,
+    baseUrl,
+    resolvedTargetX,
+    resolvedTargetY,
+    selectedTargetMeta
+  );
   if (
     !targetVerdict ||
     !targetVerdict.settleable ||
@@ -1932,11 +1996,13 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
   }
 
   // Map-only flow: open target tile -> click Found new village (v2v) -> send settlers.
+  // Prefer direct village3.php?id=… when the planned target includes it.
   const openedMapSettlePage = await openMapSettlementPage(
     page,
     resolvedTargetX,
     resolvedTargetY,
-    baseUrl
+    baseUrl,
+    selectedTargetMeta
   );
   if (!openedMapSettlePage) {
     return {
@@ -2085,6 +2151,8 @@ module.exports = {
   ensureResidenceLevel10,
   trainSettlers,
   getResidenceStatus,
+  buildMapTileUrlById,
+  resolvePlannedMapTileUrl,
   RESIDENCE_SLOT,
   SETTLERS_NEEDED,
   SETTLEMENT_RESOURCE_REQUIREMENT

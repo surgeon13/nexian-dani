@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.19] — 2026-08-06
+
+### Added
+
+- **Settlement map-tile URL fallback** — planned targets may include `mapTileId` / `mapUrl` (e.g. `https://s1.nexian.world/village3.php?id=42423`). Expansion opens that direct tile link before falling back to map coordinates, so settling next to the capital stays reliable.
+
 ## [1.8.18] — 2026-08-05
 
 ### Fixed
