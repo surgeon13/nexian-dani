@@ -156,6 +156,19 @@ const GAME_HOST = (() => {
   }
 })();
 const gameUrl = (pathAndQuery) => `${GAME_HOST}${pathAndQuery}`;
+
+/** Portal world id from GAME_HOST (s1, s2, …). Empty when GAME_HOST is the marketing portal. */
+function portalServerIdFromGameHost(gameHost = GAME_HOST) {
+  try {
+    const host = new URL(gameHost).hostname.toLowerCase();
+    const match = host.match(/^(s\d+|test)\.nexian\.world$/i);
+    return match ? match[1].toLowerCase() : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+const PORTAL_SERVER_ID = portalServerIdFromGameHost();
 const headlessByDefault = !(
   process.argv.includes("--headed") || process.env.HEADLESS === "false"
 );
@@ -629,9 +642,126 @@ function syncSettingsGameHostFromPage(page, settings) {
   return origin;
 }
 
+async function selectPortalRealm(page, serverId = PORTAL_SERVER_ID) {
+  if (!serverId) {
+    return false;
+  }
+
+  // Prefer the realm card Login that calls openLogin('s1') / openLogin('s2').
+  // A generic first "Login" button on the page is usually Speed (s2).
+  const opened = await page.evaluate((id) => {
+    const want = String(id || "").toLowerCase();
+    if (!want) {
+      return { ok: false, how: "no-id" };
+    }
+
+    const buttons = Array.from(document.querySelectorAll("button, a, [role='button']"));
+    const byClickAttr = buttons.find((el) => {
+      const click = el.getAttribute("@click") || el.getAttribute("x-on:click") || "";
+      return new RegExp(`openLogin\\(['"]${want}['"]\\)`, "i").test(click);
+    });
+    if (byClickAttr && byClickAttr.offsetParent !== null) {
+      byClickAttr.click();
+      return { ok: true, how: "openLogin-attr" };
+    }
+
+    // Alpine component API when present on the journey modal root.
+    try {
+      const roots = Array.from(document.querySelectorAll("[x-data]"));
+      for (const root of roots) {
+        const stack = root._x_dataStack;
+        const data = stack && stack[0];
+        if (data && typeof data.openLogin === "function") {
+          data.openLogin(want);
+          return { ok: true, how: "alpine-openLogin" };
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+
+    // Last resort: set serverId + login view if Alpine state is already live.
+    try {
+      const roots = Array.from(document.querySelectorAll("[x-data]"));
+      for (const root of roots) {
+        const stack = root._x_dataStack;
+        const data = stack && stack[0];
+        if (data && Object.prototype.hasOwnProperty.call(data, "serverId")) {
+          data.serverId = want;
+          if (Object.prototype.hasOwnProperty.call(data, "view")) {
+            data.view = "login";
+          }
+          if (Object.prototype.hasOwnProperty.call(data, "journey")) {
+            data.journey = true;
+          }
+          return { ok: true, how: "alpine-serverId" };
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+
+    return { ok: false, how: "none" };
+  }, serverId);
+
+  if (opened && opened.ok) {
+    console.log(`  Portal realm: ${serverId} (${opened.how})`);
+    return true;
+  }
+  return false;
+}
+
+async function ensurePortalLoginTargetsRealm(page, serverId = PORTAL_SERVER_ID) {
+  if (!serverId) {
+    return;
+  }
+
+  await page.evaluate((id) => {
+    const want = String(id || "").toLowerCase();
+    if (!want) {
+      return;
+    }
+    const servers = window.__nexianServers || {};
+    const entry = servers[want];
+    const base = entry && entry.baseUrl ? String(entry.baseUrl).replace(/\/+$/, "") : "";
+    const action = base ? `${base}/index.php?from=apex` : "";
+
+    try {
+      const roots = Array.from(document.querySelectorAll("[x-data]"));
+      for (const root of roots) {
+        const stack = root._x_dataStack;
+        const data = stack && stack[0];
+        if (data && Object.prototype.hasOwnProperty.call(data, "serverId")) {
+          data.serverId = want;
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+
+    const loginForm = document.querySelector("form.jform-login, form.journey-form.jform-login");
+    if (loginForm && action) {
+      loginForm.setAttribute("action", action);
+      try {
+        loginForm.action = action;
+      } catch (_error) {
+        // ignore
+      }
+    }
+
+    const hiddenServer = document.querySelector(
+      'form.jform-login input[name="server_id"], form.journey-form input[name="server_id"]'
+    );
+    if (hiddenServer) {
+      hiddenServer.value = want;
+    }
+  }, serverId);
+}
+
 async function openNexianPortalLoginForm(page) {
   const portalUser = page.locator('input[placeholder="Enter your username"]');
   if (await portalUser.isVisible().catch(() => false)) {
+    await ensurePortalLoginTargetsRealm(page);
     return;
   }
 
@@ -641,16 +771,21 @@ async function openNexianPortalLoginForm(page) {
     await page.waitForTimeout(400);
   }
 
-  await page.evaluate(() => {
-    const btn = Array.from(document.querySelectorAll("button")).find(
-      (el) => /^login$/i.test((el.textContent || "").trim()) && el.offsetParent !== null
-    );
-    if (btn) {
-      btn.click();
-    }
-  });
+  const realmOpened = await selectPortalRealm(page);
+  if (!realmOpened) {
+    // Fallback: first visible Login (often s2) — realm is corrected before submit.
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll("button")).find(
+        (el) => /^login$/i.test((el.textContent || "").trim()) && el.offsetParent !== null
+      );
+      if (btn) {
+        btn.click();
+      }
+    });
+  }
 
   await portalUser.waitFor({ state: "visible", timeout: 30000 });
+  await ensurePortalLoginTargetsRealm(page);
 }
 
 function isGameRealmHost(url) {
@@ -758,8 +893,39 @@ async function tryOpenStoredSession(browser, effectiveHeadless) {
 }
 
 async function submitPortalLogin(page) {
-  const enterRealm = page.getByRole("button", { name: /Enter Realm/i });
+  await ensurePortalLoginTargetsRealm(page);
+
+  const enterRealm = page
+    .locator('form.jform-login button[type="submit"], form.journey-form.jform-login button.journey-submit')
+    .or(page.getByRole("button", { name: /Enter Realm/i }))
+    .first();
   await enterRealm.waitFor({ state: "visible", timeout: 20000 });
+
+  if (PORTAL_SERVER_ID) {
+    const actionHost = await page.evaluate(() => {
+      const form = document.querySelector("form.jform-login, form.journey-form.jform-login");
+      try {
+        return form ? new URL(form.action, location.href).hostname : "";
+      } catch (_error) {
+        return "";
+      }
+    });
+    const expectedHost = (() => {
+      try {
+        return new URL(GAME_HOST).hostname.toLowerCase();
+      } catch (_error) {
+        return "";
+      }
+    })();
+    if (actionHost && expectedHost && actionHost.toLowerCase() !== expectedHost) {
+      console.log(
+        `  Portal form action host ${actionHost} != ${expectedHost}; forcing ${PORTAL_SERVER_ID}`
+      );
+      await ensurePortalLoginTargetsRealm(page);
+    } else if (expectedHost) {
+      console.log(`  Portal login → ${actionHost || expectedHost}`);
+    }
+  }
 
   const navigationPromise = page
     .waitForURL(
@@ -782,7 +948,8 @@ async function submitPortalLogin(page) {
   await navigationPromise;
   if (!(await ensureLoggedInAtVillagePage(page))) {
     throw new Error(
-      `Login did not reach the game after Enter Realm (still at ${page.url()}).`
+      `Login did not reach the game after Enter Realm (still at ${page.url()}).` +
+        (PORTAL_SERVER_ID ? ` Expected realm ${PORTAL_SERVER_ID} (${GAME_HOST}).` : "")
     );
   }
   return true;

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.20] — 2026-08-08
+
+### Fixed
+
+- **Portal login picks GAME_HOST realm** — the marketing portal’s first Login button is Speed (`s2`). Login now opens `openLogin('s1')` (from `GAME_HOST`) and forces the form action to that realm before Enter Realm, so credentials no longer post to the wrong world and bounce back to `nexian.world`.
+
 ## [1.8.19] — 2026-08-06
 
 ### Added
