@@ -9506,9 +9506,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      if (input === "5" || input === "@rename-pending") {
+      if (input === "5" || input === "@RENAME-PENDING") {
         const startedAt = Date.now();
-        const renameOnly = input === "@rename-pending";
+        const renameOnly = input === "@RENAME-PENDING";
         await runAction(renameOnly ? "Pending Village Rename" : "Expansion / Residence Check", async () => {
           const selectedVillage = getSelectedVillage();
           if (!selectedVillage && !renameOnly) {
