@@ -347,6 +347,23 @@ const settings = {
   resourceCirculationBuilderMaxDonors: numberEnv("RESOURCE_CIRCULATION_BUILDER_MAX_DONORS", 1),
   resourceCirculationBuilderMerchantLoads: numberEnv("RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS", 4),
   resourceCirculationReservePerResource: numberEnv("RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE", 500),
+  npcCropConvertEnabled:
+    String(process.env.NPC_CROP_CONVERT_ENABLED || "false").toLowerCase() === "true",
+  npcCropConvertMinMinutes: numberEnv("NPC_CROP_CONVERT_MIN_MINUTES", 10),
+  npcCropConvertMaxMinutes: numberEnv("NPC_CROP_CONVERT_MAX_MINUTES", 20),
+  npcCropConvertGranaryRatio: (() => {
+    const raw = Number(process.env.NPC_CROP_CONVERT_GRANARY_RATIO);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+      return raw;
+    }
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+      return raw / 100;
+    }
+    return 0.95;
+  })(),
+  npcCropConvertExcludedVillageIds: String(
+    process.env.NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS || ""
+  ).trim(),
   proxyRotateOnSessionRest:
     String(process.env.PROXY_ROTATE_ON_SESSION_REST ?? "true").toLowerCase() !== "false"
 };
@@ -481,6 +498,11 @@ function persistRuntimeSettings(selectedKeys) {
     RESOURCE_CIRCULATION_BUILDER_MAX_DONORS: String(settings.resourceCirculationBuilderMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS: String(settings.resourceCirculationBuilderMerchantLoads),
     RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE: String(settings.resourceCirculationReservePerResource),
+    NPC_CROP_CONVERT_ENABLED: settings.npcCropConvertEnabled ? "true" : "false",
+    NPC_CROP_CONVERT_MIN_MINUTES: String(settings.npcCropConvertMinMinutes),
+    NPC_CROP_CONVERT_MAX_MINUTES: String(settings.npcCropConvertMaxMinutes),
+    NPC_CROP_CONVERT_GRANARY_RATIO: String(settings.npcCropConvertGranaryRatio),
+    NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS: String(settings.npcCropConvertExcludedVillageIds || ""),
     ...proxyEnvValues(settings)
   };
 
@@ -560,6 +582,28 @@ function applySessionLoopDefaults() {
     settings.activitySimulationDwellMinMs,
     Math.floor(Number(settings.activitySimulationDwellMaxMs) || 6000)
   );
+
+  const npcCropConvertLoop = normalizeRange(
+    settings.npcCropConvertMinMinutes,
+    settings.npcCropConvertMaxMinutes,
+    10,
+    20
+  );
+  settings.npcCropConvertMinMinutes = npcCropConvertLoop.min;
+  settings.npcCropConvertMaxMinutes = npcCropConvertLoop.max;
+  {
+    const raw = Number(settings.npcCropConvertGranaryRatio);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+      settings.npcCropConvertGranaryRatio = raw;
+    } else if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+      settings.npcCropConvertGranaryRatio = raw / 100;
+    } else {
+      settings.npcCropConvertGranaryRatio = 0.95;
+    }
+  }
+  settings.npcCropConvertExcludedVillageIds = String(
+    settings.npcCropConvertExcludedVillageIds || ""
+  ).trim();
 
   const play = normalizeRange(settings.playMinMinutes, settings.playMaxMinutes, 60, 120);
   settings.playMinMinutes = play.min;
@@ -1809,6 +1853,49 @@ async function run() {
     };
   };
 
+  const updateNpcCropConvertLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.npcCropConvertEnabled = nextConfig.enabled;
+    }
+
+    const range = normalizeRange(
+      Number(nextConfig.minMinutes),
+      Number(nextConfig.maxMinutes),
+      settings.npcCropConvertMinMinutes,
+      settings.npcCropConvertMaxMinutes
+    );
+    settings.npcCropConvertMinMinutes = range.min;
+    settings.npcCropConvertMaxMinutes = range.max;
+
+    if (nextConfig.granaryRatio !== undefined) {
+      const raw = Number(nextConfig.granaryRatio);
+      if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+        settings.npcCropConvertGranaryRatio = raw;
+      } else if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+        settings.npcCropConvertGranaryRatio = raw / 100;
+      }
+    }
+    if (nextConfig.excludedVillageIds !== undefined) {
+      settings.npcCropConvertExcludedVillageIds = String(nextConfig.excludedVillageIds || "").trim();
+    }
+
+    persistRuntimeSettings([
+      "NPC_CROP_CONVERT_ENABLED",
+      "NPC_CROP_CONVERT_MIN_MINUTES",
+      "NPC_CROP_CONVERT_MAX_MINUTES",
+      "NPC_CROP_CONVERT_GRANARY_RATIO",
+      "NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS"
+    ]);
+
+    return {
+      enabled: settings.npcCropConvertEnabled,
+      minMinutes: settings.npcCropConvertMinMinutes,
+      maxMinutes: settings.npcCropConvertMaxMinutes,
+      granaryRatio: settings.npcCropConvertGranaryRatio,
+      excludedVillageIds: settings.npcCropConvertExcludedVillageIds
+    };
+  };
+
   const updateTop10TrackingLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.top10TrackingEnabled = nextConfig.enabled;
@@ -2032,6 +2119,7 @@ async function run() {
           updateCrannyDefenseLoopConfig,
           updateActivitySimulationLoopConfig,
           updateTop10TrackingLoopConfig,
+          updateNpcCropConvertLoopConfig,
           updateDashboardDisplayConfig,
           async persistSettings(selectedKeys) {
             persistRuntimeSettings(selectedKeys);

@@ -333,6 +333,7 @@ function renderStatusNow(status) {
         { label: "Cranny", value: loopLabelShort(status.loops && status.loops.cranny) },
         { label: "Activity", value: loopLabelShort(status.loops && status.loops.activity) },
         { label: "Top10", value: loopLabelShort(status.loops && status.loops.top10) },
+        { label: "NPC", value: loopLabelShort(status.loops && status.loops.npcCrop) },
         {
           label: "Now",
           value: starting
@@ -360,6 +361,7 @@ function renderStatusNow(status) {
     { label: "Cranny RR", value: loopLabel(status.loops && status.loops.cranny) },
     { label: "Activity", value: loopLabel(status.loops && status.loops.activity) },
     { label: "Top 10", value: loopLabel(status.loops && status.loops.top10) },
+    { label: "NPC Crop", value: loopLabel(status.loops && status.loops.npcCrop) },
     {
       label: "Current action",
       value: status.actionInProgress ? status.currentActionLabel || "…" : "Idle"

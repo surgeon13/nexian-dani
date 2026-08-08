@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.23] — 2026-08-08
+
+### Added
+
+- **NPC crop convert watcher** — optional round-robin loop that checks village granaries on a min–max poll. When crop fills to the configured threshold (default **95%**), opens Marketplace → NPC Merchant and redistributes so **crop → 0%** and wood/clay/iron share the rest (warehouse-capped). Toggle in terminal **Settings → N** or `.env` (`NPC_CROP_CONVERT_*`). Costs in-game gold per exchange; disabled by default.
+
 ## [1.8.22] — 2026-08-08
 
 ### Changed
