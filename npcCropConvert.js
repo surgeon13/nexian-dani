@@ -170,6 +170,11 @@ async function readHeaderStockAndCaps(page) {
   });
 }
 
+function buildVillageCenterUrl(settings, villageId) {
+  const origin = resolveGameOrigin(settings);
+  return withVillageId(`${origin}/village2.php`, villageId);
+}
+
 async function pageLooksLikeNpcMerchant(page) {
   return page.evaluate(() => {
     const form = document.querySelector("form#_fm1, form[name='snd']");
@@ -181,7 +186,125 @@ async function pageLooksLikeNpcMerchant(page) {
   });
 }
 
-async function openNpcMerchant(page, settings, villageId) {
+async function pageLooksLikeMarketplace(page) {
+  return page.evaluate(() => {
+    const bodyText = document.body ? String(document.body.innerText || "") : "";
+    const title = document.querySelector("#build h1, #content h1, h1");
+    const titleText = title ? String(title.textContent || "") : "";
+    const hasMarketName = /marketplace|marktplatz/i.test(`${titleText}\n${bodyText.slice(0, 800)}`);
+    const hasTabs = Array.from(document.querySelectorAll("a")).some((a) => {
+      const href = String(a.getAttribute("href") || "");
+      const text = String(a.textContent || "");
+      return (
+        /[?&]t=\d+\b/.test(href) ||
+        /npc merchant|send resources|buy|offer/i.test(text)
+      );
+    });
+    return hasMarketName || (hasTabs && /merchant|marketplace|npc/i.test(bodyText));
+  });
+}
+
+async function clickNpcMerchantTab(page) {
+  const clicked = await page.evaluate(() => {
+    const candidates = Array.from(document.querySelectorAll("a, button, input[type='button']"));
+    const link = candidates.find((el) => {
+      const href = String(el.getAttribute("href") || "");
+      const text = String(el.textContent || el.value || "").replace(/\s+/g, " ").trim();
+      return /[?&]t=3\b/.test(href) || /^npc merchant$/i.test(text) || /npc merchant/i.test(text);
+    });
+    if (!link) {
+      return false;
+    }
+    link.click();
+    return true;
+  });
+  if (!clicked) {
+    return false;
+  }
+  await page.waitForTimeout(900).catch(() => {});
+  return pageLooksLikeNpcMerchant(page);
+}
+
+/**
+ * Human path: village center → Marketplace (map/link) → NPC Merchant tab.
+ * Discovers the marketplace slot per village instead of assuming id=33.
+ */
+async function openNpcMerchantViaVillageCenter(page, settings, villageId) {
+  const centerUrl = buildVillageCenterUrl(settings, villageId);
+  await sharedSafeGotoWithRetry(
+    page,
+    centerUrl,
+    { waitUntil: "domcontentloaded", timeout: 60000 },
+    2
+  );
+  await page.waitForTimeout(500).catch(() => {});
+
+  const marketTarget = await page.evaluate(() => {
+    const normalize = (value) => String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    const isMarketplaceLabel = (text) => /marketplace|marktplatz/i.test(text);
+
+    const areas = Array.from(
+      document.querySelectorAll("map#map2 area[href*='build.php'], area[href*='build.php']")
+    );
+    for (const area of areas) {
+      const href = area.getAttribute("href") || "";
+      const title = normalize(area.getAttribute("title") || "");
+      const alt = normalize(area.getAttribute("alt") || "");
+      const label = `${title} ${alt}`;
+      if (isMarketplaceLabel(label) || /[?&](?:gid|bid)=17\b/i.test(href)) {
+        return { href, label: label || "Marketplace", via: "map" };
+      }
+    }
+
+    const anchors = Array.from(document.querySelectorAll("a[href*='build.php']"));
+    for (const a of anchors) {
+      const href = a.getAttribute("href") || "";
+      const text = normalize(a.textContent || "");
+      if (isMarketplaceLabel(text) || /[?&](?:gid|bid)=17\b/i.test(href)) {
+        return { href, label: text || "Marketplace", via: "link" };
+      }
+    }
+    return null;
+  });
+
+  if (!marketTarget || !marketTarget.href) {
+    return { ok: false, reason: "marketplace_not_on_map" };
+  }
+
+  try {
+    await sharedSafeGotoWithRetry(
+      page,
+      marketTarget.href.startsWith("http")
+        ? withVillageId(marketTarget.href, villageId)
+        : withVillageId(new URL(marketTarget.href, page.url()).toString(), villageId),
+      { waitUntil: "domcontentloaded", timeout: 60000 },
+      2
+    );
+  } catch (error) {
+    if (isResourceExhaustionError(error)) {
+      throw error;
+    }
+    return { ok: false, reason: "marketplace_nav_failed", detail: error.message || String(error) };
+  }
+
+  await page.waitForTimeout(600).catch(() => {});
+
+  if (await pageLooksLikeNpcMerchant(page)) {
+    return { ok: true, via: "village_center", marketLabel: marketTarget.label };
+  }
+
+  if (!(await pageLooksLikeMarketplace(page))) {
+    return { ok: false, reason: "not_marketplace_page", marketLabel: marketTarget.label };
+  }
+
+  if (await clickNpcMerchantTab(page)) {
+    return { ok: true, via: "village_center_npc_tab", marketLabel: marketTarget.label };
+  }
+
+  return { ok: false, reason: "npc_tab_missing", marketLabel: marketTarget.label };
+}
+
+async function openNpcMerchantViaDirectUrls(page, settings, villageId) {
   const candidates = buildNpcMerchantUrlCandidates(settings, villageId);
   for (const url of candidates) {
     try {
@@ -200,27 +323,27 @@ async function openNpcMerchant(page, settings, villageId) {
     if (await pageLooksLikeNpcMerchant(page)) {
       return true;
     }
-    // Some realms land on marketplace send tab — click NPC Merchant if present.
-    const clicked = await page.evaluate(() => {
-      const link = Array.from(document.querySelectorAll("a")).find((a) => {
-        const href = String(a.getAttribute("href") || "");
-        const text = String(a.textContent || "");
-        return /[?&]t=3\b/.test(href) || /npc merchant/i.test(text);
-      });
-      if (link) {
-        link.click();
-        return true;
-      }
-      return false;
-    });
-    if (clicked) {
-      await page.waitForTimeout(800).catch(() => {});
-      if (await pageLooksLikeNpcMerchant(page)) {
-        return true;
-      }
+    if (await clickNpcMerchantTab(page)) {
+      return true;
     }
   }
   return false;
+}
+
+async function openNpcMerchant(page, settings, villageId) {
+  // Prefer human path: center village → Marketplace → NPC Merchant.
+  try {
+    const human = await openNpcMerchantViaVillageCenter(page, settings, villageId);
+    if (human && human.ok) {
+      return true;
+    }
+  } catch (error) {
+    if (isResourceExhaustionError(error)) {
+      throw error;
+    }
+  }
+  // Fallback: known direct marketplace URLs (id=33&t=3&gid=17, etc.).
+  return openNpcMerchantViaDirectUrls(page, settings, villageId);
 }
 
 async function runNpcZeroCropExchange(page, desired) {
@@ -562,6 +685,7 @@ module.exports = {
   buildNpcMerchantUrl,
   buildNpcMerchantUrlCandidates,
   resolveMarketplaceBuildingId,
+  openNpcMerchantViaVillageCenter,
   DEFAULT_GRANARY_RATIO,
   NPC_GOLD_COST
 };
