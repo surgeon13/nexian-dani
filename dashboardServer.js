@@ -477,6 +477,35 @@ function startDashboardServer({
         return;
       }
 
+      if (req.method === "GET" && pathname === "/api/session-loop") {
+        const sessionLoop =
+          typeof bridge.getSessionLoop === "function" ? bridge.getSessionLoop() : null;
+        if (!sessionLoop) {
+          sendJson(res, 503, { ok: false, error: "Session loop settings unavailable" });
+          return;
+        }
+        sendJson(res, 200, { ok: true, sessionLoop });
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/session-loop") {
+        const body = await readJsonBody(req);
+        if (typeof bridge.updateSessionLoop !== "function") {
+          sendJson(res, 503, { ok: false, error: "Session loop settings unavailable" });
+          return;
+        }
+        try {
+          const sessionLoop = await bridge.updateSessionLoop(body || {});
+          sendJson(res, 200, { ok: true, sessionLoop });
+        } catch (error) {
+          sendJson(res, 400, {
+            ok: false,
+            error: error && error.message ? error.message : String(error)
+          });
+        }
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/events") {
         res.writeHead(200, {
           "Content-Type": "text/event-stream",

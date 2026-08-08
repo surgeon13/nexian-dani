@@ -4,6 +4,7 @@ const path = require("path");
 const builder = require("./villageBuilder");
 const villageExpansion = require("./villageExpansion");
 const resourceCirculation = require("./resourceCirculation");
+const npcCropConvert = require("./npcCropConvert");
 const troopPlans = require("./troopPlans");
 const { version: APP_VERSION } = require("./package.json");
 const { formatProxyDisplay, normalizeProxyServer, buildProxySettingsPayload, proxyPool } = require("./proxyConfig");
@@ -135,7 +136,29 @@ function normalizeTargetObject(item) {
   if (x === null || y === null) {
     return null;
   }
-  return { x, y };
+  const out = { x, y };
+  const mapTileId = Number(item.mapTileId ?? item.tileId ?? item.id);
+  if (Number.isFinite(mapTileId) && mapTileId > 0) {
+    out.mapTileId = Math.floor(mapTileId);
+  }
+  const mapUrl = String(item.mapUrl || item.url || "").trim();
+  if (mapUrl) {
+    out.mapUrl = mapUrl;
+  }
+  if (item.fromVillageId !== undefined) {
+    out.fromVillageId = item.fromVillageId;
+  }
+  if (item.fromVillageName) {
+    out.fromVillageName = String(item.fromVillageName);
+  }
+  const villageName = String(item.villageName || item.name || "").trim();
+  if (villageName) {
+    out.villageName = villageName;
+  }
+  if (item.note) {
+    out.note = String(item.note);
+  }
+  return out;
 }
 
 function loadPlannedSettlementTargetsFromFile(filePath) {
@@ -1820,6 +1843,9 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
   const crannyStatus = runtimeStatus && runtimeStatus.crannyLoop
     ? runtimeStatus.crannyLoop
     : { enabled: settings.crannyDefenseRoundRobinEnabled, nextInMinutes: null };
+  const npcCropStatus = runtimeStatus && runtimeStatus.npcCropLoop
+    ? runtimeStatus.npcCropLoop
+    : { enabled: settings.npcCropConvertEnabled, nextInMinutes: null };
   const builderPlanLabel = String(builderPlanMode || "village").toLowerCase() === "resource"
     ? "resource"
     : "village";
@@ -1873,6 +1899,12 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
         settings.crannyDefenseLoopMinMinutes,
         settings.crannyDefenseLoopMaxMinutes,
         crannyStatus.nextInMinutes
+      )} ${color("|", ANSI.gray)} ${fmtLoop(
+        "NPC",
+        settings.npcCropConvertEnabled,
+        settings.npcCropConvertMinMinutes,
+        settings.npcCropConvertMaxMinutes,
+        npcCropStatus.nextInMinutes
       )}`
     );
     return;
@@ -1963,6 +1995,20 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
       `  ${color("Next Cranny Run:", ANSI.gray)} ${color(nextCrannyText, ANSI.bold, ANSI.cyan)}`
     );
   }
+
+  const npcModeLabel = settings.npcCropConvertEnabled ? "ON" : "OFF";
+  const npcModeColor = settings.npcCropConvertEnabled ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("NPC Crop Convert:", ANSI.gray)} ${color(npcModeLabel, ANSI.bold, npcModeColor)} ${color(`(${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes} min, ≥${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`, ANSI.bold)}`
+  );
+  if (settings.npcCropConvertEnabled) {
+    const nextNpcText = Number.isFinite(npcCropStatus.nextInMinutes)
+      ? `${npcCropStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next NPC Crop Check:", ANSI.gray)} ${color(nextNpcText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
 }
 
 function printSettings(settings, villageState) {
@@ -2038,6 +2084,10 @@ function printSettings(settings, villageState) {
       value: `${settings.crannyDefenseRoundRobinEnabled ? "ON" : "OFF"} (${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes} min)`
     },
     {
+      label: "npcCropConvert",
+      value: `${settings.npcCropConvertEnabled ? "ON" : "OFF"} (${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes} min, ≥${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}% → 0% crop)`
+    },
+    {
       label: "expansionPlannedTargets",
       value: `${settings.expansionUsePlannedTargets ? "ON" : "OFF"} (${settings.expansionPlannedTargetsFile})`
     },
@@ -2102,7 +2152,7 @@ function printSettingsMenu(settings, villageState) {
 
   section("Session and Farm");
   console.log(
-    `  ${opt("5")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}`
+    `  ${opt("5")}  Session Loop       ${dim("[")}${onOff(settings.sessionLoopEnabled)}${dim("]")}  ${tag("play", `${settings.playMinMinutes}-${settings.playMaxMinutes}m`)} ${tag("rest", `${settings.restMinMinutes}-${settings.restMaxMinutes}m`)}${settings.proxyRotateOnSessionRest !== false ? ` ${tag("proxy", "rotate")}` : ""}`
   );
   console.log(
     `  ${opt("6")}  Farmlist Loop      ${dim("[")}${onOff(settings.farmlistLoopEnabled)}${dim("]")}  ${tag("every", `${settings.farmlistLoopMinMinutes}-${settings.farmlistLoopMaxMinutes}m`)}`
@@ -2133,6 +2183,9 @@ function printSettingsMenu(settings, villageState) {
   );
   console.log(
     `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
+  );
+  console.log(
+    `  ${opt("N")}  NPC Crop Convert   ${dim("[")}${onOff(settings.npcCropConvertEnabled)}${dim("]")}  ${tag("every", `${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes}m`)}  ${tag("granary", `${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%`)}`
   );
   gap();
 
@@ -3379,13 +3432,31 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       const nextRestMaxText = (
         await askQuestion(rl, "Rest MAX minutes (Enter keep): ")
       ).trim();
+      const rotateDefault =
+        settings.proxyRotateOnSessionRest !== false ? "Y" : "N";
+      const rotateText = (
+        await askQuestion(
+          rl,
+          `Rotate proxy on each rest→wake (cycles full pool)? (Y/N, Enter keep=${rotateDefault}): `
+        )
+      )
+        .trim()
+        .toUpperCase();
+
+      let nextRotate = settings.proxyRotateOnSessionRest !== false;
+      if (rotateText === "Y") {
+        nextRotate = true;
+      } else if (rotateText === "N") {
+        nextRotate = false;
+      }
 
       const nextConfig = {
         enabled: nextEnabled,
         playMinMinutes: nextPlayMinText ? Number(nextPlayMinText) : settings.playMinMinutes,
         playMaxMinutes: nextPlayMaxText ? Number(nextPlayMaxText) : settings.playMaxMinutes,
         restMinMinutes: nextRestMinText ? Number(nextRestMinText) : settings.restMinMinutes,
-        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes
+        restMaxMinutes: nextRestMaxText ? Number(nextRestMaxText) : settings.restMaxMinutes,
+        proxyRotateOnSessionRest: nextRotate
       };
 
       try {
@@ -3395,9 +3466,16 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
         settings.playMaxMinutes = applied.playMaxMinutes;
         settings.restMinMinutes = applied.restMinMinutes;
         settings.restMaxMinutes = applied.restMaxMinutes;
+        settings.proxyRotateOnSessionRest = applied.proxyRotateOnSessionRest !== false;
 
+        const poolNote =
+          applied.proxyWillRotateOnRest && applied.proxyPoolCount
+            ? ` · rotate through ${applied.proxyPoolCount} proxies`
+            : applied.proxyRotateOnSessionRest
+              ? " · rotate on (need 2+ proxies)"
+              : " · same proxy on wake";
         logSuccess(
-          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m.`
+          `Session loop updated: ${applied.enabled ? "ON" : "OFF"}, play ${applied.playMinMinutes}-${applied.playMaxMinutes}m, rest ${applied.restMinMinutes}-${applied.restMaxMinutes}m${poolNote}.`
         );
       } catch (error) {
         logError(`Failed to update session loop: ${error.message || error}`);
@@ -3791,6 +3869,58 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "N") {
+      const enabledText = (
+        await askQuestion(rl, "Enable NPC crop convert watcher? (Y/N, Enter keep): ")
+      )
+        .trim()
+        .toUpperCase();
+
+      let nextEnabled = settings.npcCropConvertEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "NPC crop convert MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "NPC crop convert MAX minutes (Enter keep): ")
+      ).trim();
+      const nextRatioText = (
+        await askQuestion(
+          rl,
+          `Granary trigger % (e.g. 95, Enter keep ${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}): `
+        )
+      ).trim();
+
+      if (!runtimeControls.updateNpcCropConvertLoopConfig) {
+        logWarn("NPC crop convert update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateNpcCropConvertLoopConfig({
+          enabled: nextEnabled,
+          minMinutes: nextMinText ? Number(nextMinText) : settings.npcCropConvertMinMinutes,
+          maxMinutes: nextMaxText ? Number(nextMaxText) : settings.npcCropConvertMaxMinutes,
+          granaryRatio: nextRatioText ? Number(nextRatioText) : settings.npcCropConvertGranaryRatio
+        });
+        settings.npcCropConvertEnabled = applied.enabled;
+        settings.npcCropConvertMinMinutes = applied.minMinutes;
+        settings.npcCropConvertMaxMinutes = applied.maxMinutes;
+        settings.npcCropConvertGranaryRatio = applied.granaryRatio;
+        logSuccess(
+          `NPC crop convert: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, granary ≥${Math.round(applied.granaryRatio * 100)}% → 0% crop / wood·clay·iron.`
+        );
+      } catch (error) {
+        logWarn(`Could not update NPC crop convert: ${error.message || error}`);
+      }
+      continue;
+    }
+
     if (input === "V") {
       settings.resourceCirculationExpansionEnabled = !settings.resourceCirculationExpansionEnabled;
       if (runtimeControls.persistSettings) {
@@ -3802,7 +3932,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, T, U, I, W, A, E, K, H, P, V, B, or Q.");
+    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, N, T, U, I, W, A, E, K, H, P, V, B, or Q.");
   }
 }
 
@@ -5185,6 +5315,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
   let builderLoopTimer = null;
   let crannyDefenseLoopTimer = null;
   let raidEvacuationLoopTimer = null;
+  let npcCropConvertLoopTimer = null;
   let sigintHandler = null;
   const raidEvacuationByVillage = new Map();
   const raidEvacuationSkipLogAtByVillage = new Map();
@@ -5246,6 +5377,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let top10TrackingResumeWaitLogged = false;
     let lastTop10TrackingAction = null;
     let top10TrackingCompletedCount = 0;
+    let nextNpcCropConvertRunAt = null;
+    let lastNpcCropConvertDelayMinutes = null;
+    let npcCropConvertResumeWaitLogged = false;
+    let npcCropConvertRoundRobinIndex = 0;
     let builderResumeWaitLogged = false;
     let builderTemplateDeferredForCrannyLogged = false;
     let builderVillageWaitLastLogAt = null;
@@ -7999,6 +8134,137 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       raidEvacuationLoopTimer = setTimeout(() => void runRaidEvacuationScheduledTick(), pollMs);
     };
 
+    const cancelNpcCropConvertLoopTimer = () => {
+      if (npcCropConvertLoopTimer) {
+        clearTimeout(npcCropConvertLoopTimer);
+        npcCropConvertLoopTimer = null;
+      }
+      nextNpcCropConvertRunAt = null;
+    };
+
+    const pickNextNpcCropConvertDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (
+        lastNpcCropConvertDelayMinutes !== null &&
+        max > min &&
+        next === lastNpcCropConvertDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastNpcCropConvertDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleNpcCropConvertLoop = (options = {}) => {
+      cancelNpcCropConvertLoopTimer();
+      if (done || !settings.npcCropConvertEnabled) {
+        return;
+      }
+
+      const min = Math.max(1, Math.floor(Number(settings.npcCropConvertMinMinutes) || 10));
+      const max = Math.max(min, Math.floor(Number(settings.npcCropConvertMaxMinutes) || 20));
+      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      let delayMs;
+      if (retryMs > 0) {
+        delayMs = retryMs;
+      } else {
+        const delayMinutes = pickNextNpcCropConvertDelayMinutes(min, max);
+        delayMs = delayMinutes * 60 * 1000;
+        logInfo(
+          `[NPC Crop] Next granary check in ${delayMinutes} minute(s). (threshold ${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`
+        );
+      }
+      nextNpcCropConvertRunAt = Date.now() + delayMs;
+
+      npcCropConvertLoopTimer = setTimeout(() => {
+        void (async () => {
+          if (done || !settings.npcCropConvertEnabled) {
+            scheduleNpcCropConvertLoop();
+            return;
+          }
+          if (actionInProgress) {
+            scheduleNpcCropConvertLoop({ retryMs: 45000 });
+            return;
+          }
+          const automationStatus = runtimeControls.getAutomationStatus
+            ? runtimeControls.getAutomationStatus()
+            : { paused: false, reason: "online" };
+          if (automationStatus.paused) {
+            if (!npcCropConvertResumeWaitLogged) {
+              logInfo(
+                `[NPC Crop] Paused (${automationStatus.reason || "paused"}). Waiting for session to resume...`
+              );
+              npcCropConvertResumeWaitLogged = true;
+            }
+            scheduleNpcCropConvertLoop({ retryMs: 60000 });
+            return;
+          }
+          npcCropConvertResumeWaitLogged = false;
+
+          let deferFullReschedule = false;
+          await runAction("NPC Crop Convert", async () => {
+            const result = await npcCropConvert.runNpcCropConvertRoundRobin(
+              getPage(),
+              settings,
+              villageState.villages,
+              { roundRobinIndex: npcCropConvertRoundRobinIndex }
+            );
+            if (Number.isFinite(Number(result.roundRobinIndex))) {
+              npcCropConvertRoundRobinIndex = Number(result.roundRobinIndex);
+            }
+            const label = result.checkedVillageName
+              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+              : result.checkedVillageId
+                ? `vid=${result.checkedVillageId}`
+                : "?";
+            if (result.status === "npc_ok") {
+              logSuccess(
+                `[NPC Crop] ${label}: converted crop → wood/clay/iron (${result.message || "ok"}).`
+              );
+              recordAction({
+                actionType: "npc.crop_convert",
+                status: "success",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  before: result.before || null,
+                  desired: result.afterDesired || null,
+                  granaryPercent: result.granaryPercent
+                }
+              });
+            } else if (result.status === "npc_below_threshold") {
+              logInfo(`[NPC Crop] ${label}: ${result.message}`);
+            } else if (result.status === "npc_no_candidates") {
+              logWarn(`[NPC Crop] ${result.message}`);
+            } else if (result.status === "npc_marketplace_busy") {
+              logInfo(`[NPC Crop] ${label}: ${result.message}`);
+              deferFullReschedule = true;
+            } else {
+              logWarn(`[NPC Crop] ${label}: ${result.message || result.status}`);
+              recordAction({
+                actionType: "npc.crop_convert",
+                status: "failed",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  status: result.status
+                },
+                errorMessage: result.message || result.status
+              });
+            }
+          }).catch((error) => {
+            logWarn(`[NPC Crop] Tick failed: ${error.message || error}`);
+          });
+
+          if (deferFullReschedule) {
+            scheduleNpcCropConvertLoop({ retryMs: 90000 });
+          } else {
+            scheduleNpcCropConvertLoop();
+          }
+        })();
+      }, delayMs);
+    };
+
     const cancelActivitySimulationLoopTimer = () => {
       if (activitySimulationLoopTimer) {
         clearTimeout(activitySimulationLoopTimer);
@@ -8519,6 +8785,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const top10NextInMinutes = nextTop10TrackingRunAt
         ? Math.max(0, Math.ceil((nextTop10TrackingRunAt - Date.now()) / 60000))
         : null;
+      const npcCropNextInMinutes = nextNpcCropConvertRunAt
+        ? Math.max(0, Math.ceil((nextNpcCropConvertRunAt - Date.now()) / 60000))
+        : null;
 
       const cacheKey = [
         automationStatus.paused,
@@ -8530,6 +8799,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.crannyDefenseRoundRobinEnabled,
         settings.activitySimulationEnabled,
         settings.top10TrackingEnabled,
+        settings.npcCropConvertEnabled,
         villageState.selectedVillageId,
         villageState.activeVillageId,
         villageState.villages.length,
@@ -8554,6 +8824,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           if (snap.loops.cranny) snap.loops.cranny.nextInMinutes = crannyNextInMinutes;
           if (snap.loops.activity) snap.loops.activity.nextInMinutes = activityNextInMinutes;
           if (snap.loops.top10) snap.loops.top10.nextInMinutes = top10NextInMinutes;
+          if (snap.loops.npcCrop) snap.loops.npcCrop.nextInMinutes = npcCropNextInMinutes;
         }
         if (runtimeControls.getSessionLoopStatus) {
           snap.sessionLoop = runtimeControls.getSessionLoopStatus();
@@ -8608,6 +8879,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         completedCount: top10TrackingCompletedCount,
         logFile: settings.top10TrackingLogFile || DEFAULT_TOP10_LOG_FILE
       };
+      const npcCropLoopStatus = {
+        enabled: settings.npcCropConvertEnabled,
+        minMinutes: settings.npcCropConvertMinMinutes,
+        maxMinutes: settings.npcCropConvertMaxMinutes,
+        nextInMinutes: npcCropNextInMinutes,
+        granaryRatio: settings.npcCropConvertGranaryRatio
+      };
       const selectedVillage =
         villageState.villages.find((v) => v.id === villageState.selectedVillageId) || null;
       const activeVillage =
@@ -8644,7 +8922,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           troop: troopLoopStatus,
           cranny: crannyLoopStatus,
           activity: activityLoopStatus,
-          top10: top10LoopStatus
+          top10: top10LoopStatus,
+          npcCrop: npcCropLoopStatus
         },
         activitySimulation: buildActivitySimulationStatus(),
         top10Tracking: buildTop10TrackingStatus(),
@@ -8686,6 +8965,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
       if (runtimeControls.updateProxySettings) {
         dashboardBridge.setProxySettingsUpdater((patch) => runtimeControls.updateProxySettings(patch));
+      }
+      if (runtimeControls.getSessionLoopStatus) {
+        dashboardBridge.setSessionLoopProvider(() => runtimeControls.getSessionLoopStatus());
+      }
+      if (runtimeControls.updateSessionLoopConfig) {
+        dashboardBridge.setSessionLoopUpdater((patch) =>
+          runtimeControls.updateSessionLoopConfig(patch || {})
+        );
       }
       if (runtimeControls.getSessionPresenceReport) {
         dashboardBridge.setSessionPresenceReportProvider((options) =>
@@ -8729,12 +9016,19 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           ? Math.max(0, Math.ceil((nextCrannyDefenseRunAt - Date.now()) / 60000))
           : null
       };
+      const npcCropLoopStatus = {
+        enabled: settings.npcCropConvertEnabled,
+        nextInMinutes: nextNpcCropConvertRunAt
+          ? Math.max(0, Math.ceil((nextNpcCropConvertRunAt - Date.now()) / 60000))
+          : null
+      };
       printSessionLoopStatus(settings, {
         sessionLoop: sessionLoopStatus,
         farmlistLoop: farmlistLoopStatus,
         builderLoop: builderLoopStatus,
         troopLoop: troopLoopStatus,
-        crannyLoop: crannyLoopStatus
+        crannyLoop: crannyLoopStatus,
+        npcCropLoop: npcCropLoopStatus
       }, activeBuilderPlanMode);
       printCompactMenuKeys(settings);
       printVillageContextStatus(villageState, settings);
@@ -8762,6 +9056,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       scheduleActivitySimulationLoop();
       scheduleTop10TrackingLoop();
       scheduleRaidEvacuationLoop();
+      scheduleNpcCropConvertLoop();
       if (dashboardBridge) {
         dashboardBridge.publishSnapshot({ force: true });
         logInfo(`[Dashboard] Villages loaded — web UI ready`);
@@ -8839,6 +9134,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleTop10TrackingLoop,
         "Top10"
       );
+      check(
+        settings.npcCropConvertEnabled,
+        nextNpcCropConvertRunAt,
+        scheduleNpcCropConvertLoop,
+        "NPC Crop"
+      );
     }, 60000);
 
     let menuNeedsFullRefresh = true;
@@ -8902,7 +9203,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (
         dashboardMode &&
         !dashboardNoWait.has(input) &&
-        !input.startsWith("@SELECT-VILLAGE ")
+        !input.startsWith("@SELECT-VILLAGE ") &&
+        input !== "@RENAME-PENDING"
       ) {
         if (!(await waitForActionIdle("Dashboard command"))) {
           logWarn(`[Dashboard] Command "${rawInput}" timed out — session still busy`);
@@ -9451,14 +9753,56 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      if (input === "5") {
+      if (input === "5" || input === "@RENAME-PENDING") {
         const startedAt = Date.now();
-        await runAction("Expansion / Residence Check", async () => {
+        const renameOnly = input === "@RENAME-PENDING";
+        await runAction(renameOnly ? "Pending Village Rename" : "Expansion / Residence Check", async () => {
           const selectedVillage = getSelectedVillage();
-          if (!selectedVillage) {
+          if (!selectedVillage && !renameOnly) {
             logWarn("No village selected. Use V to select a village first.");
             return;
           }
+
+          const runPendingVillageRenames = async (sourceLabel = "Rename") => {
+            await refreshVillageState({ navigateToStatusPage: true, silent: true }).catch(() => null);
+            const pendingResult = await villageExpansion.processPendingVillageNames(
+              getPage(),
+              villageState.villages,
+              settings
+            );
+            if (!pendingResult || pendingResult.status === "pending_empty") {
+              return pendingResult;
+            }
+            printSubDivider("PENDING VILLAGE NAMES");
+            printKeyValueRows([
+              { label: "Status", value: pendingResult.status },
+              { label: "Waiting", value: String(pendingResult.waitingCount ?? 0) },
+              { label: "Renamed", value: String(pendingResult.renamedCount ?? 0) },
+              { label: "Message", value: pendingResult.message || "" }
+            ]);
+            for (const item of pendingResult.results || []) {
+              const target =
+                item.target && Number.isFinite(item.target.x) && Number.isFinite(item.target.y)
+                  ? `(${item.target.x}|${item.target.y})`
+                  : "?";
+              if (item.status === "rename_ok") {
+                logSuccess(`[${sourceLabel}] ${target} → ${item.villageName}`);
+              } else if (item.status === "rename_already") {
+                logInfo(`[${sourceLabel}] ${target} already named ${item.villageName}`);
+              } else if (item.status === "pending_waiting") {
+                logInfo(`[${sourceLabel}] Waiting for village at ${target}`);
+              } else {
+                logWarn(`[${sourceLabel}] ${target}: ${item.message || item.status}`);
+              }
+            }
+            return pendingResult;
+          };
+
+          if (renameOnly) {
+            await runPendingVillageRenames("Rename");
+            return;
+          }
+
           logInfo("Running: Expansion / Residence Check...");
           const result = await runWithRandomDelay(
             settings,
@@ -9527,21 +9871,61 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               () => cancelRequested
             );
 
-            if (
-              settleResult &&
-              settleResult.status === "settle_dispatched" &&
-              settleResult.targetSource === "planned" &&
-              Number.isFinite(settleResult.plannedTargetIndex)
-            ) {
-              const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
-              const currentTargets = loaded.ok ? loaded.targets : [];
-              if (settleResult.plannedTargetIndex >= 0 && settleResult.plannedTargetIndex < currentTargets.length) {
-                currentTargets.splice(settleResult.plannedTargetIndex, 1);
-                const savedPath = savePlannedSettlementTargetsToFile(
-                  settings.expansionPlannedTargetsFile,
-                  currentTargets
+            if (settleResult && settleResult.status === "settle_dispatched") {
+              let nameForVillage = settleResult.villageName || null;
+              if (
+                settleResult.targetSource === "planned" &&
+                Number.isFinite(settleResult.plannedTargetIndex)
+              ) {
+                const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
+                const currentTargets = loaded.ok ? loaded.targets : [];
+                if (settleResult.plannedTargetIndex >= 0 && settleResult.plannedTargetIndex < currentTargets.length) {
+                  const usedTarget = currentTargets[settleResult.plannedTargetIndex];
+                  if (!nameForVillage && usedTarget && usedTarget.villageName) {
+                    nameForVillage = usedTarget.villageName;
+                  }
+                  if (nameForVillage || (usedTarget && usedTarget.villageName)) {
+                    const queued = villageExpansion.queuePendingVillageName(
+                      {
+                        x: settleResult.target.x,
+                        y: settleResult.target.y,
+                        mapTileId: settleResult.mapTileId || (usedTarget && usedTarget.mapTileId) || null,
+                        villageName: nameForVillage || usedTarget.villageName,
+                        fromVillageId: selectedVillage.id,
+                        fromVillageName: selectedVillage.name
+                      },
+                      settings
+                    );
+                    if (queued.ok) {
+                      logInfo(
+                        `Queued rename at (${settleResult.target.x}|${settleResult.target.y}) → ${queued.entry.villageName}`
+                      );
+                    }
+                  }
+                  currentTargets.splice(settleResult.plannedTargetIndex, 1);
+                  const savedPath = savePlannedSettlementTargetsToFile(
+                    settings.expansionPlannedTargetsFile,
+                    currentTargets
+                  );
+                  logInfo(`Removed used planned target from ${savedPath}. Remaining: ${currentTargets.length}`);
+                }
+              } else if (nameForVillage && settleResult.target) {
+                const queued = villageExpansion.queuePendingVillageName(
+                  {
+                    x: settleResult.target.x,
+                    y: settleResult.target.y,
+                    mapTileId: settleResult.mapTileId || null,
+                    villageName: nameForVillage,
+                    fromVillageId: selectedVillage.id,
+                    fromVillageName: selectedVillage.name
+                  },
+                  settings
                 );
-                logInfo(`Removed used planned target from ${savedPath}. Remaining: ${currentTargets.length}`);
+                if (queued.ok) {
+                  logInfo(
+                    `Queued rename at (${settleResult.target.x}|${settleResult.target.y}) → ${queued.entry.villageName}`
+                  );
+                }
               }
             }
 
@@ -9564,6 +9948,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }
             }
           }
+
+          await runPendingVillageRenames("Rename");
+
           recordAction({
             actionType: "village.expansion",
             status: settleResult
@@ -9740,6 +10127,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleActivitySimulationLoop();
         scheduleTop10TrackingLoop();
         scheduleRaidEvacuationLoop();
+        scheduleNpcCropConvertLoop();
         continue;
       }
 
@@ -9794,6 +10182,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     if (raidEvacuationLoopTimer) {
       clearTimeout(raidEvacuationLoopTimer);
       raidEvacuationLoopTimer = null;
+    }
+    if (npcCropConvertLoopTimer) {
+      clearTimeout(npcCropConvertLoopTimer);
+      npcCropConvertLoopTimer = null;
     }
     menuRl.close();
   }

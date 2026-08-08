@@ -17,7 +17,8 @@ BOT_SESSION="${BOT_SESSION:-nexian-dani}"
 NET_SESSION="${NET_SESSION:-net-usage}"
 KEEP_SESSION="${KEEP_SESSION:-nexian-keep}"
 DASH_URL="${DASH_URL:-http://127.0.0.1:3847/api/status}"
-STALE_MINUTES="${STALE_MINUTES:-20}"
+# Must exceed SESSION_REST_MAX_MINUTES so intentional rest never looks like a stall.
+STALE_MINUTES="${STALE_MINUTES:-25}"
 CHECK_SECONDS="${CHECK_SECONDS:-15}"
 # After a restart, wait this long before treating a still-old log.jsonl as stalled.
 # Prevents restart loops while the bot is logging in / waiting for the first loop tick.
@@ -127,6 +128,22 @@ automation_expected() {
   rg -q '^(FARMLIST_LOOP_ENABLED|BUILDER_LOOP_ENABLED|TROOP_TRAINING_ROUND_ROBIN_ENABLED|TOP10_TRACKING_ENABLED|ACTIVITY_SIMULATION_ENABLED)=true' "$ROOT/.env" 2>/dev/null
 }
 
+# Returns 1 when automation is intentionally offline (session rest / relogin / reconnect).
+# Keep-alive must not restart the bot during these windows — only real stalls while online.
+automation_intentionally_off() {
+  curl -sf --max-time 5 "$DASH_URL" 2>/dev/null | python3 -c 'import json,sys
+try:
+  a=(json.load(sys.stdin).get("status") or {}).get("automation") or {}
+  reason=str(a.get("reason") or "").lower()
+  paused=bool(a.get("paused"))
+  intentional=paused or reason in {
+    "resting","relogin","reconnecting","logging_in","starting","manual_pause","stopped"
+  }
+  print("1" if intentional else "0")
+except Exception:
+  print("0")' 2>/dev/null || echo 0
+}
+
 log "keep-alive starting (stale=${STALE_MINUTES}m check=${CHECK_SECONDS}s grace=${STALE_GRACE_MINUTES}m)"
 ensure_session "$BOT_SESSION"
 ensure_session "$NET_SESSION"
@@ -134,6 +151,10 @@ start_net_usage
 
 if ! pane_running_login || ! dashboard_ok; then
   restart_bot "initial ensure"
+else
+  # Bot already healthy (e.g. ensure restarted keep-alive only) — start grace clock.
+  LAST_RESTART_EPOCH=$(date +%s)
+  log "bot already up — armed restart grace from now"
 fi
 
 while true; do
@@ -142,7 +163,13 @@ while true; do
   if ! pane_running_login; then
     restart_bot "login.js not running"
   elif ! dashboard_ok; then
-    restart_bot "dashboard API down"
+    # During session rest the dashboard stays up; if it is down, recover.
+    # If status flickers mid-wake, prefer a short retry over an immediate kill.
+    if [[ "$(automation_intentionally_off)" == "1" ]]; then
+      log "dashboard briefly unreachable during intentional off — retry next tick"
+    else
+      restart_bot "dashboard API down"
+    fi
   else
     age=$(file_age_minutes "$ROOT/log.jsonl")
     grace_age=$(minutes_since_restart)
@@ -151,20 +178,10 @@ while true; do
       if [[ "$age" -ge "$STALE_MINUTES" ]]; then
         if [[ "$grace_age" -lt "$STALE_GRACE_MINUTES" ]]; then
           log "log.jsonl stale ${age}m but within ${STALE_GRACE_MINUTES}m post-restart grace — skip"
+        elif [[ "$(automation_intentionally_off)" == "1" ]]; then
+          log "log.jsonl stale ${age}m but intentional off (session rest / relogin) — skip restart"
         else
-          # During intentional session rest, automation is paused — don't thrash.
-          paused=$(curl -sf --max-time 5 "$DASH_URL" 2>/dev/null | python3 -c 'import json,sys
-try:
-  d=json.load(sys.stdin)["status"]
-  a=d.get("automation") or {}
-  print("1" if a.get("paused") else "0")
-except Exception:
-  print("0")' 2>/dev/null || echo 0)
-          if [[ "$paused" == "1" ]]; then
-            log "log.jsonl stale ${age}m but automation paused (likely session rest) — skip restart"
-          else
-            restart_bot "log.jsonl stale ${age}m while online"
-          fi
+          restart_bot "log.jsonl stale ${age}m while online"
         fi
       fi
     fi

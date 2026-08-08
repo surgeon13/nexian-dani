@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.23] — 2026-08-08
+
+### Added
+
+- **NPC crop convert watcher** — optional round-robin loop that checks village granaries on a min–max poll. When crop fills to the configured threshold (default **95%**), opens Marketplace → NPC Merchant via the **human path** (village center → Marketplace → NPC tab), with direct URL fallback `build.php?id=33&t=3&gid=17` (`NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`). Redistributes so **crop → 0%** and wood/clay/iron share the rest (warehouse-capped). Toggle in terminal **Settings → N** or `.env` (`NPC_CROP_CONVERT_*`). Costs in-game gold per exchange; disabled by default.
+
+## [1.8.22] — 2026-08-08
+
+### Changed
+
+- **Builder resource circulation prefers nearest donors** — when feeding an off-village (e.g. next to the capital), merchants prefer nearby **more-developed** donors (capital first) so a new village is not drained to feed the capital. Controlled by `RESOURCE_CIRCULATION_PREFER_NEAREST` (default true).
+
+## [1.8.21] — 2026-08-08
+
+### Added
+
+- **Post-settle village naming** — planned targets may include `villageName` (e.g. `5-MeO-DMT`). After settlers are dispatched, the name is queued in `templates/pending_village_names.json` and applied via Profile → Village name once the village appears at those coordinates. Expansion checks and `@rename-pending` process the queue.
+
+## [1.8.20] — 2026-08-08
+
+### Fixed
+
+- **Portal login picks GAME_HOST realm** — the marketing portal’s first Login button is Speed (`s2`). Login now opens `openLogin('s1')` (from `GAME_HOST`) and forces the form action to that realm before Enter Realm, so credentials no longer post to the wrong world and bounce back to `nexian.world`.
+
+## [1.8.19] — 2026-08-06
+
+### Added
+
+- **Settlement map-tile URL fallback** — planned targets may include `mapTileId` / `mapUrl` (e.g. `https://s1.nexian.world/village3.php?id=42423`). Expansion opens that direct tile link before falling back to map coordinates, so settling next to the capital stays reliable.
+
+## [1.8.18] — 2026-08-05
+
+### Fixed
+
+- **Keep-alive respects session rest** — stale `log.jsonl` during play/rest cycles no longer kills a healthy rest/relogin. Treats `paused` plus reasons `resting` / `relogin` / `reconnecting` / `logging_in` as intentional off. Default stale threshold raised to **25m** (above max rest 20m). Arms restart-grace when keep-alive starts while the bot is already up.
+
+## [1.8.17] — 2026-08-05
+
+### Fixed
+
+- **Session-rest proxy: rotate once per rest** — wake login retries reuse the same pool entry instead of advancing again, so failed logins no longer skip addresses. Logs show `#N/total` and `(rotated)` / `(retry same proxy)`.
+
+### Added
+
+- **`GET` / `POST /api/session-loop`** — live session play/rest + `proxyRotateOnSessionRest` without restart (same pattern as proxy-settings).
+- **Dashboard** — checkbox to rotate proxy on each session rest→wake; status strip shows play/rest ranges and rotate.
+- **Terminal menu [5]** — prompt for rotate-on-rest; confirms full-pool cycling when the pool has 2+.
+
+### Changed
+
+- Session-loop status includes `proxyActiveIndex`, `proxyActiveDisplay`, and `proxyWillRotateOnRest` for ops visibility.
+
 ## [1.8.16] — 2026-08-05
 
 ### Added
@@ -23,7 +75,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- **Keep-alive polls every 15s** (was 60s) — faster heartbeats and quicker restart when the bot/dashboard dies. Override with `CHECK_SECONDS`.
+- **Keep-alive polls every 15s** (default) — faster heartbeats and quicker restart when the bot/dashboard dies. Override with `CHECK_SECONDS`. Stale-log threshold defaults to **25m** so session-rest (≤20m) is not mistaken for a hang; keep-alive skips restarts while automation is resting/relogging.
 
 ## [1.8.13] — 2026-08-04
 

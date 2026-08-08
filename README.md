@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.16** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.23** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -15,7 +15,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
-| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat. |
+| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert. |
 | **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
@@ -25,11 +25,15 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
+- **NPC crop convert** — When granary fills to the threshold (default 95%), NPC-trade so crop becomes **0%** and wood/clay/iron share the rest. Round-robin one village per poll (`NPC_CROP_CONVERT_*`, Settings **N**). Costs gold in-game; off by default.
 - **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
 - **24/7 keep-alive** — `scripts/keep-alive.sh` polls every **15s** and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.22:** Resource circulation prefers nearest donors (capital → adjacent off-village).
+- **1.8.21:** Planned settlement targets can set `villageName`; bot renames the new village once founded.
+- **1.8.20:** Portal login opens the `GAME_HOST` realm (Prime/`s1`) instead of the first Speed/`s2` Login button.
 - **1.8.11:** Your pace cards for attack / defense / climbers / alliance / etc. (active vs wall `/h`).
 - **1.8.10:** Raid income hero — your Robbers loot normalized to active vs wall-clock `/h`, with settings context.
 - **1.8.9:** Top 10 dashboard + Δ/`/h` from all polls; 24/7 keep-alive; session wake recovery; proxy rotate-on-rest visibility; farmlist village pin; Palace expansion on realm host.
@@ -227,7 +231,16 @@ print("IP:", (s.get("account") or {}).get("publicAddress"))
 
 `GET /api/status` → `proxy.activeDisplay` / `proxy.active.server` and `account.publicAddress`. Session presence records the change as `relogin_proxy_next` (or apply/disable) with the new IP.
 
-With `PROXY_ROTATE_ON_SESSION_REST=true` (default when a pool exists), the session loop also advances to the next proxy on each rest→wake cycle.
+With `PROXY_ROTATE_ON_SESSION_REST=true` (default when a pool exists), the session loop advances to the **next** proxy on each rest→wake cycle (once per rest — wake retries keep the same entry so the full pool is visited in order). With `N` proxies, one full cycle ≈ `N × (avg play + avg rest)`.
+
+```bash
+# Live session loop + rotate-on-rest (no restart)
+curl -sS -X POST http://127.0.0.1:3847/api/session-loop \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"playMinMinutes":40,"playMaxMinutes":55,"restMinMinutes":10,"restMaxMinutes":20,"proxyRotateOnSessionRest":true}'
+
+curl -sS http://127.0.0.1:3847/api/session-loop
+```
 
 ---
 
@@ -401,6 +414,7 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
+- **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`
 - **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
 
 Settings changed from the **`S`** menu persist back into `.env` for the keys wired in `login.js` (`persistRuntimeSettings`).

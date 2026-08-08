@@ -156,6 +156,19 @@ const GAME_HOST = (() => {
   }
 })();
 const gameUrl = (pathAndQuery) => `${GAME_HOST}${pathAndQuery}`;
+
+/** Portal world id from GAME_HOST (s1, s2, …). Empty when GAME_HOST is the marketing portal. */
+function portalServerIdFromGameHost(gameHost = GAME_HOST) {
+  try {
+    const host = new URL(gameHost).hostname.toLowerCase();
+    const match = host.match(/^(s\d+|test)\.nexian\.world$/i);
+    return match ? match[1].toLowerCase() : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+const PORTAL_SERVER_ID = portalServerIdFromGameHost();
 const headlessByDefault = !(
   process.argv.includes("--headed") || process.env.HEADLESS === "false"
 );
@@ -327,11 +340,31 @@ const settings = {
     String(process.env.RESOURCE_CIRCULATION_ENABLED || "false").toLowerCase() === "true",
   resourceCirculationExpansionEnabled:
     String(process.env.RESOURCE_CIRCULATION_EXPANSION_ENABLED || "false").toLowerCase() === "true",
+  resourceCirculationPreferNearest:
+    String(process.env.RESOURCE_CIRCULATION_PREFER_NEAREST || "true").toLowerCase() === "true",
   resourceCirculationReceiverMaxFillRatio: numberEnv("RESOURCE_CIRCULATION_RECEIVER_MAX_FILL_RATIO", 0.8),
   resourceCirculationMaxDonors: numberEnv("RESOURCE_CIRCULATION_MAX_DONORS", 3),
   resourceCirculationBuilderMaxDonors: numberEnv("RESOURCE_CIRCULATION_BUILDER_MAX_DONORS", 1),
   resourceCirculationBuilderMerchantLoads: numberEnv("RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS", 4),
   resourceCirculationReservePerResource: numberEnv("RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE", 500),
+  npcCropConvertEnabled:
+    String(process.env.NPC_CROP_CONVERT_ENABLED || "false").toLowerCase() === "true",
+  npcCropConvertMinMinutes: numberEnv("NPC_CROP_CONVERT_MIN_MINUTES", 10),
+  npcCropConvertMaxMinutes: numberEnv("NPC_CROP_CONVERT_MAX_MINUTES", 20),
+  npcCropConvertGranaryRatio: (() => {
+    const raw = Number(process.env.NPC_CROP_CONVERT_GRANARY_RATIO);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+      return raw;
+    }
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+      return raw / 100;
+    }
+    return 0.95;
+  })(),
+  npcCropConvertExcludedVillageIds: String(
+    process.env.NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS || ""
+  ).trim(),
+  npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
   proxyRotateOnSessionRest:
     String(process.env.PROXY_ROTATE_ON_SESSION_REST ?? "true").toLowerCase() !== "false"
 };
@@ -460,11 +493,20 @@ function persistRuntimeSettings(selectedKeys) {
     EXPANSION_PLANNED_TARGETS_FILE: String(settings.expansionPlannedTargetsFile || ""),
     RESOURCE_CIRCULATION_ENABLED: settings.resourceCirculationEnabled ? "true" : "false",
     RESOURCE_CIRCULATION_EXPANSION_ENABLED: settings.resourceCirculationExpansionEnabled ? "true" : "false",
+    RESOURCE_CIRCULATION_PREFER_NEAREST: settings.resourceCirculationPreferNearest ? "true" : "false",
     RESOURCE_CIRCULATION_RECEIVER_MAX_FILL_RATIO: String(settings.resourceCirculationReceiverMaxFillRatio),
     RESOURCE_CIRCULATION_MAX_DONORS: String(settings.resourceCirculationMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MAX_DONORS: String(settings.resourceCirculationBuilderMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS: String(settings.resourceCirculationBuilderMerchantLoads),
     RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE: String(settings.resourceCirculationReservePerResource),
+    NPC_CROP_CONVERT_ENABLED: settings.npcCropConvertEnabled ? "true" : "false",
+    NPC_CROP_CONVERT_MIN_MINUTES: String(settings.npcCropConvertMinMinutes),
+    NPC_CROP_CONVERT_MAX_MINUTES: String(settings.npcCropConvertMaxMinutes),
+    NPC_CROP_CONVERT_GRANARY_RATIO: String(settings.npcCropConvertGranaryRatio),
+    NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS: String(settings.npcCropConvertExcludedVillageIds || ""),
+    NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID: String(
+      settings.npcCropConvertMarketplaceBuildingId || 33
+    ),
     ...proxyEnvValues(settings)
   };
 
@@ -544,6 +586,33 @@ function applySessionLoopDefaults() {
     settings.activitySimulationDwellMinMs,
     Math.floor(Number(settings.activitySimulationDwellMaxMs) || 6000)
   );
+
+  const npcCropConvertLoop = normalizeRange(
+    settings.npcCropConvertMinMinutes,
+    settings.npcCropConvertMaxMinutes,
+    10,
+    20
+  );
+  settings.npcCropConvertMinMinutes = npcCropConvertLoop.min;
+  settings.npcCropConvertMaxMinutes = npcCropConvertLoop.max;
+  {
+    const raw = Number(settings.npcCropConvertGranaryRatio);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+      settings.npcCropConvertGranaryRatio = raw;
+    } else if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+      settings.npcCropConvertGranaryRatio = raw / 100;
+    } else {
+      settings.npcCropConvertGranaryRatio = 0.95;
+    }
+  }
+  settings.npcCropConvertExcludedVillageIds = String(
+    settings.npcCropConvertExcludedVillageIds || ""
+  ).trim();
+  {
+    const buildingId = Math.floor(Number(settings.npcCropConvertMarketplaceBuildingId) || 33);
+    settings.npcCropConvertMarketplaceBuildingId =
+      Number.isFinite(buildingId) && buildingId > 0 ? buildingId : 33;
+  }
 
   const play = normalizeRange(settings.playMinMinutes, settings.playMaxMinutes, 60, 120);
   settings.playMinMinutes = play.min;
@@ -629,9 +698,126 @@ function syncSettingsGameHostFromPage(page, settings) {
   return origin;
 }
 
+async function selectPortalRealm(page, serverId = PORTAL_SERVER_ID) {
+  if (!serverId) {
+    return false;
+  }
+
+  // Prefer the realm card Login that calls openLogin('s1') / openLogin('s2').
+  // A generic first "Login" button on the page is usually Speed (s2).
+  const opened = await page.evaluate((id) => {
+    const want = String(id || "").toLowerCase();
+    if (!want) {
+      return { ok: false, how: "no-id" };
+    }
+
+    const buttons = Array.from(document.querySelectorAll("button, a, [role='button']"));
+    const byClickAttr = buttons.find((el) => {
+      const click = el.getAttribute("@click") || el.getAttribute("x-on:click") || "";
+      return new RegExp(`openLogin\\(['"]${want}['"]\\)`, "i").test(click);
+    });
+    if (byClickAttr && byClickAttr.offsetParent !== null) {
+      byClickAttr.click();
+      return { ok: true, how: "openLogin-attr" };
+    }
+
+    // Alpine component API when present on the journey modal root.
+    try {
+      const roots = Array.from(document.querySelectorAll("[x-data]"));
+      for (const root of roots) {
+        const stack = root._x_dataStack;
+        const data = stack && stack[0];
+        if (data && typeof data.openLogin === "function") {
+          data.openLogin(want);
+          return { ok: true, how: "alpine-openLogin" };
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+
+    // Last resort: set serverId + login view if Alpine state is already live.
+    try {
+      const roots = Array.from(document.querySelectorAll("[x-data]"));
+      for (const root of roots) {
+        const stack = root._x_dataStack;
+        const data = stack && stack[0];
+        if (data && Object.prototype.hasOwnProperty.call(data, "serverId")) {
+          data.serverId = want;
+          if (Object.prototype.hasOwnProperty.call(data, "view")) {
+            data.view = "login";
+          }
+          if (Object.prototype.hasOwnProperty.call(data, "journey")) {
+            data.journey = true;
+          }
+          return { ok: true, how: "alpine-serverId" };
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+
+    return { ok: false, how: "none" };
+  }, serverId);
+
+  if (opened && opened.ok) {
+    console.log(`  Portal realm: ${serverId} (${opened.how})`);
+    return true;
+  }
+  return false;
+}
+
+async function ensurePortalLoginTargetsRealm(page, serverId = PORTAL_SERVER_ID) {
+  if (!serverId) {
+    return;
+  }
+
+  await page.evaluate((id) => {
+    const want = String(id || "").toLowerCase();
+    if (!want) {
+      return;
+    }
+    const servers = window.__nexianServers || {};
+    const entry = servers[want];
+    const base = entry && entry.baseUrl ? String(entry.baseUrl).replace(/\/+$/, "") : "";
+    const action = base ? `${base}/index.php?from=apex` : "";
+
+    try {
+      const roots = Array.from(document.querySelectorAll("[x-data]"));
+      for (const root of roots) {
+        const stack = root._x_dataStack;
+        const data = stack && stack[0];
+        if (data && Object.prototype.hasOwnProperty.call(data, "serverId")) {
+          data.serverId = want;
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+
+    const loginForm = document.querySelector("form.jform-login, form.journey-form.jform-login");
+    if (loginForm && action) {
+      loginForm.setAttribute("action", action);
+      try {
+        loginForm.action = action;
+      } catch (_error) {
+        // ignore
+      }
+    }
+
+    const hiddenServer = document.querySelector(
+      'form.jform-login input[name="server_id"], form.journey-form input[name="server_id"]'
+    );
+    if (hiddenServer) {
+      hiddenServer.value = want;
+    }
+  }, serverId);
+}
+
 async function openNexianPortalLoginForm(page) {
   const portalUser = page.locator('input[placeholder="Enter your username"]');
   if (await portalUser.isVisible().catch(() => false)) {
+    await ensurePortalLoginTargetsRealm(page);
     return;
   }
 
@@ -641,16 +827,21 @@ async function openNexianPortalLoginForm(page) {
     await page.waitForTimeout(400);
   }
 
-  await page.evaluate(() => {
-    const btn = Array.from(document.querySelectorAll("button")).find(
-      (el) => /^login$/i.test((el.textContent || "").trim()) && el.offsetParent !== null
-    );
-    if (btn) {
-      btn.click();
-    }
-  });
+  const realmOpened = await selectPortalRealm(page);
+  if (!realmOpened) {
+    // Fallback: first visible Login (often s2) — realm is corrected before submit.
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll("button")).find(
+        (el) => /^login$/i.test((el.textContent || "").trim()) && el.offsetParent !== null
+      );
+      if (btn) {
+        btn.click();
+      }
+    });
+  }
 
   await portalUser.waitFor({ state: "visible", timeout: 30000 });
+  await ensurePortalLoginTargetsRealm(page);
 }
 
 function isGameRealmHost(url) {
@@ -758,8 +949,39 @@ async function tryOpenStoredSession(browser, effectiveHeadless) {
 }
 
 async function submitPortalLogin(page) {
-  const enterRealm = page.getByRole("button", { name: /Enter Realm/i });
+  await ensurePortalLoginTargetsRealm(page);
+
+  const enterRealm = page
+    .locator('form.jform-login button[type="submit"], form.journey-form.jform-login button.journey-submit')
+    .or(page.getByRole("button", { name: /Enter Realm/i }))
+    .first();
   await enterRealm.waitFor({ state: "visible", timeout: 20000 });
+
+  if (PORTAL_SERVER_ID) {
+    const actionHost = await page.evaluate(() => {
+      const form = document.querySelector("form.jform-login, form.journey-form.jform-login");
+      try {
+        return form ? new URL(form.action, location.href).hostname : "";
+      } catch (_error) {
+        return "";
+      }
+    });
+    const expectedHost = (() => {
+      try {
+        return new URL(GAME_HOST).hostname.toLowerCase();
+      } catch (_error) {
+        return "";
+      }
+    })();
+    if (actionHost && expectedHost && actionHost.toLowerCase() !== expectedHost) {
+      console.log(
+        `  Portal form action host ${actionHost} != ${expectedHost}; forcing ${PORTAL_SERVER_ID}`
+      );
+      await ensurePortalLoginTargetsRealm(page);
+    } else if (expectedHost) {
+      console.log(`  Portal login → ${actionHost || expectedHost}`);
+    }
+  }
 
   const navigationPromise = page
     .waitForURL(
@@ -782,7 +1004,8 @@ async function submitPortalLogin(page) {
   await navigationPromise;
   if (!(await ensureLoggedInAtVillagePage(page))) {
     throw new Error(
-      `Login did not reach the game after Enter Realm (still at ${page.url()}).`
+      `Login did not reach the game after Enter Realm (still at ${page.url()}).` +
+        (PORTAL_SERVER_ID ? ` Expected realm ${PORTAL_SERVER_ID} (${GAME_HOST}).` : "")
     );
   }
   return true;
@@ -1089,7 +1312,7 @@ async function run() {
           return;
         }
 
-        prepareProxyForSessionRestRelogin();
+        prepareProxyForSessionRestRelogin({ rotate: true });
 
         const loginWithTimeout = async (label) => {
           const timeoutMs = 180000;
@@ -1124,7 +1347,8 @@ async function run() {
               `[Session Loop] Wake login attempt ${attempt}/3 failed: ${error.message || error}`
             );
             if (attempt < 3) {
-              prepareProxyForSessionRestRelogin();
+              // Same proxy — do not rotate again or we skip pool addresses.
+              prepareProxyForSessionRestRelogin({ rotate: false });
               await waitMs(5000);
             }
           }
@@ -1152,11 +1376,18 @@ async function run() {
   };
 
   const updateSessionLoopConfig = async (nextConfig) => {
-    settings.sessionLoopEnabled = Boolean(nextConfig.enabled);
+    if (nextConfig.enabled !== undefined) {
+      settings.sessionLoopEnabled =
+        nextConfig.enabled === true || String(nextConfig.enabled).toLowerCase() === "true";
+    }
 
     const play = normalizeRange(
-      Number(nextConfig.playMinMinutes),
-      Number(nextConfig.playMaxMinutes),
+      nextConfig.playMinMinutes !== undefined
+        ? Number(nextConfig.playMinMinutes)
+        : settings.playMinMinutes,
+      nextConfig.playMaxMinutes !== undefined
+        ? Number(nextConfig.playMaxMinutes)
+        : settings.playMaxMinutes,
       settings.playMinMinutes,
       settings.playMaxMinutes
     );
@@ -1164,32 +1395,46 @@ async function run() {
     settings.playMaxMinutes = play.max;
 
     const rest = normalizeRange(
-      Number(nextConfig.restMinMinutes),
-      Number(nextConfig.restMaxMinutes),
+      nextConfig.restMinMinutes !== undefined
+        ? Number(nextConfig.restMinMinutes)
+        : settings.restMinMinutes,
+      nextConfig.restMaxMinutes !== undefined
+        ? Number(nextConfig.restMaxMinutes)
+        : settings.restMaxMinutes,
       settings.restMinMinutes,
       settings.restMaxMinutes
     );
     settings.restMinMinutes = rest.min;
     settings.restMaxMinutes = rest.max;
 
+    if (
+      nextConfig.proxyRotateOnSessionRest !== undefined ||
+      nextConfig.rotateOnSessionRest !== undefined
+    ) {
+      const raw =
+        nextConfig.proxyRotateOnSessionRest !== undefined
+          ? nextConfig.proxyRotateOnSessionRest
+          : nextConfig.rotateOnSessionRest;
+      settings.proxyRotateOnSessionRest =
+        raw === true || String(raw).toLowerCase() === "true";
+    }
+
     persistRuntimeSettings([
       "SESSION_LOOP_ENABLED",
       "SESSION_PLAY_MIN_MINUTES",
       "SESSION_PLAY_MAX_MINUTES",
       "SESSION_REST_MIN_MINUTES",
-      "SESSION_REST_MAX_MINUTES"
+      "SESSION_REST_MAX_MINUTES",
+      "PROXY_ROTATE_ON_SESSION_REST"
     ]);
 
     scheduleNextSessionCycle();
 
-    return {
-      enabled: settings.sessionLoopEnabled,
-      playMinMinutes: settings.playMinMinutes,
-      playMaxMinutes: settings.playMaxMinutes,
-      restMinMinutes: settings.restMinMinutes,
-      restMaxMinutes: settings.restMaxMinutes,
-      proxyRotateOnSessionRest: settings.proxyRotateOnSessionRest !== false
-    };
+    if (dashboardBridge) {
+      dashboardBridge.publishSnapshot({ force: true });
+    }
+
+    return getSessionLoopStatus();
   };
 
   const getSessionLoopStatus = () => {
@@ -1198,6 +1443,7 @@ async function run() {
       : null;
     const store = proxyPool.loadStore();
     const poolCount = Array.isArray(store.proxies) ? store.proxies.length : 0;
+    const activeIndex = poolCount ? Number(store.activeIndex) || 0 : null;
 
     return {
       enabled: settings.sessionLoopEnabled,
@@ -1208,6 +1454,8 @@ async function run() {
       restMaxMinutes: settings.restMaxMinutes,
       proxyRotateOnSessionRest: settings.proxyRotateOnSessionRest !== false,
       proxyPoolCount: poolCount,
+      proxyActiveIndex: activeIndex,
+      proxyActiveDisplay: formatProxyDisplay(settings, store),
       proxyWillRotateOnRest:
         settings.proxyRotateOnSessionRest !== false && poolCount > 1
     };
@@ -1387,15 +1635,21 @@ async function run() {
     }
   };
 
-  /** After session-loop rest, rotate proxy (if pool has 2+) and fresh-login through it. */
-  const prepareProxyForSessionRestRelogin = () => {
+  /** After session-loop rest, rotate proxy (if pool has 2+) and fresh-login through it.
+ *  Pass `{ rotate: false }` on wake retries so a failed login does not skip pool entries. */
+  const prepareProxyForSessionRestRelogin = (opts = {}) => {
+    const shouldRotate = opts.rotate !== false;
     const store = proxyPool.loadStore();
     if (!store.proxies.length) {
       clearSessionForProxyChange();
       return null;
     }
 
-    if (settings.proxyRotateOnSessionRest && store.proxies.length > 1) {
+    if (
+      shouldRotate &&
+      settings.proxyRotateOnSessionRest &&
+      store.proxies.length > 1
+    ) {
       proxyPool.rotateActive(store);
     }
 
@@ -1409,9 +1663,16 @@ async function run() {
       "PROXY_ROTATE_ON_SESSION_REST"
     ]);
     clearSessionForProxyChange();
+    const idx = Number(store.activeIndex) || 0;
+    const total = store.proxies.length;
     console.log(
       `[Session Loop] Re-login proxy: ${formatProxyDisplay(settings, store)}` +
-        (settings.proxyRotateOnSessionRest && store.proxies.length > 1 ? " (rotated)" : "")
+        ` (#${idx + 1}/${total})` +
+        (shouldRotate && settings.proxyRotateOnSessionRest && total > 1
+          ? " (rotated)"
+          : shouldRotate
+            ? ""
+            : " (retry same proxy)")
     );
     if (dashboardBridge) {
       dashboardBridge.publishSnapshot({ force: true });
@@ -1598,6 +1859,57 @@ async function run() {
       enabled: settings.troopTrainingRoundRobinEnabled,
       minMinutes: settings.troopTrainingLoopMinMinutes,
       maxMinutes: settings.troopTrainingLoopMaxMinutes
+    };
+  };
+
+  const updateNpcCropConvertLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.npcCropConvertEnabled = nextConfig.enabled;
+    }
+
+    const range = normalizeRange(
+      Number(nextConfig.minMinutes),
+      Number(nextConfig.maxMinutes),
+      settings.npcCropConvertMinMinutes,
+      settings.npcCropConvertMaxMinutes
+    );
+    settings.npcCropConvertMinMinutes = range.min;
+    settings.npcCropConvertMaxMinutes = range.max;
+
+    if (nextConfig.granaryRatio !== undefined) {
+      const raw = Number(nextConfig.granaryRatio);
+      if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+        settings.npcCropConvertGranaryRatio = raw;
+      } else if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+        settings.npcCropConvertGranaryRatio = raw / 100;
+      }
+    }
+    if (nextConfig.excludedVillageIds !== undefined) {
+      settings.npcCropConvertExcludedVillageIds = String(nextConfig.excludedVillageIds || "").trim();
+    }
+    if (nextConfig.marketplaceBuildingId !== undefined) {
+      const buildingId = Math.floor(Number(nextConfig.marketplaceBuildingId) || 0);
+      if (Number.isFinite(buildingId) && buildingId > 0) {
+        settings.npcCropConvertMarketplaceBuildingId = buildingId;
+      }
+    }
+
+    persistRuntimeSettings([
+      "NPC_CROP_CONVERT_ENABLED",
+      "NPC_CROP_CONVERT_MIN_MINUTES",
+      "NPC_CROP_CONVERT_MAX_MINUTES",
+      "NPC_CROP_CONVERT_GRANARY_RATIO",
+      "NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS",
+      "NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID"
+    ]);
+
+    return {
+      enabled: settings.npcCropConvertEnabled,
+      minMinutes: settings.npcCropConvertMinMinutes,
+      maxMinutes: settings.npcCropConvertMaxMinutes,
+      granaryRatio: settings.npcCropConvertGranaryRatio,
+      excludedVillageIds: settings.npcCropConvertExcludedVillageIds,
+      marketplaceBuildingId: settings.npcCropConvertMarketplaceBuildingId
     };
   };
 
@@ -1824,6 +2136,7 @@ async function run() {
           updateCrannyDefenseLoopConfig,
           updateActivitySimulationLoopConfig,
           updateTop10TrackingLoopConfig,
+          updateNpcCropConvertLoopConfig,
           updateDashboardDisplayConfig,
           async persistSettings(selectedKeys) {
             persistRuntimeSettings(selectedKeys);

@@ -1012,14 +1012,42 @@ async function circulateResourcesForBuild(getPage, settings, options = {}) {
       );
     }
 
+    const targetScore = advancementScore(target, planMode);
     const scored = donorPool
       .map((v) => ({
         donor: v,
         score: advancementScore(v, planMode),
-        dist: computeDistance(v, target)
+        dist: computeDistance(v, target),
+        isCapital: Boolean(v.isCapital)
       }))
       .sort((a, b) => {
+        const preferNearest =
+          options.preferNearest === true ||
+          String(settings.resourceCirculationPreferNearest || "").toLowerCase() === "true" ||
+          (options.preferNearest !== false && !options.settlementPrep);
+
+        if (preferNearest) {
+          // Prefer donors that are at least as developed as the receiver so a brand-new
+          // off-village is not emptied to feed the capital next door.
+          const aReady = a.score >= targetScore ? 1 : 0;
+          const bReady = b.score >= targetScore ? 1 : 0;
+          if (aReady !== bReady) {
+            return bReady - aReady;
+          }
+          const da = Number.isFinite(a.dist) ? a.dist : Number.POSITIVE_INFINITY;
+          const db = Number.isFinite(b.dist) ? b.dist : Number.POSITIVE_INFINITY;
+          if (da !== db) {
+            return da - db;
+          }
+          if (a.isCapital !== b.isCapital) {
+            return a.isCapital ? -1 : 1;
+          }
+          return b.score - a.score;
+        }
         if (b.score !== a.score) return b.score - a.score;
+        if (a.isCapital !== b.isCapital) {
+          return a.isCapital ? -1 : 1;
+        }
         return a.dist - b.dist;
       })
       .map((x) => x.donor);

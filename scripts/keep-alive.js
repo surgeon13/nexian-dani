@@ -19,7 +19,8 @@ const http = require("http");
 
 const ROOT = path.resolve(__dirname, "..");
 const CHECK_SECONDS = Number(process.env.CHECK_SECONDS || 15);
-const STALE_MINUTES = Number(process.env.STALE_MINUTES || 20);
+// Must exceed SESSION_REST_MAX_MINUTES so intentional rest never looks like a stall.
+const STALE_MINUTES = Number(process.env.STALE_MINUTES || 25);
 const STALE_GRACE_MINUTES = Number(process.env.STALE_GRACE_MINUTES || 5);
 const DASH_PORT = Number(process.env.DASHBOARD_PORT || 3847);
 const DASH_URL = process.env.DASH_URL || `http://127.0.0.1:${DASH_PORT}/api/status`;
@@ -207,9 +208,23 @@ async function tick() {
   }
 
   const status = statusPayload.status || statusPayload;
-  const paused = Boolean(status.automation && status.automation.paused);
-  if (paused) {
-    log(`log.jsonl stale ${age}m but automation paused (likely session rest) — skip restart`);
+  const automation = status.automation || {};
+  const reason = String(automation.reason || "").toLowerCase();
+  const intentionalOff =
+    Boolean(automation.paused) ||
+    [
+      "resting",
+      "relogin",
+      "reconnecting",
+      "logging_in",
+      "starting",
+      "manual_pause",
+      "stopped"
+    ].includes(reason);
+  if (intentionalOff) {
+    log(
+      `log.jsonl stale ${age}m but intentional off (${reason || "paused"}) — skip restart`
+    );
     return;
   }
   await restartBot(`log.jsonl stale ${age}m while online`);
@@ -222,6 +237,9 @@ async function main() {
   );
   if (!loginJsRunning() || !(await fetchStatus())) {
     await restartBot("initial ensure");
+  } else {
+    lastRestartEpoch = Date.now() / 1000;
+    log("bot already up — armed restart grace from now");
   }
   for (;;) {
     try {
