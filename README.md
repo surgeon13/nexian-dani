@@ -30,6 +30,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.20:** Portal login opens the `GAME_HOST` realm (Prime/`s1`) instead of the first Speed/`s2` Login button.
 - **1.8.11:** Your pace cards for attack / defense / climbers / alliance / etc. (active vs wall `/h`).
 - **1.8.10:** Raid income hero — your Robbers loot normalized to active vs wall-clock `/h`, with settings context.
 - **1.8.9:** Top 10 dashboard + Δ/`/h` from all polls; 24/7 keep-alive; session wake recovery; proxy rotate-on-rest visibility; farmlist village pin; Palace expansion on realm host.
