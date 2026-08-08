@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- **Builder resource circulation prefers nearest donors** — when feeding an off-village (e.g. next to the capital), merchants are chosen by distance (then capital, then advancement) instead of farthest advanced villages. Controlled by `RESOURCE_CIRCULATION_PREFER_NEAREST` (default true).
+- **Builder resource circulation prefers nearest donors** — when feeding an off-village (e.g. next to the capital), merchants prefer nearby **more-developed** donors (capital first) so a new village is not drained to feed the capital. Controlled by `RESOURCE_CIRCULATION_PREFER_NEAREST` (default true).
 
 ## [1.8.21] — 2026-08-08
 
