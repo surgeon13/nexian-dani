@@ -8957,7 +8957,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (
         dashboardMode &&
         !dashboardNoWait.has(input) &&
-        !input.startsWith("@SELECT-VILLAGE ")
+        !input.startsWith("@SELECT-VILLAGE ") &&
+        input !== "@RENAME-PENDING"
       ) {
         if (!(await waitForActionIdle("Dashboard command"))) {
           logWarn(`[Dashboard] Command "${rawInput}" timed out — session still busy`);

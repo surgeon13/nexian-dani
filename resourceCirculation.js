@@ -1016,10 +1016,30 @@ async function circulateResourcesForBuild(getPage, settings, options = {}) {
       .map((v) => ({
         donor: v,
         score: advancementScore(v, planMode),
-        dist: computeDistance(v, target)
+        dist: computeDistance(v, target),
+        isCapital: Boolean(v.isCapital)
       }))
       .sort((a, b) => {
+        const preferNearest =
+          options.preferNearest === true ||
+          String(settings.resourceCirculationPreferNearest || "").toLowerCase() === "true" ||
+          // Builder feeds (off-village from nearby capital): distance first.
+          (options.preferNearest !== false && !options.settlementPrep);
+        if (preferNearest) {
+          const da = Number.isFinite(a.dist) ? a.dist : Number.POSITIVE_INFINITY;
+          const db = Number.isFinite(b.dist) ? b.dist : Number.POSITIVE_INFINITY;
+          if (da !== db) {
+            return da - db;
+          }
+          if (a.isCapital !== b.isCapital) {
+            return a.isCapital ? -1 : 1;
+          }
+          return b.score - a.score;
+        }
         if (b.score !== a.score) return b.score - a.score;
+        if (a.isCapital !== b.isCapital) {
+          return a.isCapital ? -1 : 1;
+        }
         return a.dist - b.dist;
       })
       .map((x) => x.donor);

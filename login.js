@@ -340,6 +340,8 @@ const settings = {
     String(process.env.RESOURCE_CIRCULATION_ENABLED || "false").toLowerCase() === "true",
   resourceCirculationExpansionEnabled:
     String(process.env.RESOURCE_CIRCULATION_EXPANSION_ENABLED || "false").toLowerCase() === "true",
+  resourceCirculationPreferNearest:
+    String(process.env.RESOURCE_CIRCULATION_PREFER_NEAREST || "true").toLowerCase() === "true",
   resourceCirculationReceiverMaxFillRatio: numberEnv("RESOURCE_CIRCULATION_RECEIVER_MAX_FILL_RATIO", 0.8),
   resourceCirculationMaxDonors: numberEnv("RESOURCE_CIRCULATION_MAX_DONORS", 3),
   resourceCirculationBuilderMaxDonors: numberEnv("RESOURCE_CIRCULATION_BUILDER_MAX_DONORS", 1),
@@ -473,6 +475,7 @@ function persistRuntimeSettings(selectedKeys) {
     EXPANSION_PLANNED_TARGETS_FILE: String(settings.expansionPlannedTargetsFile || ""),
     RESOURCE_CIRCULATION_ENABLED: settings.resourceCirculationEnabled ? "true" : "false",
     RESOURCE_CIRCULATION_EXPANSION_ENABLED: settings.resourceCirculationExpansionEnabled ? "true" : "false",
+    RESOURCE_CIRCULATION_PREFER_NEAREST: settings.resourceCirculationPreferNearest ? "true" : "false",
     RESOURCE_CIRCULATION_RECEIVER_MAX_FILL_RATIO: String(settings.resourceCirculationReceiverMaxFillRatio),
     RESOURCE_CIRCULATION_MAX_DONORS: String(settings.resourceCirculationMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MAX_DONORS: String(settings.resourceCirculationBuilderMaxDonors),

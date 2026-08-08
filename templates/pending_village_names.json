@@ -1,14 +1,1 @@
-{
-  "pending": [
-    {
-      "x": 106,
-      "y": 22,
-      "mapTileId": 42423,
-      "villageName": "5-MeO-DMT",
-      "fromVillageId": 86450,
-      "fromVillageName": "4MMC",
-      "queuedAt": "2026-08-08T11:46:00.000Z",
-      "note": "Settlers already in transit from 4MMC; rename as soon as the village appears."
-    }
-  ]
-}
+{ "pending": [], "updatedAt": "2026-08-08T14:11:49.000Z" }
