@@ -150,6 +150,10 @@ function normalizeTargetObject(item) {
   if (item.fromVillageName) {
     out.fromVillageName = String(item.fromVillageName);
   }
+  const villageName = String(item.villageName || item.name || "").trim();
+  if (villageName) {
+    out.villageName = villageName;
+  }
   if (item.note) {
     out.note = String(item.note);
   }
@@ -9502,14 +9506,56 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         continue;
       }
 
-      if (input === "5") {
+      if (input === "5" || input === "@rename-pending") {
         const startedAt = Date.now();
-        await runAction("Expansion / Residence Check", async () => {
+        const renameOnly = input === "@rename-pending";
+        await runAction(renameOnly ? "Pending Village Rename" : "Expansion / Residence Check", async () => {
           const selectedVillage = getSelectedVillage();
-          if (!selectedVillage) {
+          if (!selectedVillage && !renameOnly) {
             logWarn("No village selected. Use V to select a village first.");
             return;
           }
+
+          const runPendingVillageRenames = async (sourceLabel = "Rename") => {
+            await refreshVillageState({ navigateToStatusPage: true, silent: true }).catch(() => null);
+            const pendingResult = await villageExpansion.processPendingVillageNames(
+              getPage(),
+              villageState.villages,
+              settings
+            );
+            if (!pendingResult || pendingResult.status === "pending_empty") {
+              return pendingResult;
+            }
+            printSubDivider("PENDING VILLAGE NAMES");
+            printKeyValueRows([
+              { label: "Status", value: pendingResult.status },
+              { label: "Waiting", value: String(pendingResult.waitingCount ?? 0) },
+              { label: "Renamed", value: String(pendingResult.renamedCount ?? 0) },
+              { label: "Message", value: pendingResult.message || "" }
+            ]);
+            for (const item of pendingResult.results || []) {
+              const target =
+                item.target && Number.isFinite(item.target.x) && Number.isFinite(item.target.y)
+                  ? `(${item.target.x}|${item.target.y})`
+                  : "?";
+              if (item.status === "rename_ok") {
+                logSuccess(`[${sourceLabel}] ${target} → ${item.villageName}`);
+              } else if (item.status === "rename_already") {
+                logInfo(`[${sourceLabel}] ${target} already named ${item.villageName}`);
+              } else if (item.status === "pending_waiting") {
+                logInfo(`[${sourceLabel}] Waiting for village at ${target}`);
+              } else {
+                logWarn(`[${sourceLabel}] ${target}: ${item.message || item.status}`);
+              }
+            }
+            return pendingResult;
+          };
+
+          if (renameOnly) {
+            await runPendingVillageRenames("Rename");
+            return;
+          }
+
           logInfo("Running: Expansion / Residence Check...");
           const result = await runWithRandomDelay(
             settings,
@@ -9578,21 +9624,61 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               () => cancelRequested
             );
 
-            if (
-              settleResult &&
-              settleResult.status === "settle_dispatched" &&
-              settleResult.targetSource === "planned" &&
-              Number.isFinite(settleResult.plannedTargetIndex)
-            ) {
-              const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
-              const currentTargets = loaded.ok ? loaded.targets : [];
-              if (settleResult.plannedTargetIndex >= 0 && settleResult.plannedTargetIndex < currentTargets.length) {
-                currentTargets.splice(settleResult.plannedTargetIndex, 1);
-                const savedPath = savePlannedSettlementTargetsToFile(
-                  settings.expansionPlannedTargetsFile,
-                  currentTargets
+            if (settleResult && settleResult.status === "settle_dispatched") {
+              let nameForVillage = settleResult.villageName || null;
+              if (
+                settleResult.targetSource === "planned" &&
+                Number.isFinite(settleResult.plannedTargetIndex)
+              ) {
+                const loaded = loadPlannedSettlementTargetsFromFile(settings.expansionPlannedTargetsFile);
+                const currentTargets = loaded.ok ? loaded.targets : [];
+                if (settleResult.plannedTargetIndex >= 0 && settleResult.plannedTargetIndex < currentTargets.length) {
+                  const usedTarget = currentTargets[settleResult.plannedTargetIndex];
+                  if (!nameForVillage && usedTarget && usedTarget.villageName) {
+                    nameForVillage = usedTarget.villageName;
+                  }
+                  if (nameForVillage || (usedTarget && usedTarget.villageName)) {
+                    const queued = villageExpansion.queuePendingVillageName(
+                      {
+                        x: settleResult.target.x,
+                        y: settleResult.target.y,
+                        mapTileId: settleResult.mapTileId || (usedTarget && usedTarget.mapTileId) || null,
+                        villageName: nameForVillage || usedTarget.villageName,
+                        fromVillageId: selectedVillage.id,
+                        fromVillageName: selectedVillage.name
+                      },
+                      settings
+                    );
+                    if (queued.ok) {
+                      logInfo(
+                        `Queued rename at (${settleResult.target.x}|${settleResult.target.y}) → ${queued.entry.villageName}`
+                      );
+                    }
+                  }
+                  currentTargets.splice(settleResult.plannedTargetIndex, 1);
+                  const savedPath = savePlannedSettlementTargetsToFile(
+                    settings.expansionPlannedTargetsFile,
+                    currentTargets
+                  );
+                  logInfo(`Removed used planned target from ${savedPath}. Remaining: ${currentTargets.length}`);
+                }
+              } else if (nameForVillage && settleResult.target) {
+                const queued = villageExpansion.queuePendingVillageName(
+                  {
+                    x: settleResult.target.x,
+                    y: settleResult.target.y,
+                    mapTileId: settleResult.mapTileId || null,
+                    villageName: nameForVillage,
+                    fromVillageId: selectedVillage.id,
+                    fromVillageName: selectedVillage.name
+                  },
+                  settings
                 );
-                logInfo(`Removed used planned target from ${savedPath}. Remaining: ${currentTargets.length}`);
+                if (queued.ok) {
+                  logInfo(
+                    `Queued rename at (${settleResult.target.x}|${settleResult.target.y}) → ${queued.entry.villageName}`
+                  );
+                }
               }
             }
 
@@ -9615,6 +9701,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }
             }
           }
+
+          await runPendingVillageRenames("Rename");
+
           recordAction({
             actionType: "village.expansion",
             status: settleResult

@@ -30,6 +30,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.21:** Planned settlement targets can set `villageName`; bot renames the new village once founded.
 - **1.8.20:** Portal login opens the `GAME_HOST` realm (Prime/`s1`) instead of the first Speed/`s2` Login button.
 - **1.8.11:** Your pace cards for attack / defense / climbers / alliance / etc. (active vs wall `/h`).
 - **1.8.10:** Raid income hero — your Robbers loot normalized to active vs wall-clock `/h`, with settings context.

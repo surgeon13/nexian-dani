@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const { buildSlotUrl } = require("./villageBuilder");
 
 const RESIDENCE_SLOT = 25;
@@ -9,6 +11,11 @@ const SETTLEMENT_RESOURCE_REQUIREMENT = {
   iron: 750,
   crop: 750
 };
+const DEFAULT_PENDING_VILLAGE_NAMES_FILE = path.resolve(
+  process.cwd(),
+  "templates",
+  "pending_village_names.json"
+);
 
 function normalizeText(value) {
   return String(value || "")
@@ -32,6 +39,291 @@ function resolveExpansionBaseUrl(settings) {
     }
   }
   return "https://nexian.world/village2.php";
+}
+
+function resolveGameOrigin(settings) {
+  const candidates = [
+    settings && settings.villageStatusUrl,
+    settings && settings.villageBuilderUrl,
+    resolveExpansionBaseUrl(settings)
+  ];
+  for (const candidate of candidates) {
+    try {
+      return new URL(String(candidate || "").trim()).origin;
+    } catch (_error) {
+      // try next
+    }
+  }
+  return "https://s1.nexian.world";
+}
+
+function resolvePendingVillageNamesPath(settings) {
+  const configured = settings && String(settings.pendingVillageNamesFile || "").trim();
+  if (configured) {
+    return path.isAbsolute(configured)
+      ? configured
+      : path.resolve(process.cwd(), configured);
+  }
+  return DEFAULT_PENDING_VILLAGE_NAMES_FILE;
+}
+
+function normalizePendingVillageNameEntry(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const x = Number(item.x);
+  const y = Number(item.y);
+  const villageName = String(item.villageName || item.name || "").trim();
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !villageName) {
+    return null;
+  }
+  const out = {
+    x: Math.trunc(x),
+    y: Math.trunc(y),
+    villageName
+  };
+  const mapTileId = Number(item.mapTileId ?? item.tileId ?? item.id);
+  if (Number.isFinite(mapTileId) && mapTileId > 0) {
+    out.mapTileId = Math.floor(mapTileId);
+  }
+  if (item.fromVillageId !== undefined) {
+    out.fromVillageId = item.fromVillageId;
+  }
+  if (item.fromVillageName) {
+    out.fromVillageName = String(item.fromVillageName);
+  }
+  if (item.queuedAt) {
+    out.queuedAt = String(item.queuedAt);
+  }
+  if (item.note) {
+    out.note = String(item.note);
+  }
+  return out;
+}
+
+function loadPendingVillageNames(settings = {}) {
+  const filePath = resolvePendingVillageNamesPath(settings);
+  if (!fs.existsSync(filePath)) {
+    return { ok: true, filePath, pending: [] };
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8") || "{}");
+    const raw = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.pending)
+        ? parsed.pending
+        : [];
+    return {
+      ok: true,
+      filePath,
+      pending: raw.map(normalizePendingVillageNameEntry).filter(Boolean)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      filePath,
+      pending: [],
+      message: error.message || String(error)
+    };
+  }
+}
+
+function savePendingVillageNames(pending, settings = {}) {
+  const filePath = resolvePendingVillageNamesPath(settings);
+  const parentDir = path.dirname(filePath);
+  if (!fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true });
+  }
+  const normalized = (Array.isArray(pending) ? pending : [])
+    .map(normalizePendingVillageNameEntry)
+    .filter(Boolean);
+  fs.writeFileSync(
+    filePath,
+    `${JSON.stringify({ pending: normalized, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    "utf8"
+  );
+  return { filePath, pending: normalized };
+}
+
+function queuePendingVillageName(entry, settings = {}) {
+  const normalized = normalizePendingVillageNameEntry(entry);
+  if (!normalized) {
+    return { ok: false, message: "Invalid pending village name entry." };
+  }
+  const loaded = loadPendingVillageNames(settings);
+  const pending = loaded.pending.slice();
+  const key = `${normalized.x}|${normalized.y}`;
+  const existingIndex = pending.findIndex((item) => `${item.x}|${item.y}` === key);
+  const nextEntry = {
+    ...normalized,
+    queuedAt: normalized.queuedAt || new Date().toISOString()
+  };
+  if (existingIndex >= 0) {
+    pending[existingIndex] = { ...pending[existingIndex], ...nextEntry };
+  } else {
+    pending.push(nextEntry);
+  }
+  const saved = savePendingVillageNames(pending, settings);
+  return { ok: true, ...saved, entry: nextEntry };
+}
+
+function findVillageByCoordinates(villages, x, y) {
+  const wantX = Number(x);
+  const wantY = Number(y);
+  if (!Number.isFinite(wantX) || !Number.isFinite(wantY)) {
+    return null;
+  }
+  return (Array.isArray(villages) ? villages : []).find(
+    (village) => Number(village && village.x) === wantX && Number(village && village.y) === wantY
+  ) || null;
+}
+
+async function renameVillage(page, village, newName, settings = {}) {
+  const desired = String(newName || "").trim();
+  if (!page || page.isClosed()) {
+    return { status: "rename_unavailable", message: "Session page is unavailable." };
+  }
+  if (!village || !Number.isFinite(Number(village.id))) {
+    return { status: "rename_no_village", message: "Village id is required to rename." };
+  }
+  if (!desired) {
+    return { status: "rename_invalid_name", message: "Village name is empty." };
+  }
+  if (String(village.name || "").trim() === desired) {
+    return {
+      status: "rename_already",
+      villageId: village.id,
+      villageName: desired,
+      message: `Village already named ${desired}.`
+    };
+  }
+
+  const origin = resolveGameOrigin(settings);
+  const statusUrl = String(settings.villageStatusUrl || `${origin}/village1.php`).trim();
+  let switchUrl = statusUrl;
+  try {
+    const parsed = new URL(statusUrl, origin);
+    parsed.searchParams.set("vid", String(village.id));
+    switchUrl = parsed.toString();
+  } catch (_error) {
+    switchUrl = `${origin}/village1.php?vid=${village.id}`;
+  }
+
+  await page.goto(switchUrl, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
+  await page
+    .goto(`${origin}/profile.php?t=1`, { waitUntil: "domcontentloaded", timeout: 45000 })
+    .catch(() => null);
+
+  const dname = page.locator('form[action*="profile"] input[name="dname"], input[name="dname"]');
+  if (!(await dname.count()) || !(await dname.first().isVisible().catch(() => false))) {
+    return {
+      status: "rename_form_unavailable",
+      villageId: village.id,
+      message: "Could not find Village name field on profile edit page."
+    };
+  }
+
+  await dname.first().fill(desired);
+  const submit = page.locator('#btn_ok, form[action*="profile"] input[name="s1"], form[action*="profile"] input[type="submit"]').first();
+  if (!(await submit.count())) {
+    return {
+      status: "rename_submit_unavailable",
+      villageId: village.id,
+      message: "Could not find profile save button."
+    };
+  }
+  await Promise.all([
+    page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => null),
+    submit.click({ timeout: 15000 })
+  ]).catch(async () => {
+    await submit.click({ timeout: 15000 }).catch(() => null);
+  });
+
+  await page.goto(switchUrl, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
+  const verifiedName = await page.evaluate(() => {
+    const boot = window.__v1Boot && window.__v1Boot.payload;
+    if (boot && boot.villageName) {
+      return String(boot.villageName);
+    }
+    const span = document.querySelector('h1 span[x-text*="villageName"], h1 span');
+    return span ? String(span.textContent || "").trim() : "";
+  }).catch(() => "");
+
+  if (verifiedName === desired) {
+    return {
+      status: "rename_ok",
+      villageId: village.id,
+      villageName: desired,
+      message: `Renamed village vid=${village.id} to ${desired}.`
+    };
+  }
+
+  return {
+    status: "rename_unconfirmed",
+    villageId: village.id,
+    villageName: desired,
+    observedName: verifiedName || null,
+    message: `Submitted rename to ${desired}, but page still shows "${verifiedName || "?"}".`
+  };
+}
+
+async function processPendingVillageNames(page, villages, settings = {}) {
+  const loaded = loadPendingVillageNames(settings);
+  if (!loaded.ok) {
+    return {
+      status: "pending_load_failed",
+      message: loaded.message || "Could not load pending village names.",
+      results: []
+    };
+  }
+  if (!loaded.pending.length) {
+    return { status: "pending_empty", pending: [], results: [] };
+  }
+
+  const remaining = [];
+  const results = [];
+  for (const entry of loaded.pending) {
+    const match = findVillageByCoordinates(villages, entry.x, entry.y);
+    if (!match) {
+      remaining.push(entry);
+      results.push({
+        status: "pending_waiting",
+        target: { x: entry.x, y: entry.y },
+        villageName: entry.villageName,
+        message: `No village at (${entry.x}|${entry.y}) yet.`
+      });
+      continue;
+    }
+
+    const renameResult = await renameVillage(page, match, entry.villageName, settings);
+    results.push({
+      ...renameResult,
+      target: { x: entry.x, y: entry.y },
+      matchedVillageId: match.id,
+      previousName: match.name || null
+    });
+
+    if (
+      renameResult.status === "rename_ok" ||
+      renameResult.status === "rename_already"
+    ) {
+      continue;
+    }
+    remaining.push(entry);
+  }
+
+  savePendingVillageNames(remaining, settings);
+  const renamed = results.filter((item) => item.status === "rename_ok" || item.status === "rename_already");
+  return {
+    status: renamed.length ? "pending_processed" : "pending_waiting",
+    pending: remaining,
+    results,
+    renamedCount: renamed.length,
+    waitingCount: remaining.length,
+    message: renamed.length
+      ? `Renamed ${renamed.length} pending village(s); ${remaining.length} still waiting.`
+      : `${remaining.length} pending village name(s) still waiting for founding.`
+  };
 }
 
 function compactBuildingKey(value) {
@@ -1850,12 +2142,14 @@ async function findFirstSettleablePreferredTarget(page, preferredTargets = [], e
     }
     const verdict = await inspectMapTileForSettlement(page, baseUrl, x, y, candidate);
     if (verdict && verdict.settleable) {
+      const villageName = String(candidate.villageName || candidate.name || "").trim();
       return {
         x,
         y,
         plannedIndex: i,
         mapTileId: candidate.mapTileId || null,
-        mapUrl: candidate.mapUrl || candidate.url || null
+        mapUrl: candidate.mapUrl || candidate.url || null,
+        villageName: villageName || null
       };
     }
   }
@@ -1878,7 +2172,8 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
     targetSource = "manual";
     selectedTargetMeta = {
       mapTileId: options.mapTileId || null,
-      mapUrl: options.mapUrl || options.url || null
+      mapUrl: options.mapUrl || options.url || null,
+      villageName: String(options.villageName || options.name || "").trim() || null
     };
   } else {
     const maxAttempts = 20;
@@ -1930,7 +2225,8 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
         plannedTargetIndex = picked.plannedIndex;
         selectedTargetMeta = {
           mapTileId: picked.mapTileId || null,
-          mapUrl: picked.mapUrl || null
+          mapUrl: picked.mapUrl || null,
+          villageName: picked.villageName || null
         };
         break;
       }
@@ -2079,12 +2375,15 @@ async function sendSettlersToFoundVillage(page, village, targetX, targetY, optio
     };
   }
 
+  const villageName = String(selectedTargetMeta.villageName || options.villageName || "").trim() || null;
   return {
     status: "settle_dispatched",
     phase: "settle",
     target: { x: resolvedTargetX, y: resolvedTargetY },
     targetSource,
     plannedTargetIndex,
+    villageName,
+    mapTileId: selectedTargetMeta.mapTileId || null,
     settlers: SETTLERS_NEEDED,
     message: `Settlers dispatched to (${resolvedTargetX}|${resolvedTargetY}) to found a new village.`
   };
@@ -2153,6 +2452,11 @@ module.exports = {
   getResidenceStatus,
   buildMapTileUrlById,
   resolvePlannedMapTileUrl,
+  queuePendingVillageName,
+  loadPendingVillageNames,
+  processPendingVillageNames,
+  renameVillage,
+  findVillageByCoordinates,
   RESIDENCE_SLOT,
   SETTLERS_NEEDED,
   SETTLEMENT_RESOURCE_REQUIREMENT
