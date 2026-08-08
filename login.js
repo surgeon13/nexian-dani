@@ -364,6 +364,7 @@ const settings = {
   npcCropConvertExcludedVillageIds: String(
     process.env.NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS || ""
   ).trim(),
+  npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
   proxyRotateOnSessionRest:
     String(process.env.PROXY_ROTATE_ON_SESSION_REST ?? "true").toLowerCase() !== "false"
 };
@@ -503,6 +504,9 @@ function persistRuntimeSettings(selectedKeys) {
     NPC_CROP_CONVERT_MAX_MINUTES: String(settings.npcCropConvertMaxMinutes),
     NPC_CROP_CONVERT_GRANARY_RATIO: String(settings.npcCropConvertGranaryRatio),
     NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS: String(settings.npcCropConvertExcludedVillageIds || ""),
+    NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID: String(
+      settings.npcCropConvertMarketplaceBuildingId || 33
+    ),
     ...proxyEnvValues(settings)
   };
 
@@ -604,6 +608,11 @@ function applySessionLoopDefaults() {
   settings.npcCropConvertExcludedVillageIds = String(
     settings.npcCropConvertExcludedVillageIds || ""
   ).trim();
+  {
+    const buildingId = Math.floor(Number(settings.npcCropConvertMarketplaceBuildingId) || 33);
+    settings.npcCropConvertMarketplaceBuildingId =
+      Number.isFinite(buildingId) && buildingId > 0 ? buildingId : 33;
+  }
 
   const play = normalizeRange(settings.playMinMinutes, settings.playMaxMinutes, 60, 120);
   settings.playMinMinutes = play.min;
@@ -1878,13 +1887,20 @@ async function run() {
     if (nextConfig.excludedVillageIds !== undefined) {
       settings.npcCropConvertExcludedVillageIds = String(nextConfig.excludedVillageIds || "").trim();
     }
+    if (nextConfig.marketplaceBuildingId !== undefined) {
+      const buildingId = Math.floor(Number(nextConfig.marketplaceBuildingId) || 0);
+      if (Number.isFinite(buildingId) && buildingId > 0) {
+        settings.npcCropConvertMarketplaceBuildingId = buildingId;
+      }
+    }
 
     persistRuntimeSettings([
       "NPC_CROP_CONVERT_ENABLED",
       "NPC_CROP_CONVERT_MIN_MINUTES",
       "NPC_CROP_CONVERT_MAX_MINUTES",
       "NPC_CROP_CONVERT_GRANARY_RATIO",
-      "NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS"
+      "NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS",
+      "NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID"
     ]);
 
     return {
@@ -1892,7 +1908,8 @@ async function run() {
       minMinutes: settings.npcCropConvertMinMinutes,
       maxMinutes: settings.npcCropConvertMaxMinutes,
       granaryRatio: settings.npcCropConvertGranaryRatio,
-      excludedVillageIds: settings.npcCropConvertExcludedVillageIds
+      excludedVillageIds: settings.npcCropConvertExcludedVillageIds,
+      marketplaceBuildingId: settings.npcCropConvertMarketplaceBuildingId
     };
   };
 

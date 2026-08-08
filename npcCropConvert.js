@@ -108,9 +108,38 @@ function parseExcludedVillageIds(csv) {
   return set;
 }
 
+function resolveMarketplaceBuildingId(settings) {
+  const raw = Number(
+    settings && settings.npcCropConvertMarketplaceBuildingId != null
+      ? settings.npcCropConvertMarketplaceBuildingId
+      : 33
+  );
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.trunc(raw);
+  }
+  return 33;
+}
+
+/**
+ * NPC Merchant tab — Nexian uses marketplace slot id (default 33) + t=3 + gid=17:
+ *   /build.php?id=33&t=3&gid=17&vid=<village>
+ */
 function buildNpcMerchantUrl(settings, villageId) {
   const origin = resolveGameOrigin(settings);
-  return withVillageId(`${origin}/build.php?gid=17&t=3`, villageId);
+  const buildingId = resolveMarketplaceBuildingId(settings);
+  return withVillageId(`${origin}/build.php?id=${buildingId}&t=3&gid=17`, villageId);
+}
+
+function buildNpcMerchantUrlCandidates(settings, villageId) {
+  const origin = resolveGameOrigin(settings);
+  const buildingId = resolveMarketplaceBuildingId(settings);
+  const urls = [
+    `${origin}/build.php?id=${buildingId}&t=3&gid=17`,
+    `${origin}/build.php?id=${buildingId}&t=3`,
+    `${origin}/build.php?gid=17&t=3`,
+    `${origin}/build.php?bid=17&t=3`
+  ];
+  return urls.map((url) => withVillageId(url, villageId));
 }
 
 async function readHeaderStockAndCaps(page) {
@@ -141,21 +170,57 @@ async function readHeaderStockAndCaps(page) {
   });
 }
 
-async function openNpcMerchant(page, settings, villageId) {
-  const url = buildNpcMerchantUrl(settings, villageId);
-  await sharedSafeGotoWithRetry(
-    page,
-    url,
-    { waitUntil: "domcontentloaded", timeout: 60000 },
-    3
-  );
-  const ok = await page.evaluate(() => {
+async function pageLooksLikeNpcMerchant(page) {
+  return page.evaluate(() => {
     const form = document.querySelector("form#_fm1, form[name='snd']");
     const m2 = document.querySelectorAll('input[name="m2[]"]');
-    const hasNpcTab = /npc merchant/i.test(document.body.innerText || "");
-    return Boolean(form && m2.length >= 4 && hasNpcTab);
+    const bodyText = document.body ? String(document.body.innerText || "") : "";
+    const hasNpcTab = /npc merchant/i.test(bodyText);
+    const hasM2 = m2.length >= 4;
+    return Boolean(form && hasM2 && (hasNpcTab || document.getElementById("submitButton")));
   });
-  return ok;
+}
+
+async function openNpcMerchant(page, settings, villageId) {
+  const candidates = buildNpcMerchantUrlCandidates(settings, villageId);
+  for (const url of candidates) {
+    try {
+      await sharedSafeGotoWithRetry(
+        page,
+        url,
+        { waitUntil: "domcontentloaded", timeout: 60000 },
+        2
+      );
+    } catch (error) {
+      if (isResourceExhaustionError(error)) {
+        throw error;
+      }
+      continue;
+    }
+    if (await pageLooksLikeNpcMerchant(page)) {
+      return true;
+    }
+    // Some realms land on marketplace send tab — click NPC Merchant if present.
+    const clicked = await page.evaluate(() => {
+      const link = Array.from(document.querySelectorAll("a")).find((a) => {
+        const href = String(a.getAttribute("href") || "");
+        const text = String(a.textContent || "");
+        return /[?&]t=3\b/.test(href) || /npc merchant/i.test(text);
+      });
+      if (link) {
+        link.click();
+        return true;
+      }
+      return false;
+    });
+    if (clicked) {
+      await page.waitForTimeout(800).catch(() => {});
+      if (await pageLooksLikeNpcMerchant(page)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 async function runNpcZeroCropExchange(page, desired) {
@@ -495,6 +560,8 @@ module.exports = {
   runNpcCropConvertRoundRobin,
   inspectVillageGranary,
   buildNpcMerchantUrl,
+  buildNpcMerchantUrlCandidates,
+  resolveMarketplaceBuildingId,
   DEFAULT_GRANARY_RATIO,
   NPC_GOLD_COST
 };
