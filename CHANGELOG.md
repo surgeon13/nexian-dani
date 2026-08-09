@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file.
 ### Changed
 
 - **Troop plans train cavalry before infantry** — Stable / Great Stable branches run before Barracks so raid cavalry (TT, Haeduan) is not starved by infantry batches in the same tick.
+- **Reserve for cavalry** — if Stable/Great Stable returns `no_resources`, Barracks is skipped that tick so infantry cannot keep resources permanently below the cavalry threshold.
 
 ## [1.8.23] — 2026-08-08
 

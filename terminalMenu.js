@@ -7627,9 +7627,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               logInfo(
                 `[Troop Auto] ${villageDisplayName(targetVillage)} — plan "${plan.name}" (${troopPlans.describePlan(plan)}).`
               );
+              // If Stable/Great Stable is short on resources, skip Barracks this tick so
+              // infantry does not keep clay/iron below the cavalry threshold forever.
+              let reserveForCavalry = false;
               for (const branch of branchesToRun) {
                 if (cancelRequested) {
                   break;
+                }
+                const isInfantryBranch =
+                  branch.building === "barracks" || branch.building === "great_barracks";
+                if (reserveForCavalry && isInfantryBranch) {
+                  logInfo(
+                    `[Troop Auto] ${villageDisplayName(targetVillage)}: skipping ${branch.label} this tick to reserve resources for cavalry.`
+                  );
+                  outcomes.push({
+                    status: "skipped_reserve_cavalry",
+                    building: branch.building,
+                    buildingLabel: branch.label,
+                    unitName: branch.unitName,
+                    queued: 0
+                  });
+                  continue;
                 }
                 const result = await runWithRandomDelay(
                   settings,
@@ -7638,6 +7656,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   () => cancelRequested
                 );
                 outcomes.push(result);
+                if (
+                  result &&
+                  result.status === "no_resources" &&
+                  (branch.building === "stable" || branch.building === "great_stable")
+                ) {
+                  reserveForCavalry = true;
+                }
                 if (result && result.status === "missing_building") {
                   const existsOnMap = await villageHasTrainerBuildingOnMap(
                     getPage,
