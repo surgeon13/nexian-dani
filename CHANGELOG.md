@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.24] — 2026-08-09
+
+### Fixed
+
+- **Troop trainer “Available: 0” false empty** — Nexian’s barracks/stable `Available: N` is owned troop count, not max trainable. The trainer no longer treats owned `0` as “cannot train”, which had blocked Phalanx/Haeduan queues when those units were not already in the village.
+
 ## [1.8.23] — 2026-08-08
 
 ### Added
