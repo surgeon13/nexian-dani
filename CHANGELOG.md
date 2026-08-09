@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.24] — 2026-08-09
+
+### Added
+
+- **Celebrations RR** — optional round-robin Town Hall celebrations for culture points. Polls villages on a min–max interval, opens `build.php?gid=24`, and clicks **Hold celebration** when available (`auto` prefers large else small). Terminal **Settings → C** (enable/timing/type) and **F** (include/exclude village filter sheet). Env: `CELEBRATIONS_*` (off by default).
+
 ## [1.8.23] — 2026-08-08
 
 ### Added

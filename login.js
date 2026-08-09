@@ -365,6 +365,17 @@ const settings = {
     process.env.NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS || ""
   ).trim(),
   npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
+  celebrationsRoundRobinEnabled:
+    String(process.env.CELEBRATIONS_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
+  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 20),
+  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 40),
+  celebrationsType: String(process.env.CELEBRATIONS_TYPE || "auto").trim().toLowerCase() || "auto",
+  celebrationsIncludedVillageIds: String(
+    process.env.CELEBRATIONS_INCLUDED_VILLAGE_IDS || ""
+  ).trim(),
+  celebrationsExcludedVillageIds: String(
+    process.env.CELEBRATIONS_EXCLUDED_VILLAGE_IDS || ""
+  ).trim(),
   proxyRotateOnSessionRest:
     String(process.env.PROXY_ROTATE_ON_SESSION_REST ?? "true").toLowerCase() !== "false"
 };
@@ -507,6 +518,12 @@ function persistRuntimeSettings(selectedKeys) {
     NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID: String(
       settings.npcCropConvertMarketplaceBuildingId || 33
     ),
+    CELEBRATIONS_ROUND_ROBIN_ENABLED: settings.celebrationsRoundRobinEnabled ? "true" : "false",
+    CELEBRATIONS_LOOP_MIN_MINUTES: String(settings.celebrationsLoopMinMinutes),
+    CELEBRATIONS_LOOP_MAX_MINUTES: String(settings.celebrationsLoopMaxMinutes),
+    CELEBRATIONS_TYPE: String(settings.celebrationsType || "auto"),
+    CELEBRATIONS_INCLUDED_VILLAGE_IDS: String(settings.celebrationsIncludedVillageIds || ""),
+    CELEBRATIONS_EXCLUDED_VILLAGE_IDS: String(settings.celebrationsExcludedVillageIds || ""),
     ...proxyEnvValues(settings)
   };
 
@@ -613,6 +630,32 @@ function applySessionLoopDefaults() {
     settings.npcCropConvertMarketplaceBuildingId =
       Number.isFinite(buildingId) && buildingId > 0 ? buildingId : 33;
   }
+
+  const celebrationsLoop = normalizeRange(
+    settings.celebrationsLoopMinMinutes,
+    settings.celebrationsLoopMaxMinutes,
+    20,
+    40
+  );
+  settings.celebrationsLoopMinMinutes = celebrationsLoop.min;
+  settings.celebrationsLoopMaxMinutes = celebrationsLoop.max;
+  {
+    const raw = String(settings.celebrationsType || "auto")
+      .trim()
+      .toLowerCase();
+    settings.celebrationsType =
+      raw === "small" || raw === "large" || raw === "great"
+        ? raw === "great"
+          ? "large"
+          : raw
+        : "auto";
+  }
+  settings.celebrationsIncludedVillageIds = String(
+    settings.celebrationsIncludedVillageIds || ""
+  ).trim();
+  settings.celebrationsExcludedVillageIds = String(
+    settings.celebrationsExcludedVillageIds || ""
+  ).trim();
 
   const play = normalizeRange(settings.playMinMinutes, settings.playMaxMinutes, 60, 120);
   settings.playMinMinutes = play.min;
@@ -1913,6 +1956,57 @@ async function run() {
     };
   };
 
+  const updateCelebrationsLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.celebrationsRoundRobinEnabled = nextConfig.enabled;
+    }
+
+    const range = normalizeRange(
+      Number(nextConfig.minMinutes),
+      Number(nextConfig.maxMinutes),
+      settings.celebrationsLoopMinMinutes,
+      settings.celebrationsLoopMaxMinutes
+    );
+    settings.celebrationsLoopMinMinutes = range.min;
+    settings.celebrationsLoopMaxMinutes = range.max;
+
+    if (nextConfig.type !== undefined) {
+      const raw = String(nextConfig.type || "auto")
+        .trim()
+        .toLowerCase();
+      settings.celebrationsType =
+        raw === "small" || raw === "large" || raw === "great"
+          ? raw === "great"
+            ? "large"
+            : raw
+          : "auto";
+    }
+    if (nextConfig.includedVillageIds !== undefined) {
+      settings.celebrationsIncludedVillageIds = String(nextConfig.includedVillageIds || "").trim();
+    }
+    if (nextConfig.excludedVillageIds !== undefined) {
+      settings.celebrationsExcludedVillageIds = String(nextConfig.excludedVillageIds || "").trim();
+    }
+
+    persistRuntimeSettings([
+      "CELEBRATIONS_ROUND_ROBIN_ENABLED",
+      "CELEBRATIONS_LOOP_MIN_MINUTES",
+      "CELEBRATIONS_LOOP_MAX_MINUTES",
+      "CELEBRATIONS_TYPE",
+      "CELEBRATIONS_INCLUDED_VILLAGE_IDS",
+      "CELEBRATIONS_EXCLUDED_VILLAGE_IDS"
+    ]);
+
+    return {
+      enabled: settings.celebrationsRoundRobinEnabled,
+      minMinutes: settings.celebrationsLoopMinMinutes,
+      maxMinutes: settings.celebrationsLoopMaxMinutes,
+      type: settings.celebrationsType,
+      includedVillageIds: settings.celebrationsIncludedVillageIds,
+      excludedVillageIds: settings.celebrationsExcludedVillageIds
+    };
+  };
+
   const updateTop10TrackingLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.top10TrackingEnabled = nextConfig.enabled;
@@ -2137,6 +2231,7 @@ async function run() {
           updateActivitySimulationLoopConfig,
           updateTop10TrackingLoopConfig,
           updateNpcCropConvertLoopConfig,
+          updateCelebrationsLoopConfig,
           updateDashboardDisplayConfig,
           async persistSettings(selectedKeys) {
             persistRuntimeSettings(selectedKeys);

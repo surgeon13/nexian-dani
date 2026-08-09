@@ -5,6 +5,7 @@ const builder = require("./villageBuilder");
 const villageExpansion = require("./villageExpansion");
 const resourceCirculation = require("./resourceCirculation");
 const npcCropConvert = require("./npcCropConvert");
+const celebrations = require("./celebrations");
 const troopPlans = require("./troopPlans");
 const { version: APP_VERSION } = require("./package.json");
 const { formatProxyDisplay, normalizeProxyServer, buildProxySettingsPayload, proxyPool } = require("./proxyConfig");
@@ -1905,6 +1906,15 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
         settings.npcCropConvertMinMinutes,
         settings.npcCropConvertMaxMinutes,
         npcCropStatus.nextInMinutes
+      )} ${color("|", ANSI.gray)} ${fmtLoop(
+        "Celeb",
+        settings.celebrationsRoundRobinEnabled,
+        settings.celebrationsLoopMinMinutes,
+        settings.celebrationsLoopMaxMinutes,
+        (runtimeStatus && runtimeStatus.celebrationsLoop
+          ? runtimeStatus.celebrationsLoop
+          : {}
+        ).nextInMinutes
       )}`
     );
     return;
@@ -2007,6 +2017,23 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
       : "N/A";
     console.log(
       `  ${color("Next NPC Crop Check:", ANSI.gray)} ${color(nextNpcText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
+
+  const celebrationsStatus = runtimeStatus && runtimeStatus.celebrationsLoop
+    ? runtimeStatus.celebrationsLoop
+    : { enabled: settings.celebrationsRoundRobinEnabled, nextInMinutes: null };
+  const celebModeLabel = settings.celebrationsRoundRobinEnabled ? "ON" : "OFF";
+  const celebModeColor = settings.celebrationsRoundRobinEnabled ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Celebrations RR:", ANSI.gray)} ${color(celebModeLabel, ANSI.bold, celebModeColor)} ${color(`(${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes} min, ${settings.celebrationsType || "auto"})`, ANSI.bold)}`
+  );
+  if (settings.celebrationsRoundRobinEnabled) {
+    const nextCelebText = Number.isFinite(celebrationsStatus.nextInMinutes)
+      ? `${celebrationsStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Celebration Check:", ANSI.gray)} ${color(nextCelebText, ANSI.bold, ANSI.cyan)}`
     );
   }
 }
@@ -2198,6 +2225,15 @@ function printSettingsMenu(settings, villageState) {
   );
   console.log(
     `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("C")}  Celebrations RR    ${dim("[")}${onOff(settings.celebrationsRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes}m`)}  ${tag("type", settings.celebrationsType || "auto")}`
+  );
+  console.log(
+    `  ${opt("F")}  Celebration Villages ${tag(
+      "in",
+      `${parsePivotVillageIdSet(settings.celebrationsIncludedVillageIds).size || "all"}`
+    )}  ${tag("ex", `${parsePivotVillageIdSet(settings.celebrationsExcludedVillageIds).size}`)}`
   );
   gap();
 
@@ -2538,6 +2574,210 @@ async function runBuilderRrExclusionMenu(rl, settings, runtimeControls) {
       excludedSet.add(vid);
       await persistExcludedSet(excludedSet);
       logSuccess(`RR excluded for ${villageDisplayName(village)}.`);
+    }
+  }
+}
+
+function printCelebrationsVillageFilterSheet(snapshot, includedIdSet, excludedIdSet) {
+  const included = includedIdSet instanceof Set ? includedIdSet : new Set();
+  const excluded = excludedIdSet instanceof Set ? excludedIdSet : new Set();
+  printSubDivider("CELEBRATIONS VILLAGE FILTER");
+  console.log(
+    `  ${color("Include list:", ANSI.gray)} ${
+      included.size
+        ? color(`${included.size} village(s) (only these run)`, ANSI.bold, ANSI.cyan)
+        : color("empty = all villages", ANSI.dim)
+    }`
+  );
+  console.log(
+    `  ${color("Exclude list:", ANSI.gray)} ${
+      excluded.size
+        ? color(`${excluded.size} village(s) skipped`, ANSI.bold, ANSI.yellow)
+        : color("none", ANSI.dim)
+    }`
+  );
+  console.log("");
+  if (!snapshot || !Array.isArray(snapshot.villages) || !snapshot.villages.length) {
+    console.log(`  ${color("No villages detected yet.", ANSI.yellow)}`);
+    return;
+  }
+
+  snapshot.villages.forEach((village, index) => {
+    const vid = Number(village.id);
+    const selectedMark = village.id === snapshot.selectedVillageId ? "*" : " ";
+    const activeMark = village.id === snapshot.activeVillageId ? "A" : " ";
+    const marker = `[${selectedMark}${activeMark}]`;
+    let tag;
+    if (excluded.has(vid)) {
+      tag = color(" [EX]", ANSI.bold, ANSI.yellow);
+    } else if (included.size > 0 && included.has(vid)) {
+      tag = color(" [IN]", ANSI.bold, ANSI.green);
+    } else if (included.size > 0) {
+      tag = color(" [—]", ANSI.dim);
+    } else {
+      tag = color(" [OK]", ANSI.dim, ANSI.green);
+    }
+    console.log(
+      `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(marker, ANSI.gray)} ${villageDisplayName(village)}${tag}`
+    );
+  });
+
+  console.log("");
+  console.log(`  ${color("number", ANSI.bold, ANSI.cyan)}  Cycle village: OK/IN → IN → EX → OK`);
+  console.log(`  ${color("I", ANSI.bold, ANSI.cyan)}  Set INCLUDE list by CSV (empty = all)`);
+  console.log(`  ${color("E", ANSI.bold, ANSI.cyan)}  Set EXCLUDE list by CSV (empty = none)`);
+  console.log(`  ${color("A", ANSI.bold, ANSI.cyan)}  Clear include + exclude`);
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+async function runCelebrationsVillageFilterMenu(rl, settings, runtimeControls) {
+  const refresh =
+    runtimeControls && typeof runtimeControls.refreshSideInfoVillages === "function"
+      ? runtimeControls.refreshSideInfoVillages
+      : null;
+  const getSnapshot =
+    runtimeControls && typeof runtimeControls.getRaidPivotVillageUiState === "function"
+      ? runtimeControls.getRaidPivotVillageUiState
+      : null;
+
+  const persistFilters = async (includedSet, excludedSet) => {
+    settings.celebrationsIncludedVillageIds = includedSet.size
+      ? formatPivotCsvFromSet(includedSet)
+      : "";
+    settings.celebrationsExcludedVillageIds = excludedSet.size
+      ? formatPivotCsvFromSet(excludedSet)
+      : "";
+    if (runtimeControls.persistSettings) {
+      await runtimeControls.persistSettings([
+        "CELEBRATIONS_INCLUDED_VILLAGE_IDS",
+        "CELEBRATIONS_EXCLUDED_VILLAGE_IDS"
+      ]);
+    }
+  };
+
+  if (refresh) {
+    try {
+      await refresh();
+    } catch (_error) {
+      logWarn("Could not refresh village list from game (session busy?).");
+    }
+  }
+
+  let includedSet = parsePivotVillageIdSet(settings.celebrationsIncludedVillageIds);
+  let excludedSet = parsePivotVillageIdSet(settings.celebrationsExcludedVillageIds);
+  let done = false;
+  while (!done) {
+    if (runtimeControls.menuSession?.quitRequested) {
+      done = true;
+      continue;
+    }
+    const snapshot =
+      typeof getSnapshot === "function"
+        ? getSnapshot()
+        : { villages: [], selectedVillageId: null, activeVillageId: null };
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+    printCelebrationsVillageFilterSheet(snapshot, includedSet, excludedSet);
+
+    if (!villages.length) {
+      logWarn("No villages detected.");
+    }
+
+    const answer = (await askQuestion(rl, "Celebrations filter option: ")).trim().toUpperCase();
+    if (answer === "Q") {
+      if (runtimeControls.menuSession) {
+        runtimeControls.menuSession.quitRequested = true;
+      }
+      done = true;
+      continue;
+    }
+    if (answer === "B" || answer === "") {
+      done = true;
+      continue;
+    }
+    if (answer === "A") {
+      includedSet = new Set();
+      excludedSet = new Set();
+      await persistFilters(includedSet, excludedSet);
+      logSuccess("Celebrations include/exclude cleared (all villages eligible).");
+      continue;
+    }
+    if (answer === "I") {
+      const typed = (
+        await askQuestion(rl, "INCLUDE villages CSV (rows/vids), empty = all: ")
+      ).trim();
+      if (!typed) {
+        includedSet = new Set();
+      } else {
+        const { resolvedIds, invalidTokens } = resolvePivotCsvTokensToVillageIds(typed, villages);
+        includedSet = new Set(resolvedIds);
+        resolvedIds.forEach((id) => excludedSet.delete(id));
+        if (invalidTokens.length) {
+          logWarn(`Ignored unknown entries: ${invalidTokens.join(", ")}.`);
+        }
+      }
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(
+        `Celebrations INCLUDE: ${formatVillageLabelsFromIdCsv(
+          settings.celebrationsIncludedVillageIds,
+          villages,
+          "all"
+        )}`
+      );
+      continue;
+    }
+    if (answer === "E") {
+      const typed = (
+        await askQuestion(rl, "EXCLUDE villages CSV (rows/vids), empty = none: ")
+      ).trim();
+      if (!typed) {
+        excludedSet = new Set();
+      } else {
+        const { resolvedIds, invalidTokens } = resolvePivotCsvTokensToVillageIds(typed, villages);
+        excludedSet = new Set(resolvedIds);
+        resolvedIds.forEach((id) => includedSet.delete(id));
+        if (invalidTokens.length) {
+          logWarn(`Ignored unknown entries: ${invalidTokens.join(", ")}.`);
+        }
+      }
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(
+        `Celebrations EXCLUDE: ${formatVillageLabelsFromIdCsv(
+          settings.celebrationsExcludedVillageIds,
+          villages,
+          "none"
+        )}`
+      );
+      continue;
+    }
+
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a listed number, I, E, A, or B.");
+      continue;
+    }
+    const village = villages[index - 1];
+    const vid = Number(village && village.id);
+    if (!Number.isFinite(vid)) {
+      logWarn("Selected village has invalid id.");
+      continue;
+    }
+
+    // Cycle: default/OK → IN → EX → default
+    if (excludedSet.has(vid)) {
+      excludedSet.delete(vid);
+      includedSet.delete(vid);
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(`${villageDisplayName(village)}: cleared (eligible if include empty / listed).`);
+    } else if (includedSet.has(vid)) {
+      includedSet.delete(vid);
+      excludedSet.add(vid);
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(`${villageDisplayName(village)}: EXCLUDED from celebrations RR.`);
+    } else {
+      includedSet.add(vid);
+      excludedSet.delete(vid);
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(`${villageDisplayName(village)}: INCLUDED in celebrations RR.`);
     }
   }
 }
@@ -3921,6 +4161,65 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "C") {
+      const enabledText = (
+        await askQuestion(rl, "Enable Celebrations RR? (Y/N, Enter keep): ")
+      )
+        .trim()
+        .toUpperCase();
+
+      let nextEnabled = settings.celebrationsRoundRobinEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Celebrations RR MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Celebrations RR MAX minutes (Enter keep): ")
+      ).trim();
+      const nextTypeText = (
+        await askQuestion(
+          rl,
+          `Celebration type auto/small/large (Enter keep ${settings.celebrationsType || "auto"}): `
+        )
+      )
+        .trim()
+        .toLowerCase();
+
+      if (!runtimeControls.updateCelebrationsLoopConfig) {
+        logWarn("Celebrations RR update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateCelebrationsLoopConfig({
+          enabled: nextEnabled,
+          minMinutes: nextMinText ? Number(nextMinText) : settings.celebrationsLoopMinMinutes,
+          maxMinutes: nextMaxText ? Number(nextMaxText) : settings.celebrationsLoopMaxMinutes,
+          type: nextTypeText || settings.celebrationsType
+        });
+        settings.celebrationsRoundRobinEnabled = applied.enabled;
+        settings.celebrationsLoopMinMinutes = applied.minMinutes;
+        settings.celebrationsLoopMaxMinutes = applied.maxMinutes;
+        settings.celebrationsType = applied.type;
+        logSuccess(
+          `Celebrations RR: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, type=${applied.type}.`
+        );
+      } catch (error) {
+        logWarn(`Could not update Celebrations RR: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (input === "F") {
+      await runCelebrationsVillageFilterMenu(rl, settings, runtimeControls);
+      continue;
+    }
+
     if (input === "V") {
       settings.resourceCirculationExpansionEnabled = !settings.resourceCirculationExpansionEnabled;
       if (runtimeControls.persistSettings) {
@@ -3932,7 +4231,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, N, T, U, I, W, A, E, K, H, P, V, B, or Q.");
+    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, N, C, F, T, U, I, W, A, E, K, H, P, V, B, or Q.");
   }
 }
 
@@ -5316,6 +5615,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
   let crannyDefenseLoopTimer = null;
   let raidEvacuationLoopTimer = null;
   let npcCropConvertLoopTimer = null;
+  let celebrationsLoopTimer = null;
   let sigintHandler = null;
   const raidEvacuationByVillage = new Map();
   const raidEvacuationSkipLogAtByVillage = new Map();
@@ -5381,6 +5681,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let lastNpcCropConvertDelayMinutes = null;
     let npcCropConvertResumeWaitLogged = false;
     let npcCropConvertRoundRobinIndex = 0;
+    let nextCelebrationsRunAt = null;
+    let lastCelebrationsDelayMinutes = null;
+    let celebrationsResumeWaitLogged = false;
+    let celebrationsRoundRobinIndex = 0;
     let builderResumeWaitLogged = false;
     let builderTemplateDeferredForCrannyLogged = false;
     let builderVillageWaitLastLogAt = null;
@@ -8265,6 +8569,142 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }, delayMs);
     };
 
+    const cancelCelebrationsLoopTimer = () => {
+      if (celebrationsLoopTimer) {
+        clearTimeout(celebrationsLoopTimer);
+        celebrationsLoopTimer = null;
+      }
+      nextCelebrationsRunAt = null;
+    };
+
+    const pickNextCelebrationsDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (
+        lastCelebrationsDelayMinutes !== null &&
+        max > min &&
+        next === lastCelebrationsDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastCelebrationsDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleCelebrationsLoop = (options = {}) => {
+      cancelCelebrationsLoopTimer();
+      if (done || !settings.celebrationsRoundRobinEnabled) {
+        return;
+      }
+
+      const min = Math.max(1, Math.floor(Number(settings.celebrationsLoopMinMinutes) || 20));
+      const max = Math.max(min, Math.floor(Number(settings.celebrationsLoopMaxMinutes) || 40));
+      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      let delayMs;
+      if (retryMs > 0) {
+        delayMs = retryMs;
+      } else {
+        const delayMinutes = pickNextCelebrationsDelayMinutes(min, max);
+        delayMs = delayMinutes * 60 * 1000;
+        logInfo(
+          `[Celebrations] Next Town Hall check in ${delayMinutes} minute(s). (type ${settings.celebrationsType || "auto"})`
+        );
+      }
+      nextCelebrationsRunAt = Date.now() + delayMs;
+
+      celebrationsLoopTimer = setTimeout(() => {
+        void (async () => {
+          if (done || !settings.celebrationsRoundRobinEnabled) {
+            scheduleCelebrationsLoop();
+            return;
+          }
+          if (actionInProgress) {
+            scheduleCelebrationsLoop({ retryMs: 45000 });
+            return;
+          }
+          const automationStatus = runtimeControls.getAutomationStatus
+            ? runtimeControls.getAutomationStatus()
+            : { paused: false, reason: "online" };
+          if (automationStatus.paused) {
+            if (!celebrationsResumeWaitLogged) {
+              logInfo(
+                `[Celebrations] Paused (${automationStatus.reason || "paused"}). Waiting for session to resume...`
+              );
+              celebrationsResumeWaitLogged = true;
+            }
+            scheduleCelebrationsLoop({ retryMs: 60000 });
+            return;
+          }
+          celebrationsResumeWaitLogged = false;
+
+          let deferFullReschedule = false;
+          await runAction("Celebrations RR", async () => {
+            const result = await celebrations.runCelebrationsRoundRobin(
+              getPage(),
+              settings,
+              villageState.villages,
+              { roundRobinIndex: celebrationsRoundRobinIndex }
+            );
+            if (Number.isFinite(Number(result.roundRobinIndex))) {
+              celebrationsRoundRobinIndex = Number(result.roundRobinIndex);
+            }
+            const label = result.checkedVillageName
+              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+              : result.checkedVillageId
+                ? `vid=${result.checkedVillageId}`
+                : "?";
+            if (result.status === "celebration_ok") {
+              logSuccess(
+                `[Celebrations] ${label}: held ${result.celebrationType || "celebration"}` +
+                  (result.culturePoints ? ` (~${result.culturePoints} CP)` : "") +
+                  "."
+              );
+              recordAction({
+                actionType: "celebration.hold",
+                status: "success",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  celebrationType: result.celebrationType || null,
+                  culturePoints: result.culturePoints || null
+                }
+              });
+            } else if (
+              result.status === "celebration_busy" ||
+              result.status === "celebration_no_resources" ||
+              result.status === "celebration_unavailable"
+            ) {
+              logInfo(`[Celebrations] ${label}: ${result.message}`);
+            } else if (result.status === "celebration_no_candidates") {
+              logWarn(`[Celebrations] ${result.message}`);
+            } else if (result.status === "celebration_no_town_hall") {
+              logInfo(`[Celebrations] ${label}: ${result.message}`);
+            } else {
+              logWarn(`[Celebrations] ${label}: ${result.message || result.status}`);
+              recordAction({
+                actionType: "celebration.hold",
+                status: "failed",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  status: result.status
+                },
+                errorMessage: result.message || result.status
+              });
+            }
+          }).catch((error) => {
+            logWarn(`[Celebrations] Tick failed: ${error.message || error}`);
+            deferFullReschedule = true;
+          });
+
+          if (deferFullReschedule) {
+            scheduleCelebrationsLoop({ retryMs: 90000 });
+          } else {
+            scheduleCelebrationsLoop();
+          }
+        })();
+      }, delayMs);
+    };
+
     const cancelActivitySimulationLoopTimer = () => {
       if (activitySimulationLoopTimer) {
         clearTimeout(activitySimulationLoopTimer);
@@ -9022,13 +9462,20 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           ? Math.max(0, Math.ceil((nextNpcCropConvertRunAt - Date.now()) / 60000))
           : null
       };
+      const celebrationsLoopStatus = {
+        enabled: settings.celebrationsRoundRobinEnabled,
+        nextInMinutes: nextCelebrationsRunAt
+          ? Math.max(0, Math.ceil((nextCelebrationsRunAt - Date.now()) / 60000))
+          : null
+      };
       printSessionLoopStatus(settings, {
         sessionLoop: sessionLoopStatus,
         farmlistLoop: farmlistLoopStatus,
         builderLoop: builderLoopStatus,
         troopLoop: troopLoopStatus,
         crannyLoop: crannyLoopStatus,
-        npcCropLoop: npcCropLoopStatus
+        npcCropLoop: npcCropLoopStatus,
+        celebrationsLoop: celebrationsLoopStatus
       }, activeBuilderPlanMode);
       printCompactMenuKeys(settings);
       printVillageContextStatus(villageState, settings);
@@ -9057,6 +9504,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       scheduleTop10TrackingLoop();
       scheduleRaidEvacuationLoop();
       scheduleNpcCropConvertLoop();
+      scheduleCelebrationsLoop();
       if (dashboardBridge) {
         dashboardBridge.publishSnapshot({ force: true });
         logInfo(`[Dashboard] Villages loaded — web UI ready`);
@@ -9139,6 +9587,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         nextNpcCropConvertRunAt,
         scheduleNpcCropConvertLoop,
         "NPC Crop"
+      );
+      check(
+        settings.celebrationsRoundRobinEnabled,
+        nextCelebrationsRunAt,
+        scheduleCelebrationsLoop,
+        "Celebrations"
       );
     }, 60000);
 
@@ -10128,6 +10582,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleTop10TrackingLoop();
         scheduleRaidEvacuationLoop();
         scheduleNpcCropConvertLoop();
+        scheduleCelebrationsLoop();
         continue;
       }
 
@@ -10186,6 +10641,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     if (npcCropConvertLoopTimer) {
       clearTimeout(npcCropConvertLoopTimer);
       npcCropConvertLoopTimer = null;
+    }
+    if (celebrationsLoopTimer) {
+      clearTimeout(celebrationsLoopTimer);
+      celebrationsLoopTimer = null;
     }
     menuRl.close();
   }

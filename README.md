@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.23** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.24** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -15,7 +15,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
-| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert. |
+| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert, celebrations RR. |
 | **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
@@ -415,6 +415,7 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
 - **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`
+- **Celebrations RR:** `CELEBRATIONS_ROUND_ROBIN_ENABLED`, `CELEBRATIONS_LOOP_MIN_MINUTES`, `CELEBRATIONS_LOOP_MAX_MINUTES`, `CELEBRATIONS_TYPE`, `CELEBRATIONS_INCLUDED_VILLAGE_IDS`, `CELEBRATIONS_EXCLUDED_VILLAGE_IDS`
 - **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
 
 Settings changed from the **`S`** menu persist back into `.env` for the keys wired in `login.js` (`persistRuntimeSettings`).
