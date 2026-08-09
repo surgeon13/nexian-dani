@@ -634,8 +634,8 @@ function applySessionLoopDefaults() {
   const celebrationsLoop = normalizeRange(
     settings.celebrationsLoopMinMinutes,
     settings.celebrationsLoopMaxMinutes,
-    20,
-    40
+    60,
+    120
   );
   settings.celebrationsLoopMinMinutes = celebrationsLoop.min;
   settings.celebrationsLoopMaxMinutes = celebrationsLoop.max;

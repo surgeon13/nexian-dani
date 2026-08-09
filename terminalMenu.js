@@ -8596,8 +8596,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         return;
       }
 
-      const min = Math.max(1, Math.floor(Number(settings.celebrationsLoopMinMinutes) || 20));
-      const max = Math.max(min, Math.floor(Number(settings.celebrationsLoopMaxMinutes) || 40));
+      const min = Math.max(1, Math.floor(Number(settings.celebrationsLoopMinMinutes) || 60));
+      const max = Math.max(min, Math.floor(Number(settings.celebrationsLoopMaxMinutes) || 120));
       const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
       let delayMs;
       if (retryMs > 0) {
