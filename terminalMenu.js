@@ -2026,7 +2026,7 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
   const celebModeLabel = settings.celebrationsRoundRobinEnabled ? "ON" : "OFF";
   const celebModeColor = settings.celebrationsRoundRobinEnabled ? ANSI.green : ANSI.yellow;
   console.log(
-    `  ${color("Celebrations RR:", ANSI.gray)} ${color(celebModeLabel, ANSI.bold, celebModeColor)} ${color(`(${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes} min, ${settings.celebrationsType || "auto"})`, ANSI.bold)}`
+    `  ${color("Celebrations RR:", ANSI.gray)} ${color(celebModeLabel, ANSI.bold, celebModeColor)} ${color(`(${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes} min, ${settings.celebrationsType || "auto"}, queue ${settings.celebrationsQueueDepth === 2 ? 2 : 1})`, ANSI.bold)}`
   );
   if (settings.celebrationsRoundRobinEnabled) {
     const nextCelebText = Number.isFinite(celebrationsStatus.nextInMinutes)
@@ -2227,7 +2227,7 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
   );
   console.log(
-    `  ${opt("C")}  Celebrations RR    ${dim("[")}${onOff(settings.celebrationsRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes}m`)}  ${tag("type", settings.celebrationsType || "auto")}`
+    `  ${opt("C")}  Celebrations RR    ${dim("[")}${onOff(settings.celebrationsRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes}m`)}  ${tag("type", settings.celebrationsType || "auto")}  ${tag("queue", String(settings.celebrationsQueueDepth === 2 ? 2 : 1))}`
   );
   console.log(
     `  ${opt("F")}  Celebration Villages ${tag(
@@ -4189,6 +4189,12 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       )
         .trim()
         .toLowerCase();
+      const nextQueueText = (
+        await askQuestion(
+          rl,
+          `Celebration queue depth 1 or 2 (Enter keep ${settings.celebrationsQueueDepth === 2 ? 2 : 1}): `
+        )
+      ).trim();
 
       if (!runtimeControls.updateCelebrationsLoopConfig) {
         logWarn("Celebrations RR update is not available in this runtime.");
@@ -4200,14 +4206,20 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
           enabled: nextEnabled,
           minMinutes: nextMinText ? Number(nextMinText) : settings.celebrationsLoopMinMinutes,
           maxMinutes: nextMaxText ? Number(nextMaxText) : settings.celebrationsLoopMaxMinutes,
-          type: nextTypeText || settings.celebrationsType
+          type: nextTypeText || settings.celebrationsType,
+          queueDepth: nextQueueText
+            ? Number(nextQueueText)
+            : settings.celebrationsQueueDepth === 2
+              ? 2
+              : 1
         });
         settings.celebrationsRoundRobinEnabled = applied.enabled;
         settings.celebrationsLoopMinMinutes = applied.minMinutes;
         settings.celebrationsLoopMaxMinutes = applied.maxMinutes;
         settings.celebrationsType = applied.type;
+        settings.celebrationsQueueDepth = applied.queueDepth === 2 ? 2 : 1;
         logSuccess(
-          `Celebrations RR: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, type=${applied.type}.`
+          `Celebrations RR: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, type=${applied.type}, queue=${settings.celebrationsQueueDepth}.`
         );
       } catch (error) {
         logWarn(`Could not update Celebrations RR: ${error.message || error}`);
@@ -8606,7 +8618,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const delayMinutes = pickNextCelebrationsDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
         logInfo(
-          `[Celebrations] Next Town Hall check in ${delayMinutes} minute(s). (type ${settings.celebrationsType || "auto"})`
+          `[Celebrations] Next Town Hall check in ${delayMinutes} minute(s). (type ${settings.celebrationsType || "auto"}, queue ${settings.celebrationsQueueDepth === 2 ? 2 : 1})`
         );
       }
       nextCelebrationsRunAt = Date.now() + delayMs;
@@ -8670,6 +8682,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               });
             } else if (
               result.status === "celebration_busy" ||
+              result.status === "celebration_queue_full" ||
               result.status === "celebration_no_resources" ||
               result.status === "celebration_unavailable"
             ) {

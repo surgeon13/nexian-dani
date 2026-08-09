@@ -370,6 +370,10 @@ const settings = {
   celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 60),
   celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 120),
   celebrationsType: String(process.env.CELEBRATIONS_TYPE || "auto").trim().toLowerCase() || "auto",
+  celebrationsQueueDepth: (() => {
+    const n = Math.floor(Number(process.env.CELEBRATIONS_QUEUE_DEPTH || 1));
+    return n === 2 ? 2 : 1;
+  })(),
   celebrationsIncludedVillageIds: String(
     process.env.CELEBRATIONS_INCLUDED_VILLAGE_IDS || ""
   ).trim(),
@@ -522,6 +526,9 @@ function persistRuntimeSettings(selectedKeys) {
     CELEBRATIONS_LOOP_MIN_MINUTES: String(settings.celebrationsLoopMinMinutes),
     CELEBRATIONS_LOOP_MAX_MINUTES: String(settings.celebrationsLoopMaxMinutes),
     CELEBRATIONS_TYPE: String(settings.celebrationsType || "auto"),
+    CELEBRATIONS_QUEUE_DEPTH: String(
+      Math.floor(Number(settings.celebrationsQueueDepth)) === 2 ? 2 : 1
+    ),
     CELEBRATIONS_INCLUDED_VILLAGE_IDS: String(settings.celebrationsIncludedVillageIds || ""),
     CELEBRATIONS_EXCLUDED_VILLAGE_IDS: String(settings.celebrationsExcludedVillageIds || ""),
     ...proxyEnvValues(settings)
@@ -649,6 +656,10 @@ function applySessionLoopDefaults() {
           ? "large"
           : raw
         : "auto";
+  }
+  {
+    const depth = Math.floor(Number(settings.celebrationsQueueDepth));
+    settings.celebrationsQueueDepth = depth === 2 ? 2 : 1;
   }
   settings.celebrationsIncludedVillageIds = String(
     settings.celebrationsIncludedVillageIds || ""
@@ -1981,6 +1992,10 @@ async function run() {
             : raw
           : "auto";
     }
+    if (nextConfig.queueDepth !== undefined) {
+      const depth = Math.floor(Number(nextConfig.queueDepth));
+      settings.celebrationsQueueDepth = depth === 2 ? 2 : 1;
+    }
     if (nextConfig.includedVillageIds !== undefined) {
       settings.celebrationsIncludedVillageIds = String(nextConfig.includedVillageIds || "").trim();
     }
@@ -1993,6 +2008,7 @@ async function run() {
       "CELEBRATIONS_LOOP_MIN_MINUTES",
       "CELEBRATIONS_LOOP_MAX_MINUTES",
       "CELEBRATIONS_TYPE",
+      "CELEBRATIONS_QUEUE_DEPTH",
       "CELEBRATIONS_INCLUDED_VILLAGE_IDS",
       "CELEBRATIONS_EXCLUDED_VILLAGE_IDS"
     ]);
@@ -2002,6 +2018,7 @@ async function run() {
       minMinutes: settings.celebrationsLoopMinMinutes,
       maxMinutes: settings.celebrationsLoopMaxMinutes,
       type: settings.celebrationsType,
+      queueDepth: settings.celebrationsQueueDepth,
       includedVillageIds: settings.celebrationsIncludedVillageIds,
       excludedVillageIds: settings.celebrationsExcludedVillageIds
     };

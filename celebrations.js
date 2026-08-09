@@ -64,6 +64,19 @@ function normalizeCelebrationType(raw) {
   return "auto";
 }
 
+/** Allowed queue depth is 1 or 2 (running + optionally one queued). Default 1. */
+function normalizeCelebrationQueueDepth(raw, fallback = 1) {
+  const n = Math.floor(Number(raw));
+  if (n === 2) {
+    return 2;
+  }
+  if (n === 1) {
+    return 1;
+  }
+  const fb = Math.floor(Number(fallback));
+  return fb === 2 ? 2 : 1;
+}
+
 function buildTownHallUrl(settings, villageId) {
   const origin = resolveGameOrigin(settings);
   return withVillageId(`${origin}/build.php?gid=${TOWN_HALL_GID}`, villageId);
@@ -140,12 +153,49 @@ async function inspectTownHallCelebrations(page, settings, village) {
       holds.find((h) => h.type === "large") ||
       (holds.length > 1 ? holds[holds.length - 1] : null);
 
-    const busy =
-      /celebrating/i.test(bodyText) &&
-      /duration/i.test(bodyText) &&
-      holds.length === 0 &&
-      !/not enough resources/i.test(bodyText);
+    // Count celebrations already running / queued (max useful depth is 2).
+    const countActiveCelebrations = () => {
+      const roots = Array.from(
+        document.querySelectorAll(
+          "#building_contract, #building_contract_mb, .under_progress, table.under_progress, #build .buildingList"
+        )
+      );
+      let structured = 0;
+      for (const root of roots) {
+        const rows = root.querySelectorAll("tr, li, .name, .buildDuration, .building");
+        for (const row of rows) {
+          const text = String(row.innerText || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+          if (!text || text.length < 4) {
+            continue;
+          }
+          if (/celebrat/.test(text) && !/hold celebration/.test(text)) {
+            structured += 1;
+          }
+        }
+      }
+      if (structured > 0) {
+        return Math.min(2, structured);
+      }
 
+      const celebratingHits = (bodyText.match(/\bcelebrating\b/gi) || []).length;
+      if (celebratingHits > 0) {
+        return Math.min(2, celebratingHits);
+      }
+
+      if (
+        /celebrat(?:ion|ing).{0,60}(duration|complete\s+in|in\s+progress|queued?)/i.test(bodyText) ||
+        /(duration|complete\s+in|in\s+progress).{0,60}celebrat/i.test(bodyText)
+      ) {
+        return 1;
+      }
+      return 0;
+    };
+
+    const activeCount = countActiveCelebrations();
+    const busy = activeCount > 0;
     const noResources = /not enough resources|enough resources in/i.test(bodyText) && holds.length === 0;
 
     const cultureMatch = bodyText.match(/small celebration\s*\((\d+)\s*culture points?\)/i);
@@ -155,6 +205,7 @@ async function inspectTownHallCelebrations(page, settings, village) {
       ok: isTownHall,
       title,
       busy: Boolean(busy),
+      activeCount,
       noResources: Boolean(noResources),
       holds,
       smallHold,
@@ -203,6 +254,10 @@ async function holdCelebrationInVillage(page, settings, village, options = {}) {
   const preferredType = normalizeCelebrationType(
     options.type ?? settings.celebrationsType ?? "auto"
   );
+  const queueDepth = normalizeCelebrationQueueDepth(
+    options.queueDepth ?? settings.celebrationsQueueDepth,
+    1
+  );
 
   let inspect;
   try {
@@ -227,11 +282,23 @@ async function holdCelebrationInVillage(page, settings, village, options = {}) {
     };
   }
 
-  if (inspect.busy) {
+  const activeCount = Math.max(
+    0,
+    Math.min(2, Math.floor(safeNumber(inspect.activeCount, inspect.busy ? 1 : 0)))
+  );
+
+  // Depth 1: any celebration in progress means skip (even if Hold is still clickable).
+  // Depth 2: allow one more only while a single celebration is already running.
+  if (activeCount >= queueDepth) {
     return {
-      status: "celebration_busy",
+      status: "celebration_queue_full",
       village,
-      message: "Celebration already running / cooling down.",
+      message:
+        queueDepth <= 1
+          ? "Celebration already in progress (queue depth 1)."
+          : `Celebration queue full (${activeCount}/${queueDepth}).`,
+      activeCount,
+      queueDepth,
       ...inspect
     };
   }
@@ -354,7 +421,8 @@ async function runCelebrationsRoundRobin(page, settings, villages, state = {}) {
   const nextIndex = (index + 1) % candidates.length;
 
   const result = await holdCelebrationInVillage(page, settings, village, {
-    type: settings.celebrationsType
+    type: settings.celebrationsType,
+    queueDepth: settings.celebrationsQueueDepth
   });
 
   return {
@@ -362,7 +430,8 @@ async function runCelebrationsRoundRobin(page, settings, villages, state = {}) {
     roundRobinIndex: nextIndex,
     candidateCount: candidates.length,
     checkedVillageId: village.id,
-    checkedVillageName: village.name || null
+    checkedVillageName: village.name || null,
+    queueDepth: normalizeCelebrationQueueDepth(settings.celebrationsQueueDepth, 1)
   };
 }
 
@@ -374,5 +443,6 @@ module.exports = {
   holdCelebrationInVillage,
   runCelebrationsRoundRobin,
   normalizeCelebrationType,
+  normalizeCelebrationQueueDepth,
   parseVillageIdSet
 };
