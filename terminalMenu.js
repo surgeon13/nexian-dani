@@ -4362,22 +4362,8 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
           maxTrainable = Math.min(maxTrainable, maxFromCosts);
         }
 
-        const availEl = row.querySelector(".tit span.info span[id^='availCount_']");
-        const availDigits = availEl ? String(availEl.textContent || "").replace(/\D/g, "").trim() : "";
-        const availableNow = availDigits !== "" ? Number(availDigits) : NaN;
-        if (Number.isFinite(availableNow)) {
-          if (availableNow <= 0) {
-            maxTrainable = 0;
-          } else if (maxTrainable > 0) {
-            maxTrainable = Math.min(maxTrainable, availableNow);
-          } else {
-            // Max link missing/unparsed — Available: N is the game's affordance hint.
-            maxTrainable = availableNow;
-            if (Number.isFinite(maxFromCosts) && maxFromCosts >= 0) {
-              maxTrainable = Math.min(maxTrainable, maxFromCosts);
-            }
-          }
-        }
+        // Nexian "Available: N" is troops currently owned in the village — NOT max trainable.
+        // Cap using max-link / onclick / resource costs only (do not zero out when owned=0).
         return { troopName, inputName, maxTrainable };
       })
       .filter((item) => item.inputName);
