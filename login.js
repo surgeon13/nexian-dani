@@ -367,8 +367,8 @@ const settings = {
   npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
   celebrationsRoundRobinEnabled:
     String(process.env.CELEBRATIONS_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
-  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 20),
-  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 40),
+  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 60),
+  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 120),
   celebrationsType: String(process.env.CELEBRATIONS_TYPE || "auto").trim().toLowerCase() || "auto",
   celebrationsIncludedVillageIds: String(
     process.env.CELEBRATIONS_INCLUDED_VILLAGE_IDS || ""
