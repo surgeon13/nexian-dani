@@ -4362,22 +4362,8 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
           maxTrainable = Math.min(maxTrainable, maxFromCosts);
         }
 
-        const availEl = row.querySelector(".tit span.info span[id^='availCount_']");
-        const availDigits = availEl ? String(availEl.textContent || "").replace(/\D/g, "").trim() : "";
-        const availableNow = availDigits !== "" ? Number(availDigits) : NaN;
-        if (Number.isFinite(availableNow)) {
-          if (availableNow <= 0) {
-            maxTrainable = 0;
-          } else if (maxTrainable > 0) {
-            maxTrainable = Math.min(maxTrainable, availableNow);
-          } else {
-            // Max link missing/unparsed — Available: N is the game's affordance hint.
-            maxTrainable = availableNow;
-            if (Number.isFinite(maxFromCosts) && maxFromCosts >= 0) {
-              maxTrainable = Math.min(maxTrainable, maxFromCosts);
-            }
-          }
-        }
+        // Nexian "Available: N" is troops currently owned in the village — NOT max trainable.
+        // Cap using max-link / onclick / resource costs only (do not zero out when owned=0).
         return { troopName, inputName, maxTrainable };
       })
       .filter((item) => item.inputName);
@@ -7641,9 +7627,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               logInfo(
                 `[Troop Auto] ${villageDisplayName(targetVillage)} — plan "${plan.name}" (${troopPlans.describePlan(plan)}).`
               );
+              // If Stable/Great Stable is short on resources, skip Barracks this tick so
+              // infantry does not keep clay/iron below the cavalry threshold forever.
+              let reserveForCavalry = false;
               for (const branch of branchesToRun) {
                 if (cancelRequested) {
                   break;
+                }
+                const isInfantryBranch =
+                  branch.building === "barracks" || branch.building === "great_barracks";
+                if (reserveForCavalry && isInfantryBranch) {
+                  logInfo(
+                    `[Troop Auto] ${villageDisplayName(targetVillage)}: skipping ${branch.label} this tick to reserve resources for cavalry.`
+                  );
+                  outcomes.push({
+                    status: "skipped_reserve_cavalry",
+                    building: branch.building,
+                    buildingLabel: branch.label,
+                    unitName: branch.unitName,
+                    queued: 0
+                  });
+                  continue;
                 }
                 const result = await runWithRandomDelay(
                   settings,
@@ -7652,6 +7656,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   () => cancelRequested
                 );
                 outcomes.push(result);
+                if (
+                  result &&
+                  result.status === "no_resources" &&
+                  (branch.building === "stable" || branch.building === "great_stable")
+                ) {
+                  reserveForCavalry = true;
+                }
                 if (result && result.status === "missing_building") {
                   const existsOnMap = await villageHasTrainerBuildingOnMap(
                     getPage,
