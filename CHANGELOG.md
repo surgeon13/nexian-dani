@@ -8,6 +8,10 @@ All notable changes to this project are documented in this file.
 
 - **Troop trainer “Available: 0” false empty** — Nexian’s barracks/stable `Available: N` is owned troop count, not max trainable. The trainer no longer treats owned `0` as “cannot train”, which had blocked Phalanx/Haeduan queues when those units were not already in the village.
 
+### Changed
+
+- **Troop plans train cavalry before infantry** — Stable / Great Stable branches run before Barracks so raid cavalry (TT, Haeduan) is not starved by infantry batches in the same tick.
+
 ## [1.8.23] — 2026-08-08
 
 ### Added
