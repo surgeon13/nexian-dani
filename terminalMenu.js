@@ -2212,6 +2212,9 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
   );
   console.log(
+    `  ${opt("L")}  Overflow Guard     ${dim("[")}${onOff(settings.resourceOverflowGuardEnabled !== false)}${dim("]")}  ${tag("≥", `${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%`)}  ${tag("max", `${settings.resourceOverflowMaxDistance || 10}sq`)}  ${tag("every", `${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m`)}`
+  );
+  console.log(
     `  ${opt("N")}  NPC Crop Convert   ${dim("[")}${onOff(settings.npcCropConvertEnabled)}${dim("]")}  ${tag("every", `${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes}m`)}  ${tag("granary", `${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%`)}`
   );
   gap();
@@ -4109,6 +4112,81 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "L") {
+      const enabledText = (
+        await askQuestion(rl, "Enable overflow guard? (Y/N, Enter keep): ")
+      )
+        .trim()
+        .toUpperCase();
+      let nextEnabled = settings.resourceOverflowGuardEnabled !== false;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Overflow guard MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Overflow guard MAX minutes (Enter keep): ")
+      ).trim();
+      const nextTriggerText = (
+        await askQuestion(
+          rl,
+          `Trigger fill % (e.g. 90, Enter keep ${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}): `
+        )
+      ).trim();
+      const nextTargetText = (
+        await askQuestion(
+          rl,
+          `Drain-down fill % (e.g. 75, Enter keep ${Math.round((settings.resourceOverflowTargetRatio || 0.75) * 100)}): `
+        )
+      ).trim();
+      const nextDistText = (
+        await askQuestion(
+          rl,
+          `Max distance squares to pivot/capital (Enter keep ${settings.resourceOverflowMaxDistance || 10}): `
+        )
+      ).trim();
+
+      if (!runtimeControls.updateOverflowGuardLoopConfig) {
+        logWarn("Overflow guard update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateOverflowGuardLoopConfig({
+          enabled: nextEnabled,
+          minMinutes: nextMinText ? Number(nextMinText) : settings.resourceOverflowLoopMinMinutes,
+          maxMinutes: nextMaxText ? Number(nextMaxText) : settings.resourceOverflowLoopMaxMinutes,
+          triggerRatio: nextTriggerText
+            ? Number(nextTriggerText)
+            : settings.resourceOverflowTriggerRatio,
+          targetRatio: nextTargetText
+            ? Number(nextTargetText)
+            : settings.resourceOverflowTargetRatio,
+          maxDistance: nextDistText
+            ? Number(nextDistText)
+            : settings.resourceOverflowMaxDistance
+        });
+        settings.resourceOverflowGuardEnabled = applied.enabled;
+        settings.resourceOverflowLoopMinMinutes = applied.minMinutes;
+        settings.resourceOverflowLoopMaxMinutes = applied.maxMinutes;
+        settings.resourceOverflowTriggerRatio = applied.triggerRatio;
+        settings.resourceOverflowTargetRatio = applied.targetRatio;
+        settings.resourceOverflowMaxDistance = applied.maxDistance;
+        logSuccess(
+          `Overflow guard: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, ` +
+            `≥${Math.round(applied.triggerRatio * 100)}% → ~${Math.round(applied.targetRatio * 100)}%, ` +
+            `max ${applied.maxDistance}sq to capital/pivot.`
+        );
+      } catch (error) {
+        logWarn(`Could not update overflow guard: ${error.message || error}`);
+      }
+      continue;
+    }
+
     if (input === "N") {
       const enabledText = (
         await askQuestion(rl, "Enable NPC crop convert watcher? (Y/N, Enter keep): ")
@@ -5628,6 +5706,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
   let raidEvacuationLoopTimer = null;
   let npcCropConvertLoopTimer = null;
   let celebrationsLoopTimer = null;
+  let overflowGuardLoopTimer = null;
   let sigintHandler = null;
   const raidEvacuationByVillage = new Map();
   const raidEvacuationSkipLogAtByVillage = new Map();
@@ -5780,6 +5859,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return Number.isFinite(id) && id > 0;
         };
 
+        let capitalIdFromConfig = null;
+        try {
+          const cfg = window.__vgConfig;
+          const raw = cfg && (cfg.capitalId || cfg.capital_id);
+          const n = Number(raw);
+          if (isValidVillageId(n)) {
+            capitalIdFromConfig = Math.trunc(n);
+          }
+        } catch (_error) {
+          capitalIdFromConfig = null;
+        }
+
         const rows = Array.from(document.querySelectorAll("#vlist tr[data-vid]"));
         let villages = rows.map((row) => {
           const villageId = Number(row.getAttribute("data-vid"));
@@ -5802,7 +5893,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             ? groupNameEl.textContent.replace(/\u00a0/g, " ").trim()
             : "Ungrouped";
           const isCapital = Boolean(
-            section && section.getAttribute("data-group-id") === "_capital"
+            (section && section.getAttribute("data-group-id") === "_capital") ||
+              (capitalIdFromConfig != null && villageId === capitalIdFromConfig)
           );
 
           const dotCell = row.querySelector("td.dot, td.dothl");
@@ -5891,8 +5983,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               return {
                 id: villageId,
                 name: name || `Village ${villageId}`,
-                groupName: "Ungrouped",
-                isCapital: false,
+                groupName:
+                  capitalIdFromConfig != null && villageId === capitalIdFromConfig
+                    ? "Capital"
+                    : "Ungrouped",
+                isCapital: capitalIdFromConfig != null && villageId === capitalIdFromConfig,
                 x: Number.isFinite(x) ? x : null,
                 y: Number.isFinite(y) ? y : null,
                 coordsText:
@@ -5949,6 +6044,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           seenVillageIds.add(village.id);
           uniqueVillages.push(village);
         });
+
+        if (capitalIdFromConfig != null && !uniqueVillages.some((v) => v.isCapital)) {
+          const capital = uniqueVillages.find((v) => Number(v.id) === capitalIdFromConfig);
+          if (capital) {
+            capital.isCapital = true;
+            if (capital.groupName === "Ungrouped") {
+              capital.groupName = "Capital";
+            }
+          }
+        }
 
         const active = uniqueVillages.find((village) => village.isActive) || null;
         return {
@@ -8581,6 +8686,155 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }, delayMs);
     };
 
+    let overflowGuardRoundRobinIndex = 0;
+    let lastOverflowGuardDelayMinutes = null;
+    let nextOverflowGuardRunAt = null;
+    let overflowGuardResumeWaitLogged = false;
+
+    const cancelOverflowGuardLoopTimer = () => {
+      if (overflowGuardLoopTimer) {
+        clearTimeout(overflowGuardLoopTimer);
+        overflowGuardLoopTimer = null;
+      }
+      nextOverflowGuardRunAt = null;
+    };
+
+    const pickNextOverflowGuardDelayMinutes = (minMinutes, maxMinutes) => {
+      const min = Math.max(1, Math.floor(Number(minMinutes) || 8));
+      const max = Math.max(min, Math.floor(Number(maxMinutes) || 15));
+      if (min === max) {
+        return min;
+      }
+      let next = min + Math.floor(Math.random() * (max - min + 1));
+      if (
+        Number.isFinite(lastOverflowGuardDelayMinutes) &&
+        max > min &&
+        next === lastOverflowGuardDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastOverflowGuardDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleOverflowGuardLoop = (options = {}) => {
+      cancelOverflowGuardLoopTimer();
+      if (done || settings.resourceOverflowGuardEnabled === false) {
+        return;
+      }
+
+      const min = Math.max(1, Math.floor(Number(settings.resourceOverflowLoopMinMinutes) || 8));
+      const max = Math.max(min, Math.floor(Number(settings.resourceOverflowLoopMaxMinutes) || 15));
+      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      let delayMs;
+      if (retryMs > 0) {
+        delayMs = retryMs;
+      } else {
+        const delayMinutes = pickNextOverflowGuardDelayMinutes(min, max);
+        delayMs = delayMinutes * 60 * 1000;
+        logInfo(
+          `[Overflow Guard] Next check in ${delayMinutes} minute(s). (≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%, max ${settings.resourceOverflowMaxDistance || 10}sq → capital/pivot)`
+        );
+      }
+      nextOverflowGuardRunAt = Date.now() + delayMs;
+
+      overflowGuardLoopTimer = setTimeout(() => {
+        void (async () => {
+          if (done || settings.resourceOverflowGuardEnabled === false) {
+            scheduleOverflowGuardLoop();
+            return;
+          }
+          if (actionInProgress) {
+            scheduleOverflowGuardLoop({ retryMs: 45000 });
+            return;
+          }
+          if (resourceCirculation.isMarketplaceBusy()) {
+            scheduleOverflowGuardLoop({ retryMs: 60000 });
+            return;
+          }
+          const automationStatus = runtimeControls.getAutomationStatus
+            ? runtimeControls.getAutomationStatus()
+            : { paused: false, reason: "online" };
+          if (automationStatus.paused) {
+            if (!overflowGuardResumeWaitLogged) {
+              logInfo(
+                `[Overflow Guard] Paused (${automationStatus.reason || "paused"}). Waiting for session to resume...`
+              );
+              overflowGuardResumeWaitLogged = true;
+            }
+            scheduleOverflowGuardLoop({ retryMs: 60000 });
+            return;
+          }
+          overflowGuardResumeWaitLogged = false;
+
+          let deferFullReschedule = false;
+          await runAction("Overflow Guard", async () => {
+            const result = await resourceCirculation.runOverflowGuardRoundRobin(
+              getPage,
+              settings,
+              villageState.villages,
+              {
+                roundRobinIndex: overflowGuardRoundRobinIndex,
+                log: (msg) => logInfo(msg)
+              }
+            );
+            if (Number.isFinite(Number(result.roundRobinIndex))) {
+              overflowGuardRoundRobinIndex = Number(result.roundRobinIndex);
+            }
+            const label = result.checkedVillageName
+              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+              : result.checkedVillageId
+                ? `vid=${result.checkedVillageId}`
+                : "?";
+            if (result.status === "overflow_sent") {
+              logSuccess(`[Overflow Guard] ${label}: ${result.message}`);
+              recordAction({
+                actionType: "resource.overflow_guard",
+                status: "success",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  pivotVillageId: result.pivotVillageId,
+                  pivotVillageName: result.pivotVillageName,
+                  sent: result.sent || null,
+                  distance: result.distance
+                }
+              });
+            } else if (
+              result.status === "overflow_ok" ||
+              result.status === "overflow_skipped" ||
+              result.status === "overflow_too_far"
+            ) {
+              logInfo(`[Overflow Guard] ${label}: ${result.message}`);
+            } else if (result.status === "overflow_no_candidates") {
+              logWarn(`[Overflow Guard] ${result.message}`);
+            } else {
+              logWarn(`[Overflow Guard] ${label}: ${result.message || result.status}`);
+              recordAction({
+                actionType: "resource.overflow_guard",
+                status: "failed",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  status: result.status
+                },
+                errorMessage: result.message || result.status
+              });
+            }
+          }).catch((error) => {
+            logWarn(`[Overflow Guard] Tick failed: ${error.message || error}`);
+            deferFullReschedule = true;
+          });
+
+          if (deferFullReschedule) {
+            scheduleOverflowGuardLoop({ retryMs: 90000 });
+          } else {
+            scheduleOverflowGuardLoop();
+          }
+        })();
+      }, delayMs);
+    };
+
     const cancelCelebrationsLoopTimer = () => {
       if (celebrationsLoopTimer) {
         clearTimeout(celebrationsLoopTimer);
@@ -9475,6 +9729,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           ? Math.max(0, Math.ceil((nextNpcCropConvertRunAt - Date.now()) / 60000))
           : null
       };
+      const overflowGuardLoopStatus = {
+        enabled: settings.resourceOverflowGuardEnabled !== false,
+        minMinutes: settings.resourceOverflowLoopMinMinutes,
+        maxMinutes: settings.resourceOverflowLoopMaxMinutes,
+        nextInMinutes: Number.isFinite(nextOverflowGuardRunAt)
+          ? Math.max(0, Math.ceil((nextOverflowGuardRunAt - Date.now()) / 60000))
+          : null,
+        triggerRatio: settings.resourceOverflowTriggerRatio,
+        maxDistance: settings.resourceOverflowMaxDistance
+      };
       const celebrationsLoopStatus = {
         enabled: settings.celebrationsRoundRobinEnabled,
         nextInMinutes: nextCelebrationsRunAt
@@ -9488,6 +9752,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         troopLoop: troopLoopStatus,
         crannyLoop: crannyLoopStatus,
         npcCropLoop: npcCropLoopStatus,
+        overflowGuard: overflowGuardLoopStatus,
         celebrationsLoop: celebrationsLoopStatus
       }, activeBuilderPlanMode);
       printCompactMenuKeys(settings);
@@ -9517,6 +9782,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       scheduleTop10TrackingLoop();
       scheduleRaidEvacuationLoop();
       scheduleNpcCropConvertLoop();
+      scheduleOverflowGuardLoop();
       scheduleCelebrationsLoop();
       if (dashboardBridge) {
         dashboardBridge.publishSnapshot({ force: true });
@@ -9600,6 +9866,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         nextNpcCropConvertRunAt,
         scheduleNpcCropConvertLoop,
         "NPC Crop"
+      );
+      check(
+        settings.resourceOverflowGuardEnabled !== false,
+        nextOverflowGuardRunAt,
+        scheduleOverflowGuardLoop,
+        "Overflow Guard"
       );
       check(
         settings.celebrationsRoundRobinEnabled,
@@ -10595,6 +10867,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleTop10TrackingLoop();
         scheduleRaidEvacuationLoop();
         scheduleNpcCropConvertLoop();
+        scheduleOverflowGuardLoop();
         scheduleCelebrationsLoop();
         continue;
       }
@@ -10654,6 +10927,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     if (npcCropConvertLoopTimer) {
       clearTimeout(npcCropConvertLoopTimer);
       npcCropConvertLoopTimer = null;
+    }
+    if (overflowGuardLoopTimer) {
+      clearTimeout(overflowGuardLoopTimer);
+      overflowGuardLoopTimer = null;
     }
     if (celebrationsLoopTimer) {
       clearTimeout(celebrationsLoopTimer);
