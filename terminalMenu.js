@@ -2020,6 +2020,29 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
     );
   }
 
+  const overflowStatus = runtimeStatus && runtimeStatus.overflowGuard
+    ? runtimeStatus.overflowGuard
+    : {
+        enabled: settings.resourceOverflowGuardEnabled !== false,
+        nextInMinutes: null
+      };
+  const overflowModeLabel = settings.resourceOverflowGuardEnabled !== false ? "ON" : "OFF";
+  const overflowModeColor = settings.resourceOverflowGuardEnabled !== false ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Overflow Guard:", ANSI.gray)} ${color(overflowModeLabel, ANSI.bold, overflowModeColor)} ${color(
+      `(≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}% → ~${Math.round((settings.resourceOverflowTargetRatio || 0.75) * 100)}%, max ${settings.resourceOverflowMaxDistance || 10}sq, ${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m)`,
+      ANSI.bold
+    )}`
+  );
+  if (settings.resourceOverflowGuardEnabled !== false) {
+    const nextOverflowText = Number.isFinite(overflowStatus.nextInMinutes)
+      ? `${overflowStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Overflow Check:", ANSI.gray)} ${color(nextOverflowText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
+
   const celebrationsStatus = runtimeStatus && runtimeStatus.celebrationsLoop
     ? runtimeStatus.celebrationsLoop
     : { enabled: settings.celebrationsRoundRobinEnabled, nextInMinutes: null };
@@ -2129,6 +2152,16 @@ function printSettings(settings, villageState) {
       )}% store fill)`
     },
     {
+      label: "overflowGuard",
+      value:
+        `${settings.resourceOverflowGuardEnabled !== false ? "ON" : "OFF"} ` +
+        `(≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}% → ` +
+        `~${Math.round((settings.resourceOverflowTargetRatio || 0.75) * 100)}%, ` +
+        `max ${settings.resourceOverflowMaxDistance || 10}sq, ` +
+        `every ${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m, ` +
+        `pivot ${settings.resourceOverflowPivotVillageIds || "capital"})`
+    },
+    {
       label: "resourceCirculationExpansion",
       value: settings.resourceCirculationExpansionEnabled ? "ON" : "OFF"
     }
@@ -2212,7 +2245,7 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
   );
   console.log(
-    `  ${opt("L")}  Overflow Guard     ${dim("[")}${onOff(settings.resourceOverflowGuardEnabled !== false)}${dim("]")}  ${tag("≥", `${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%`)}  ${tag("max", `${settings.resourceOverflowMaxDistance || 10}sq`)}  ${tag("every", `${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m`)}`
+    `  ${opt("OG")}  Overflow Guard    ${dim("[")}${onOff(settings.resourceOverflowGuardEnabled !== false)}${dim("]")}  ${tag("≥", `${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%`)}  ${tag("max", `${settings.resourceOverflowMaxDistance || 10}sq`)}  ${tag("every", `${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m`)}`
   );
   console.log(
     `  ${opt("N")}  NPC Crop Convert   ${dim("[")}${onOff(settings.npcCropConvertEnabled)}${dim("]")}  ${tag("every", `${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes}m`)}  ${tag("granary", `${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%`)}`
@@ -4112,7 +4145,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    if (input === "L") {
+    if (input === "OG" || input === "L") {
       const enabledText = (
         await askQuestion(rl, "Enable overflow guard? (Y/N, Enter keep): ")
       )
@@ -4149,6 +4182,12 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
           `Max distance squares to pivot/capital (Enter keep ${settings.resourceOverflowMaxDistance || 10}): `
         )
       ).trim();
+      const nextPivotText = (
+        await askQuestion(
+          rl,
+          `Pivot village IDs CSV (empty=capital, Enter keep ${settings.resourceOverflowPivotVillageIds || "auto"}): `
+        )
+      ).trim();
 
       if (!runtimeControls.updateOverflowGuardLoopConfig) {
         logWarn("Overflow guard update is not available in this runtime.");
@@ -4168,7 +4207,13 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
             : settings.resourceOverflowTargetRatio,
           maxDistance: nextDistText
             ? Number(nextDistText)
-            : settings.resourceOverflowMaxDistance
+            : settings.resourceOverflowMaxDistance,
+          pivotVillageIds:
+            nextPivotText !== ""
+              ? nextPivotText.toLowerCase() === "auto" || nextPivotText.toLowerCase() === "capital"
+                ? ""
+                : nextPivotText
+              : settings.resourceOverflowPivotVillageIds
         });
         settings.resourceOverflowGuardEnabled = applied.enabled;
         settings.resourceOverflowLoopMinMinutes = applied.minMinutes;
@@ -4176,10 +4221,11 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
         settings.resourceOverflowTriggerRatio = applied.triggerRatio;
         settings.resourceOverflowTargetRatio = applied.targetRatio;
         settings.resourceOverflowMaxDistance = applied.maxDistance;
+        settings.resourceOverflowPivotVillageIds = applied.pivotVillageIds;
         logSuccess(
           `Overflow guard: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, ` +
             `≥${Math.round(applied.triggerRatio * 100)}% → ~${Math.round(applied.targetRatio * 100)}%, ` +
-            `max ${applied.maxDistance}sq to capital/pivot.`
+            `max ${applied.maxDistance}sq → ${applied.pivotVillageIds || "capital"}.`
         );
       } catch (error) {
         logWarn(`Could not update overflow guard: ${error.message || error}`);
@@ -4321,7 +4367,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, N, C, F, T, U, I, W, A, E, K, H, P, V, B, or Q.");
+    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, OG, N, C, F, T, U, I, W, A, E, K, H, P, V, B, or Q.");
   }
 }
 
@@ -9593,6 +9639,25 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         nextInMinutes: npcCropNextInMinutes,
         granaryRatio: settings.npcCropConvertGranaryRatio
       };
+      const overflowGuardLoopStatus = {
+        enabled: settings.resourceOverflowGuardEnabled !== false,
+        minMinutes: settings.resourceOverflowLoopMinMinutes,
+        maxMinutes: settings.resourceOverflowLoopMaxMinutes,
+        nextInMinutes: nextOverflowGuardRunAt
+          ? Math.max(0, Math.ceil((nextOverflowGuardRunAt - Date.now()) / 60000))
+          : null,
+        triggerRatio: settings.resourceOverflowTriggerRatio,
+        targetRatio: settings.resourceOverflowTargetRatio,
+        maxDistance: settings.resourceOverflowMaxDistance
+      };
+      const celebrationsLoopStatus = {
+        enabled: settings.celebrationsRoundRobinEnabled,
+        minMinutes: settings.celebrationsLoopMinMinutes,
+        maxMinutes: settings.celebrationsLoopMaxMinutes,
+        nextInMinutes: nextCelebrationsRunAt
+          ? Math.max(0, Math.ceil((nextCelebrationsRunAt - Date.now()) / 60000))
+          : null
+      };
       const selectedVillage =
         villageState.villages.find((v) => v.id === villageState.selectedVillageId) || null;
       const activeVillage =
@@ -9630,7 +9695,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           cranny: crannyLoopStatus,
           activity: activityLoopStatus,
           top10: top10LoopStatus,
-          npcCrop: npcCropLoopStatus
+          npcCrop: npcCropLoopStatus,
+          overflowGuard: overflowGuardLoopStatus,
+          celebrations: celebrationsLoopStatus
         },
         activitySimulation: buildActivitySimulationStatus(),
         top10Tracking: buildTop10TrackingStatus(),
