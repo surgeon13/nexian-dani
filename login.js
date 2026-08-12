@@ -347,6 +347,26 @@ const settings = {
   resourceCirculationBuilderMaxDonors: numberEnv("RESOURCE_CIRCULATION_BUILDER_MAX_DONORS", 1),
   resourceCirculationBuilderMerchantLoads: numberEnv("RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS", 4),
   resourceCirculationReservePerResource: numberEnv("RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE", 500),
+  resourceOverflowGuardEnabled:
+    String(process.env.RESOURCE_OVERFLOW_GUARD_ENABLED || "true").toLowerCase() === "true",
+  resourceOverflowTriggerRatio: (() => {
+    const raw = Number(process.env.RESOURCE_OVERFLOW_TRIGGER_RATIO);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) return raw;
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) return raw / 100;
+    return 0.9;
+  })(),
+  resourceOverflowTargetRatio: (() => {
+    const raw = Number(process.env.RESOURCE_OVERFLOW_TARGET_RATIO);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) return raw;
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) return raw / 100;
+    return 0.75;
+  })(),
+  resourceOverflowMaxDistance: numberEnv("RESOURCE_OVERFLOW_MAX_DISTANCE", 10),
+  resourceOverflowLoopMinMinutes: numberEnv("RESOURCE_OVERFLOW_LOOP_MIN_MINUTES", 8),
+  resourceOverflowLoopMaxMinutes: numberEnv("RESOURCE_OVERFLOW_LOOP_MAX_MINUTES", 15),
+  resourceOverflowPivotVillageIds: String(
+    process.env.RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS || ""
+  ).trim(),
   npcCropConvertEnabled:
     String(process.env.NPC_CROP_CONVERT_ENABLED || "false").toLowerCase() === "true",
   npcCropConvertMinMinutes: numberEnv("NPC_CROP_CONVERT_MIN_MINUTES", 10),
@@ -514,6 +534,13 @@ function persistRuntimeSettings(selectedKeys) {
     RESOURCE_CIRCULATION_BUILDER_MAX_DONORS: String(settings.resourceCirculationBuilderMaxDonors),
     RESOURCE_CIRCULATION_BUILDER_MERCHANT_LOADS: String(settings.resourceCirculationBuilderMerchantLoads),
     RESOURCE_CIRCULATION_RESERVE_PER_RESOURCE: String(settings.resourceCirculationReservePerResource),
+    RESOURCE_OVERFLOW_GUARD_ENABLED: settings.resourceOverflowGuardEnabled ? "true" : "false",
+    RESOURCE_OVERFLOW_TRIGGER_RATIO: String(settings.resourceOverflowTriggerRatio),
+    RESOURCE_OVERFLOW_TARGET_RATIO: String(settings.resourceOverflowTargetRatio),
+    RESOURCE_OVERFLOW_MAX_DISTANCE: String(settings.resourceOverflowMaxDistance),
+    RESOURCE_OVERFLOW_LOOP_MIN_MINUTES: String(settings.resourceOverflowLoopMinMinutes),
+    RESOURCE_OVERFLOW_LOOP_MAX_MINUTES: String(settings.resourceOverflowLoopMaxMinutes),
+    RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS: String(settings.resourceOverflowPivotVillageIds || ""),
     NPC_CROP_CONVERT_ENABLED: settings.npcCropConvertEnabled ? "true" : "false",
     NPC_CROP_CONVERT_MIN_MINUTES: String(settings.npcCropConvertMinMinutes),
     NPC_CROP_CONVERT_MAX_MINUTES: String(settings.npcCropConvertMaxMinutes),
@@ -636,6 +663,39 @@ function applySessionLoopDefaults() {
     const buildingId = Math.floor(Number(settings.npcCropConvertMarketplaceBuildingId) || 33);
     settings.npcCropConvertMarketplaceBuildingId =
       Number.isFinite(buildingId) && buildingId > 0 ? buildingId : 33;
+  }
+
+  {
+    const overflowLoop = normalizeRange(
+      settings.resourceOverflowLoopMinMinutes,
+      settings.resourceOverflowLoopMaxMinutes,
+      8,
+      15
+    );
+    settings.resourceOverflowLoopMinMinutes = overflowLoop.min;
+    settings.resourceOverflowLoopMaxMinutes = overflowLoop.max;
+    const normRatio = (raw, fallback) => {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0 && n < 1) return n;
+      if (Number.isFinite(n) && n >= 1 && n <= 100) return n / 100;
+      return fallback;
+    };
+    settings.resourceOverflowTriggerRatio = normRatio(settings.resourceOverflowTriggerRatio, 0.9);
+    settings.resourceOverflowTargetRatio = normRatio(settings.resourceOverflowTargetRatio, 0.75);
+    if (settings.resourceOverflowTargetRatio > settings.resourceOverflowTriggerRatio) {
+      settings.resourceOverflowTargetRatio = Math.max(
+        0.05,
+        settings.resourceOverflowTriggerRatio - 0.1
+      );
+    }
+    settings.resourceOverflowMaxDistance = Math.max(
+      1,
+      Math.floor(Number(settings.resourceOverflowMaxDistance) || 10)
+    );
+    settings.resourceOverflowPivotVillageIds = String(
+      settings.resourceOverflowPivotVillageIds || ""
+    ).trim();
+    settings.resourceOverflowGuardEnabled = Boolean(settings.resourceOverflowGuardEnabled);
   }
 
   const celebrationsLoop = normalizeRange(
@@ -1967,6 +2027,75 @@ async function run() {
     };
   };
 
+  const updateOverflowGuardLoopConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.resourceOverflowGuardEnabled = nextConfig.enabled;
+    }
+
+    const range = normalizeRange(
+      Number(nextConfig.minMinutes),
+      Number(nextConfig.maxMinutes),
+      settings.resourceOverflowLoopMinMinutes,
+      settings.resourceOverflowLoopMaxMinutes
+    );
+    settings.resourceOverflowLoopMinMinutes = range.min;
+    settings.resourceOverflowLoopMaxMinutes = range.max;
+
+    const normRatio = (raw, fallback) => {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0 && n < 1) return n;
+      if (Number.isFinite(n) && n >= 1 && n <= 100) return n / 100;
+      return fallback;
+    };
+    if (nextConfig.triggerRatio !== undefined) {
+      settings.resourceOverflowTriggerRatio = normRatio(
+        nextConfig.triggerRatio,
+        settings.resourceOverflowTriggerRatio || 0.9
+      );
+    }
+    if (nextConfig.targetRatio !== undefined) {
+      settings.resourceOverflowTargetRatio = normRatio(
+        nextConfig.targetRatio,
+        settings.resourceOverflowTargetRatio || 0.75
+      );
+    }
+    if (settings.resourceOverflowTargetRatio > settings.resourceOverflowTriggerRatio) {
+      settings.resourceOverflowTargetRatio = Math.max(
+        0.05,
+        settings.resourceOverflowTriggerRatio - 0.1
+      );
+    }
+    if (nextConfig.maxDistance !== undefined) {
+      settings.resourceOverflowMaxDistance = Math.max(
+        1,
+        Math.floor(Number(nextConfig.maxDistance) || 10)
+      );
+    }
+    if (nextConfig.pivotVillageIds !== undefined) {
+      settings.resourceOverflowPivotVillageIds = String(nextConfig.pivotVillageIds || "").trim();
+    }
+
+    persistRuntimeSettings([
+      "RESOURCE_OVERFLOW_GUARD_ENABLED",
+      "RESOURCE_OVERFLOW_TRIGGER_RATIO",
+      "RESOURCE_OVERFLOW_TARGET_RATIO",
+      "RESOURCE_OVERFLOW_MAX_DISTANCE",
+      "RESOURCE_OVERFLOW_LOOP_MIN_MINUTES",
+      "RESOURCE_OVERFLOW_LOOP_MAX_MINUTES",
+      "RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS"
+    ]);
+
+    return {
+      enabled: settings.resourceOverflowGuardEnabled,
+      minMinutes: settings.resourceOverflowLoopMinMinutes,
+      maxMinutes: settings.resourceOverflowLoopMaxMinutes,
+      triggerRatio: settings.resourceOverflowTriggerRatio,
+      targetRatio: settings.resourceOverflowTargetRatio,
+      maxDistance: settings.resourceOverflowMaxDistance,
+      pivotVillageIds: settings.resourceOverflowPivotVillageIds
+    };
+  };
+
   const updateCelebrationsLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.celebrationsRoundRobinEnabled = nextConfig.enabled;
@@ -2248,6 +2377,7 @@ async function run() {
           updateActivitySimulationLoopConfig,
           updateTop10TrackingLoopConfig,
           updateNpcCropConvertLoopConfig,
+          updateOverflowGuardLoopConfig,
           updateCelebrationsLoopConfig,
           updateDashboardDisplayConfig,
           async persistSettings(selectedKeys) {
