@@ -68,20 +68,21 @@ function planKeyFromName(name) {
 }
 
 // building -> { unitField, qtyField, label } used by plans and the trainer.
+// Cavalry first so raid mounts (TT/Haeduan) are not starved by infantry batches.
 const PLAN_BRANCHES = [
-  { building: "barracks", unitField: "infantryUnit", qtyField: "infantryQty", label: "Barracks" },
-  {
-    building: "great_barracks",
-    unitField: "greatBarracksUnit",
-    qtyField: "greatBarracksQty",
-    label: "Great Barracks"
-  },
   { building: "stable", unitField: "cavalryUnit", qtyField: "cavalryQty", label: "Stable" },
   {
     building: "great_stable",
     unitField: "greatStableUnit",
     qtyField: "greatStableQty",
     label: "Great Stable"
+  },
+  { building: "barracks", unitField: "infantryUnit", qtyField: "infantryQty", label: "Barracks" },
+  {
+    building: "great_barracks",
+    unitField: "greatBarracksUnit",
+    qtyField: "greatBarracksQty",
+    label: "Great Barracks"
   }
 ];
 
