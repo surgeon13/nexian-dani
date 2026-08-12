@@ -5,6 +5,7 @@ const builder = require("./villageBuilder");
 const villageExpansion = require("./villageExpansion");
 const resourceCirculation = require("./resourceCirculation");
 const npcCropConvert = require("./npcCropConvert");
+const celebrations = require("./celebrations");
 const troopPlans = require("./troopPlans");
 const { version: APP_VERSION } = require("./package.json");
 const { formatProxyDisplay, normalizeProxyServer, buildProxySettingsPayload, proxyPool } = require("./proxyConfig");
@@ -1905,6 +1906,15 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
         settings.npcCropConvertMinMinutes,
         settings.npcCropConvertMaxMinutes,
         npcCropStatus.nextInMinutes
+      )} ${color("|", ANSI.gray)} ${fmtLoop(
+        "Celeb",
+        settings.celebrationsRoundRobinEnabled,
+        settings.celebrationsLoopMinMinutes,
+        settings.celebrationsLoopMaxMinutes,
+        (runtimeStatus && runtimeStatus.celebrationsLoop
+          ? runtimeStatus.celebrationsLoop
+          : {}
+        ).nextInMinutes
       )}`
     );
     return;
@@ -2009,6 +2019,46 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
       `  ${color("Next NPC Crop Check:", ANSI.gray)} ${color(nextNpcText, ANSI.bold, ANSI.cyan)}`
     );
   }
+
+  const overflowStatus = runtimeStatus && runtimeStatus.overflowGuard
+    ? runtimeStatus.overflowGuard
+    : {
+        enabled: settings.resourceOverflowGuardEnabled !== false,
+        nextInMinutes: null
+      };
+  const overflowModeLabel = settings.resourceOverflowGuardEnabled !== false ? "ON" : "OFF";
+  const overflowModeColor = settings.resourceOverflowGuardEnabled !== false ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Overflow Guard:", ANSI.gray)} ${color(overflowModeLabel, ANSI.bold, overflowModeColor)} ${color(
+      `(≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}% → ~${Math.round((settings.resourceOverflowTargetRatio || 0.75) * 100)}%, max ${settings.resourceOverflowMaxDistance || 10}sq, ${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m)`,
+      ANSI.bold
+    )}`
+  );
+  if (settings.resourceOverflowGuardEnabled !== false) {
+    const nextOverflowText = Number.isFinite(overflowStatus.nextInMinutes)
+      ? `${overflowStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Overflow Check:", ANSI.gray)} ${color(nextOverflowText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
+
+  const celebrationsStatus = runtimeStatus && runtimeStatus.celebrationsLoop
+    ? runtimeStatus.celebrationsLoop
+    : { enabled: settings.celebrationsRoundRobinEnabled, nextInMinutes: null };
+  const celebModeLabel = settings.celebrationsRoundRobinEnabled ? "ON" : "OFF";
+  const celebModeColor = settings.celebrationsRoundRobinEnabled ? ANSI.green : ANSI.yellow;
+  console.log(
+    `  ${color("Celebrations RR:", ANSI.gray)} ${color(celebModeLabel, ANSI.bold, celebModeColor)} ${color(`(${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes} min, ${settings.celebrationsType || "auto"}, queue ${settings.celebrationsQueueDepth === 2 ? 2 : 1})`, ANSI.bold)}`
+  );
+  if (settings.celebrationsRoundRobinEnabled) {
+    const nextCelebText = Number.isFinite(celebrationsStatus.nextInMinutes)
+      ? `${celebrationsStatus.nextInMinutes} min`
+      : "N/A";
+    console.log(
+      `  ${color("Next Celebration Check:", ANSI.gray)} ${color(nextCelebText, ANSI.bold, ANSI.cyan)}`
+    );
+  }
 }
 
 function printSettings(settings, villageState) {
@@ -2102,6 +2152,16 @@ function printSettings(settings, villageState) {
       )}% store fill)`
     },
     {
+      label: "overflowGuard",
+      value:
+        `${settings.resourceOverflowGuardEnabled !== false ? "ON" : "OFF"} ` +
+        `(≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}% → ` +
+        `~${Math.round((settings.resourceOverflowTargetRatio || 0.75) * 100)}%, ` +
+        `max ${settings.resourceOverflowMaxDistance || 10}sq, ` +
+        `every ${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m, ` +
+        `pivot ${settings.resourceOverflowPivotVillageIds || "capital"})`
+    },
+    {
       label: "resourceCirculationExpansion",
       value: settings.resourceCirculationExpansionEnabled ? "ON" : "OFF"
     }
@@ -2185,6 +2245,9 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
   );
   console.log(
+    `  ${opt("OG")}  Overflow Guard    ${dim("[")}${onOff(settings.resourceOverflowGuardEnabled !== false)}${dim("]")}  ${tag("≥", `${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%`)}  ${tag("max", `${settings.resourceOverflowMaxDistance || 10}sq`)}  ${tag("every", `${settings.resourceOverflowLoopMinMinutes || 8}-${settings.resourceOverflowLoopMaxMinutes || 15}m`)}`
+  );
+  console.log(
     `  ${opt("N")}  NPC Crop Convert   ${dim("[")}${onOff(settings.npcCropConvertEnabled)}${dim("]")}  ${tag("every", `${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes}m`)}  ${tag("granary", `${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%`)}`
   );
   gap();
@@ -2198,6 +2261,15 @@ function printSettingsMenu(settings, villageState) {
   );
   console.log(
     `  ${opt("I")}  Cranny RR          ${dim("[")}${onOff(settings.crannyDefenseRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.crannyDefenseLoopMinMinutes}-${settings.crannyDefenseLoopMaxMinutes}m`)}`
+  );
+  console.log(
+    `  ${opt("C")}  Celebrations RR    ${dim("[")}${onOff(settings.celebrationsRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.celebrationsLoopMinMinutes}-${settings.celebrationsLoopMaxMinutes}m`)}  ${tag("type", settings.celebrationsType || "auto")}  ${tag("queue", String(settings.celebrationsQueueDepth === 2 ? 2 : 1))}`
+  );
+  console.log(
+    `  ${opt("F")}  Celebration Villages ${tag(
+      "in",
+      `${parsePivotVillageIdSet(settings.celebrationsIncludedVillageIds).size || "all"}`
+    )}  ${tag("ex", `${parsePivotVillageIdSet(settings.celebrationsExcludedVillageIds).size}`)}`
   );
   gap();
 
@@ -2538,6 +2610,210 @@ async function runBuilderRrExclusionMenu(rl, settings, runtimeControls) {
       excludedSet.add(vid);
       await persistExcludedSet(excludedSet);
       logSuccess(`RR excluded for ${villageDisplayName(village)}.`);
+    }
+  }
+}
+
+function printCelebrationsVillageFilterSheet(snapshot, includedIdSet, excludedIdSet) {
+  const included = includedIdSet instanceof Set ? includedIdSet : new Set();
+  const excluded = excludedIdSet instanceof Set ? excludedIdSet : new Set();
+  printSubDivider("CELEBRATIONS VILLAGE FILTER");
+  console.log(
+    `  ${color("Include list:", ANSI.gray)} ${
+      included.size
+        ? color(`${included.size} village(s) (only these run)`, ANSI.bold, ANSI.cyan)
+        : color("empty = all villages", ANSI.dim)
+    }`
+  );
+  console.log(
+    `  ${color("Exclude list:", ANSI.gray)} ${
+      excluded.size
+        ? color(`${excluded.size} village(s) skipped`, ANSI.bold, ANSI.yellow)
+        : color("none", ANSI.dim)
+    }`
+  );
+  console.log("");
+  if (!snapshot || !Array.isArray(snapshot.villages) || !snapshot.villages.length) {
+    console.log(`  ${color("No villages detected yet.", ANSI.yellow)}`);
+    return;
+  }
+
+  snapshot.villages.forEach((village, index) => {
+    const vid = Number(village.id);
+    const selectedMark = village.id === snapshot.selectedVillageId ? "*" : " ";
+    const activeMark = village.id === snapshot.activeVillageId ? "A" : " ";
+    const marker = `[${selectedMark}${activeMark}]`;
+    let tag;
+    if (excluded.has(vid)) {
+      tag = color(" [EX]", ANSI.bold, ANSI.yellow);
+    } else if (included.size > 0 && included.has(vid)) {
+      tag = color(" [IN]", ANSI.bold, ANSI.green);
+    } else if (included.size > 0) {
+      tag = color(" [—]", ANSI.dim);
+    } else {
+      tag = color(" [OK]", ANSI.dim, ANSI.green);
+    }
+    console.log(
+      `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(marker, ANSI.gray)} ${villageDisplayName(village)}${tag}`
+    );
+  });
+
+  console.log("");
+  console.log(`  ${color("number", ANSI.bold, ANSI.cyan)}  Cycle village: OK/IN → IN → EX → OK`);
+  console.log(`  ${color("I", ANSI.bold, ANSI.cyan)}  Set INCLUDE list by CSV (empty = all)`);
+  console.log(`  ${color("E", ANSI.bold, ANSI.cyan)}  Set EXCLUDE list by CSV (empty = none)`);
+  console.log(`  ${color("A", ANSI.bold, ANSI.cyan)}  Clear include + exclude`);
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
+}
+
+async function runCelebrationsVillageFilterMenu(rl, settings, runtimeControls) {
+  const refresh =
+    runtimeControls && typeof runtimeControls.refreshSideInfoVillages === "function"
+      ? runtimeControls.refreshSideInfoVillages
+      : null;
+  const getSnapshot =
+    runtimeControls && typeof runtimeControls.getRaidPivotVillageUiState === "function"
+      ? runtimeControls.getRaidPivotVillageUiState
+      : null;
+
+  const persistFilters = async (includedSet, excludedSet) => {
+    settings.celebrationsIncludedVillageIds = includedSet.size
+      ? formatPivotCsvFromSet(includedSet)
+      : "";
+    settings.celebrationsExcludedVillageIds = excludedSet.size
+      ? formatPivotCsvFromSet(excludedSet)
+      : "";
+    if (runtimeControls.persistSettings) {
+      await runtimeControls.persistSettings([
+        "CELEBRATIONS_INCLUDED_VILLAGE_IDS",
+        "CELEBRATIONS_EXCLUDED_VILLAGE_IDS"
+      ]);
+    }
+  };
+
+  if (refresh) {
+    try {
+      await refresh();
+    } catch (_error) {
+      logWarn("Could not refresh village list from game (session busy?).");
+    }
+  }
+
+  let includedSet = parsePivotVillageIdSet(settings.celebrationsIncludedVillageIds);
+  let excludedSet = parsePivotVillageIdSet(settings.celebrationsExcludedVillageIds);
+  let done = false;
+  while (!done) {
+    if (runtimeControls.menuSession?.quitRequested) {
+      done = true;
+      continue;
+    }
+    const snapshot =
+      typeof getSnapshot === "function"
+        ? getSnapshot()
+        : { villages: [], selectedVillageId: null, activeVillageId: null };
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+    printCelebrationsVillageFilterSheet(snapshot, includedSet, excludedSet);
+
+    if (!villages.length) {
+      logWarn("No villages detected.");
+    }
+
+    const answer = (await askQuestion(rl, "Celebrations filter option: ")).trim().toUpperCase();
+    if (answer === "Q") {
+      if (runtimeControls.menuSession) {
+        runtimeControls.menuSession.quitRequested = true;
+      }
+      done = true;
+      continue;
+    }
+    if (answer === "B" || answer === "") {
+      done = true;
+      continue;
+    }
+    if (answer === "A") {
+      includedSet = new Set();
+      excludedSet = new Set();
+      await persistFilters(includedSet, excludedSet);
+      logSuccess("Celebrations include/exclude cleared (all villages eligible).");
+      continue;
+    }
+    if (answer === "I") {
+      const typed = (
+        await askQuestion(rl, "INCLUDE villages CSV (rows/vids), empty = all: ")
+      ).trim();
+      if (!typed) {
+        includedSet = new Set();
+      } else {
+        const { resolvedIds, invalidTokens } = resolvePivotCsvTokensToVillageIds(typed, villages);
+        includedSet = new Set(resolvedIds);
+        resolvedIds.forEach((id) => excludedSet.delete(id));
+        if (invalidTokens.length) {
+          logWarn(`Ignored unknown entries: ${invalidTokens.join(", ")}.`);
+        }
+      }
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(
+        `Celebrations INCLUDE: ${formatVillageLabelsFromIdCsv(
+          settings.celebrationsIncludedVillageIds,
+          villages,
+          "all"
+        )}`
+      );
+      continue;
+    }
+    if (answer === "E") {
+      const typed = (
+        await askQuestion(rl, "EXCLUDE villages CSV (rows/vids), empty = none: ")
+      ).trim();
+      if (!typed) {
+        excludedSet = new Set();
+      } else {
+        const { resolvedIds, invalidTokens } = resolvePivotCsvTokensToVillageIds(typed, villages);
+        excludedSet = new Set(resolvedIds);
+        resolvedIds.forEach((id) => includedSet.delete(id));
+        if (invalidTokens.length) {
+          logWarn(`Ignored unknown entries: ${invalidTokens.join(", ")}.`);
+        }
+      }
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(
+        `Celebrations EXCLUDE: ${formatVillageLabelsFromIdCsv(
+          settings.celebrationsExcludedVillageIds,
+          villages,
+          "none"
+        )}`
+      );
+      continue;
+    }
+
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a listed number, I, E, A, or B.");
+      continue;
+    }
+    const village = villages[index - 1];
+    const vid = Number(village && village.id);
+    if (!Number.isFinite(vid)) {
+      logWarn("Selected village has invalid id.");
+      continue;
+    }
+
+    // Cycle: default/OK → IN → EX → default
+    if (excludedSet.has(vid)) {
+      excludedSet.delete(vid);
+      includedSet.delete(vid);
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(`${villageDisplayName(village)}: cleared (eligible if include empty / listed).`);
+    } else if (includedSet.has(vid)) {
+      includedSet.delete(vid);
+      excludedSet.add(vid);
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(`${villageDisplayName(village)}: EXCLUDED from celebrations RR.`);
+    } else {
+      includedSet.add(vid);
+      excludedSet.delete(vid);
+      await persistFilters(includedSet, excludedSet);
+      logSuccess(`${villageDisplayName(village)}: INCLUDED in celebrations RR.`);
     }
   }
 }
@@ -3869,6 +4145,94 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "OG" || input === "L") {
+      const enabledText = (
+        await askQuestion(rl, "Enable overflow guard? (Y/N, Enter keep): ")
+      )
+        .trim()
+        .toUpperCase();
+      let nextEnabled = settings.resourceOverflowGuardEnabled !== false;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Overflow guard MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Overflow guard MAX minutes (Enter keep): ")
+      ).trim();
+      const nextTriggerText = (
+        await askQuestion(
+          rl,
+          `Trigger fill % (e.g. 90, Enter keep ${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}): `
+        )
+      ).trim();
+      const nextTargetText = (
+        await askQuestion(
+          rl,
+          `Drain-down fill % (e.g. 75, Enter keep ${Math.round((settings.resourceOverflowTargetRatio || 0.75) * 100)}): `
+        )
+      ).trim();
+      const nextDistText = (
+        await askQuestion(
+          rl,
+          `Max distance squares to pivot/capital (Enter keep ${settings.resourceOverflowMaxDistance || 10}): `
+        )
+      ).trim();
+      const nextPivotText = (
+        await askQuestion(
+          rl,
+          `Pivot village IDs CSV (empty=capital, Enter keep ${settings.resourceOverflowPivotVillageIds || "auto"}): `
+        )
+      ).trim();
+
+      if (!runtimeControls.updateOverflowGuardLoopConfig) {
+        logWarn("Overflow guard update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateOverflowGuardLoopConfig({
+          enabled: nextEnabled,
+          minMinutes: nextMinText ? Number(nextMinText) : settings.resourceOverflowLoopMinMinutes,
+          maxMinutes: nextMaxText ? Number(nextMaxText) : settings.resourceOverflowLoopMaxMinutes,
+          triggerRatio: nextTriggerText
+            ? Number(nextTriggerText)
+            : settings.resourceOverflowTriggerRatio,
+          targetRatio: nextTargetText
+            ? Number(nextTargetText)
+            : settings.resourceOverflowTargetRatio,
+          maxDistance: nextDistText
+            ? Number(nextDistText)
+            : settings.resourceOverflowMaxDistance,
+          pivotVillageIds:
+            nextPivotText !== ""
+              ? nextPivotText.toLowerCase() === "auto" || nextPivotText.toLowerCase() === "capital"
+                ? ""
+                : nextPivotText
+              : settings.resourceOverflowPivotVillageIds
+        });
+        settings.resourceOverflowGuardEnabled = applied.enabled;
+        settings.resourceOverflowLoopMinMinutes = applied.minMinutes;
+        settings.resourceOverflowLoopMaxMinutes = applied.maxMinutes;
+        settings.resourceOverflowTriggerRatio = applied.triggerRatio;
+        settings.resourceOverflowTargetRatio = applied.targetRatio;
+        settings.resourceOverflowMaxDistance = applied.maxDistance;
+        settings.resourceOverflowPivotVillageIds = applied.pivotVillageIds;
+        logSuccess(
+          `Overflow guard: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, ` +
+            `≥${Math.round(applied.triggerRatio * 100)}% → ~${Math.round(applied.targetRatio * 100)}%, ` +
+            `max ${applied.maxDistance}sq → ${applied.pivotVillageIds || "capital"}.`
+        );
+      } catch (error) {
+        logWarn(`Could not update overflow guard: ${error.message || error}`);
+      }
+      continue;
+    }
+
     if (input === "N") {
       const enabledText = (
         await askQuestion(rl, "Enable NPC crop convert watcher? (Y/N, Enter keep): ")
@@ -3921,6 +4285,77 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "C") {
+      const enabledText = (
+        await askQuestion(rl, "Enable Celebrations RR? (Y/N, Enter keep): ")
+      )
+        .trim()
+        .toUpperCase();
+
+      let nextEnabled = settings.celebrationsRoundRobinEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextMinText = (
+        await askQuestion(rl, "Celebrations RR MIN minutes (Enter keep): ")
+      ).trim();
+      const nextMaxText = (
+        await askQuestion(rl, "Celebrations RR MAX minutes (Enter keep): ")
+      ).trim();
+      const nextTypeText = (
+        await askQuestion(
+          rl,
+          `Celebration type auto/small/large (Enter keep ${settings.celebrationsType || "auto"}): `
+        )
+      )
+        .trim()
+        .toLowerCase();
+      const nextQueueText = (
+        await askQuestion(
+          rl,
+          `Celebration queue depth 1 or 2 (Enter keep ${settings.celebrationsQueueDepth === 2 ? 2 : 1}): `
+        )
+      ).trim();
+
+      if (!runtimeControls.updateCelebrationsLoopConfig) {
+        logWarn("Celebrations RR update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateCelebrationsLoopConfig({
+          enabled: nextEnabled,
+          minMinutes: nextMinText ? Number(nextMinText) : settings.celebrationsLoopMinMinutes,
+          maxMinutes: nextMaxText ? Number(nextMaxText) : settings.celebrationsLoopMaxMinutes,
+          type: nextTypeText || settings.celebrationsType,
+          queueDepth: nextQueueText
+            ? Number(nextQueueText)
+            : settings.celebrationsQueueDepth === 2
+              ? 2
+              : 1
+        });
+        settings.celebrationsRoundRobinEnabled = applied.enabled;
+        settings.celebrationsLoopMinMinutes = applied.minMinutes;
+        settings.celebrationsLoopMaxMinutes = applied.maxMinutes;
+        settings.celebrationsType = applied.type;
+        settings.celebrationsQueueDepth = applied.queueDepth === 2 ? 2 : 1;
+        logSuccess(
+          `Celebrations RR: ${applied.enabled ? "ON" : "OFF"}, every ${applied.minMinutes}-${applied.maxMinutes}m, type=${applied.type}, queue=${settings.celebrationsQueueDepth}.`
+        );
+      } catch (error) {
+        logWarn(`Could not update Celebrations RR: ${error.message || error}`);
+      }
+      continue;
+    }
+
+    if (input === "F") {
+      await runCelebrationsVillageFilterMenu(rl, settings, runtimeControls);
+      continue;
+    }
+
     if (input === "V") {
       settings.resourceCirculationExpansionEnabled = !settings.resourceCirculationExpansionEnabled;
       if (runtimeControls.persistSettings) {
@@ -3932,7 +4367,7 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
-    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, N, T, U, I, W, A, E, K, H, P, V, B, or Q.");
+    logWarn("Unknown option. Use 1-7, D, G, BL, BR, X, M, R, OG, N, C, F, T, U, I, W, A, E, K, H, P, V, B, or Q.");
   }
 }
 
@@ -4465,6 +4900,149 @@ async function trainPlanBranch(getPage, settings, villageId, options = {}) {
   };
 }
 
+function buildAccountOverviewTroopsUrl(settings = {}) {
+  if (settings.accountOverviewTroopsUrl) {
+    return String(settings.accountOverviewTroopsUrl);
+  }
+  try {
+    const base = new URL(
+      settings.villageStatusUrl || settings.villageBuilderUrl || "https://s1.nexian.world/village1.php"
+    );
+    return `${base.origin}/overview.php?t=4`;
+  } catch (_error) {
+    return "https://s1.nexian.world/overview.php?t=4";
+  }
+}
+
+/**
+ * Account Overview → Troops (`overview.php?t=4`): own troops per village (home + away) + Sum.
+ * Prefer this over village1 `#troops` when reporting troop strength.
+ */
+async function readAccountOverviewOwnTroops(page, settings = {}) {
+  const url = buildAccountOverviewTroopsUrl(settings);
+  await safeGotoWithRetry(page, url, { waitUntil: "domcontentloaded", timeout: 60000 }, 2);
+  if (page && !page.isClosed()) {
+    await page.waitForTimeout(500).catch(() => null);
+  }
+
+  return page.evaluate(() => {
+    const parseCount = (text) =>
+      Number(String(text || "").replace(/\u00a0/g, " ").replace(/[^\d]/g, "")) || 0;
+
+    const tables = Array.from(document.querySelectorAll("table"));
+    let table =
+      tables.find((t) => {
+        const imgs = t.querySelectorAll("thead img.unit, thead img[class*='unit']");
+        return imgs.length >= 5 && t.querySelector("tbody td.vil a[href*='vid=']");
+      }) ||
+      tables.find(
+        (t) => t.querySelector("tr.sum") && t.querySelector("tbody td.vil a[href*='vid=']")
+      ) ||
+      null;
+
+    if (!table) {
+      return {
+        ok: false,
+        unitNames: [],
+        villages: [],
+        totals: {},
+        grandTotal: 0,
+        error: "overview_troops_table_not_found"
+      };
+    }
+
+    const headerRow = Array.from(table.querySelectorAll("thead tr")).find((tr) =>
+      tr.querySelector("img.unit, img[class*='unit']")
+    );
+    const unitNames = headerRow
+      ? Array.from(headerRow.querySelectorAll("img.unit, img[class*='unit']")).map((img) => {
+          const titled = String(img.getAttribute("title") || img.getAttribute("alt") || "")
+            .replace(/\u00a0/g, " ")
+            .trim();
+          if (titled) {
+            return titled;
+          }
+          const cls = String(img.className || "");
+          if (/\buhero\b/i.test(cls)) {
+            return "Hero";
+          }
+          const m = cls.match(/\bu(\d+)\b/i);
+          return m ? `u${m[1]}` : "Unit";
+        })
+      : [];
+
+    const villages = [];
+    let totals = {};
+    Array.from(table.querySelectorAll("tbody tr")).forEach((row) => {
+      if (row.classList.contains("spacer")) {
+        return;
+      }
+      const cells = Array.from(row.querySelectorAll("td"));
+      if (cells.length < 2) {
+        return;
+      }
+      const nameCell = cells[0];
+      const counts = cells.slice(1).map((td) => parseCount(td.textContent));
+      const label = String(nameCell.textContent || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (row.classList.contains("sum") || /^sum$/i.test(label)) {
+        totals = {};
+        unitNames.forEach((name, i) => {
+          totals[name] = counts[i] || 0;
+        });
+        return;
+      }
+
+      const link = nameCell.querySelector("a[href*='vid=']");
+      if (!link) {
+        return;
+      }
+      const href = String(link.getAttribute("href") || "");
+      const idMatch = href.match(/[?&]vid=(\d+)/i);
+      const villageId = idMatch ? Number(idMatch[1]) : null;
+      const villageName = String(link.textContent || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const troops = {};
+      unitNames.forEach((name, i) => {
+        const n = counts[i] || 0;
+        if (n > 0) {
+          troops[name] = n;
+        }
+      });
+      villages.push({
+        villageId,
+        villageName,
+        troops,
+        total: counts.reduce((a, b) => a + b, 0)
+      });
+    });
+
+    const grandTotal = Object.values(totals).reduce((a, b) => a + (Number(b) || 0), 0);
+    return {
+      ok: true,
+      unitNames,
+      villages,
+      totals,
+      grandTotal,
+      error: null
+    };
+  });
+}
+
+function formatOverviewTroopRows(troopsMap) {
+  const entries = Object.entries(troopsMap || {}).filter(([, n]) => Number(n) > 0);
+  return entries.map(([name, count]) => ({
+    label: color(name, ANSI.bold, ANSI.yellow),
+    value: color(String(count), ANSI.bold, ANSI.cyan),
+    raw: true
+  }));
+}
+
 async function showVillageStatus(getPage, settings, selectedVillageId, selectedVillage) {
   const page = getPage();
   await safeGotoWithRetry(page, withVillageId(settings.villageStatusUrl, selectedVillageId));
@@ -4634,6 +5212,19 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
     };
   });
   const incomingAttacks = getIncomingAttackAlerts(status.movements);
+
+  let overviewTroops = null;
+  try {
+    overviewTroops = await readAccountOverviewOwnTroops(page, settings);
+  } catch (error) {
+    overviewTroops = {
+      ok: false,
+      villages: [],
+      totals: {},
+      grandTotal: 0,
+      error: error && error.message ? error.message : String(error)
+    };
+  }
 
   printDivider("VILLAGE STATUS");
 
@@ -4812,10 +5403,10 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
   }
 
   if (!status.units.length) {
-    printSubDivider("UNITS");
+    printSubDivider("UNITS AT HOME (village page)");
     console.log(`  ${color("none", ANSI.dim)}`);
   } else {
-    printSubDivider("UNITS");
+    printSubDivider("UNITS AT HOME (village page)");
     printKeyValueRows(
       status.units.map((unit) => ({
         label: color(unit.name, ANSI.bold, ANSI.yellow),
@@ -4823,6 +5414,55 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
         raw: true
       }))
     );
+  }
+
+  printSubDivider("OWN TROOPS (account overview)");
+  if (!(overviewTroops && overviewTroops.ok)) {
+    console.log(
+      `  ${color(
+        `unavailable${overviewTroops && overviewTroops.error ? `: ${overviewTroops.error}` : ""}`,
+        ANSI.dim
+      )}`
+    );
+  } else {
+    const selectedId = Number(selectedVillageId);
+    const villageRow =
+      (overviewTroops.villages || []).find((v) => Number(v.villageId) === selectedId) ||
+      (selectedVillage &&
+        (overviewTroops.villages || []).find(
+          (v) =>
+            String(v.villageName || "").toLowerCase() ===
+            String(selectedVillage.name || "").toLowerCase()
+        )) ||
+      null;
+
+    if (!villageRow || !(villageRow.total > 0)) {
+      console.log(`  ${color("none for this village", ANSI.dim)}`);
+    } else {
+      printKeyValueRows(formatOverviewTroopRows(villageRow.troops));
+      printKeyValueRows([
+        {
+          label: color("Village total", ANSI.bold, ANSI.white),
+          value: color(String(villageRow.total), ANSI.bold, ANSI.cyan),
+          raw: true
+        }
+      ]);
+    }
+
+    printSubDivider("ACCOUNT TROOP TOTALS (overview)");
+    const totalRows = formatOverviewTroopRows(overviewTroops.totals);
+    if (!totalRows.length) {
+      console.log(`  ${color("none", ANSI.dim)}`);
+    } else {
+      printKeyValueRows(totalRows);
+      printKeyValueRows([
+        {
+          label: color("Grand total", ANSI.bold, ANSI.white),
+          value: color(String(overviewTroops.grandTotal || 0), ANSI.bold, ANSI.cyan),
+          raw: true
+        }
+      ]);
+    }
   }
 
 }
@@ -5302,6 +5942,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
   let crannyDefenseLoopTimer = null;
   let raidEvacuationLoopTimer = null;
   let npcCropConvertLoopTimer = null;
+  let celebrationsLoopTimer = null;
+  let overflowGuardLoopTimer = null;
   let sigintHandler = null;
   const raidEvacuationByVillage = new Map();
   const raidEvacuationSkipLogAtByVillage = new Map();
@@ -5367,6 +6009,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let lastNpcCropConvertDelayMinutes = null;
     let npcCropConvertResumeWaitLogged = false;
     let npcCropConvertRoundRobinIndex = 0;
+    let nextCelebrationsRunAt = null;
+    let lastCelebrationsDelayMinutes = null;
+    let celebrationsResumeWaitLogged = false;
+    let celebrationsRoundRobinIndex = 0;
     let builderResumeWaitLogged = false;
     let builderTemplateDeferredForCrannyLogged = false;
     let builderVillageWaitLastLogAt = null;
@@ -5450,6 +6096,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           return Number.isFinite(id) && id > 0;
         };
 
+        let capitalIdFromConfig = null;
+        try {
+          const cfg = window.__vgConfig;
+          const raw = cfg && (cfg.capitalId || cfg.capital_id);
+          const n = Number(raw);
+          if (isValidVillageId(n)) {
+            capitalIdFromConfig = Math.trunc(n);
+          }
+        } catch (_error) {
+          capitalIdFromConfig = null;
+        }
+
         const rows = Array.from(document.querySelectorAll("#vlist tr[data-vid]"));
         let villages = rows.map((row) => {
           const villageId = Number(row.getAttribute("data-vid"));
@@ -5472,7 +6130,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             ? groupNameEl.textContent.replace(/\u00a0/g, " ").trim()
             : "Ungrouped";
           const isCapital = Boolean(
-            section && section.getAttribute("data-group-id") === "_capital"
+            (section && section.getAttribute("data-group-id") === "_capital") ||
+              (capitalIdFromConfig != null && villageId === capitalIdFromConfig)
           );
 
           const dotCell = row.querySelector("td.dot, td.dothl");
@@ -5561,8 +6220,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               return {
                 id: villageId,
                 name: name || `Village ${villageId}`,
-                groupName: "Ungrouped",
-                isCapital: false,
+                groupName:
+                  capitalIdFromConfig != null && villageId === capitalIdFromConfig
+                    ? "Capital"
+                    : "Ungrouped",
+                isCapital: capitalIdFromConfig != null && villageId === capitalIdFromConfig,
                 x: Number.isFinite(x) ? x : null,
                 y: Number.isFinite(y) ? y : null,
                 coordsText:
@@ -5619,6 +6281,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           seenVillageIds.add(village.id);
           uniqueVillages.push(village);
         });
+
+        if (capitalIdFromConfig != null && !uniqueVillages.some((v) => v.isCapital)) {
+          const capital = uniqueVillages.find((v) => Number(v.id) === capitalIdFromConfig);
+          if (capital) {
+            capital.isCapital = true;
+            if (capital.groupName === "Ungrouped") {
+              capital.groupName = "Capital";
+            }
+          }
+        }
 
         const active = uniqueVillages.find((village) => village.isActive) || null;
         return {
@@ -8174,10 +8846,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const min = Math.max(1, Math.floor(Number(settings.npcCropConvertMinMinutes) || 10));
       const max = Math.max(min, Math.floor(Number(settings.npcCropConvertMaxMinutes) || 20));
-      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      // Only treat explicit retryMs as a short retry. Math.max(15000, undefined||0) was
+      // collapsing every normal reschedule to 15s and hammering the account.
+      const requestedRetryMs = Math.floor(Number(options.retryMs));
+      const useRetry =
+        Number.isFinite(requestedRetryMs) && requestedRetryMs > 0;
       let delayMs;
-      if (retryMs > 0) {
-        delayMs = retryMs;
+      if (useRetry) {
+        delayMs = Math.max(15000, requestedRetryMs);
       } else {
         const delayMinutes = pickNextNpcCropConvertDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
@@ -8271,6 +8947,300 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             scheduleNpcCropConvertLoop({ retryMs: 90000 });
           } else {
             scheduleNpcCropConvertLoop();
+          }
+        })();
+      }, delayMs);
+    };
+
+    let overflowGuardRoundRobinIndex = 0;
+    let lastOverflowGuardDelayMinutes = null;
+    let nextOverflowGuardRunAt = null;
+    let overflowGuardResumeWaitLogged = false;
+
+    const cancelOverflowGuardLoopTimer = () => {
+      if (overflowGuardLoopTimer) {
+        clearTimeout(overflowGuardLoopTimer);
+        overflowGuardLoopTimer = null;
+      }
+      nextOverflowGuardRunAt = null;
+    };
+
+    const pickNextOverflowGuardDelayMinutes = (minMinutes, maxMinutes) => {
+      const min = Math.max(1, Math.floor(Number(minMinutes) || 8));
+      const max = Math.max(min, Math.floor(Number(maxMinutes) || 15));
+      if (min === max) {
+        return min;
+      }
+      let next = min + Math.floor(Math.random() * (max - min + 1));
+      if (
+        Number.isFinite(lastOverflowGuardDelayMinutes) &&
+        max > min &&
+        next === lastOverflowGuardDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastOverflowGuardDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleOverflowGuardLoop = (options = {}) => {
+      cancelOverflowGuardLoopTimer();
+      if (done || settings.resourceOverflowGuardEnabled === false) {
+        return;
+      }
+
+      const min = Math.max(1, Math.floor(Number(settings.resourceOverflowLoopMinMinutes) || 8));
+      const max = Math.max(min, Math.floor(Number(settings.resourceOverflowLoopMaxMinutes) || 15));
+      // Only treat explicit retryMs as a short retry. Math.max(15000, undefined||0) was
+      // collapsing every normal reschedule to 15s and hammering the account.
+      const requestedRetryMs = Math.floor(Number(options.retryMs));
+      const useRetry =
+        Number.isFinite(requestedRetryMs) && requestedRetryMs > 0;
+      let delayMs;
+      if (useRetry) {
+        delayMs = Math.max(15000, requestedRetryMs);
+      } else {
+        const delayMinutes = pickNextOverflowGuardDelayMinutes(min, max);
+        delayMs = delayMinutes * 60 * 1000;
+        logInfo(
+          `[Overflow Guard] Next check in ${delayMinutes} minute(s). (≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%, max ${settings.resourceOverflowMaxDistance || 10}sq → capital/pivot)`
+        );
+      }
+      nextOverflowGuardRunAt = Date.now() + delayMs;
+
+      overflowGuardLoopTimer = setTimeout(() => {
+        void (async () => {
+          if (done || settings.resourceOverflowGuardEnabled === false) {
+            scheduleOverflowGuardLoop();
+            return;
+          }
+          if (actionInProgress) {
+            scheduleOverflowGuardLoop({ retryMs: 45000 });
+            return;
+          }
+          if (resourceCirculation.isMarketplaceBusy()) {
+            scheduleOverflowGuardLoop({ retryMs: 60000 });
+            return;
+          }
+          const automationStatus = runtimeControls.getAutomationStatus
+            ? runtimeControls.getAutomationStatus()
+            : { paused: false, reason: "online" };
+          if (automationStatus.paused) {
+            if (!overflowGuardResumeWaitLogged) {
+              logInfo(
+                `[Overflow Guard] Paused (${automationStatus.reason || "paused"}). Waiting for session to resume...`
+              );
+              overflowGuardResumeWaitLogged = true;
+            }
+            scheduleOverflowGuardLoop({ retryMs: 60000 });
+            return;
+          }
+          overflowGuardResumeWaitLogged = false;
+
+          let deferFullReschedule = false;
+          await runAction("Overflow Guard", async () => {
+            const result = await resourceCirculation.runOverflowGuardRoundRobin(
+              getPage,
+              settings,
+              villageState.villages,
+              {
+                roundRobinIndex: overflowGuardRoundRobinIndex,
+                log: (msg) => logInfo(msg)
+              }
+            );
+            if (Number.isFinite(Number(result.roundRobinIndex))) {
+              overflowGuardRoundRobinIndex = Number(result.roundRobinIndex);
+            }
+            const label = result.checkedVillageName
+              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+              : result.checkedVillageId
+                ? `vid=${result.checkedVillageId}`
+                : "?";
+            if (result.status === "overflow_sent") {
+              logSuccess(`[Overflow Guard] ${label}: ${result.message}`);
+              recordAction({
+                actionType: "resource.overflow_guard",
+                status: "success",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  pivotVillageId: result.pivotVillageId,
+                  pivotVillageName: result.pivotVillageName,
+                  sent: result.sent || null,
+                  distance: result.distance
+                }
+              });
+            } else if (
+              result.status === "overflow_ok" ||
+              result.status === "overflow_skipped" ||
+              result.status === "overflow_too_far"
+            ) {
+              logInfo(`[Overflow Guard] ${label}: ${result.message}`);
+            } else if (result.status === "overflow_no_candidates") {
+              logWarn(`[Overflow Guard] ${result.message}`);
+            } else {
+              logWarn(`[Overflow Guard] ${label}: ${result.message || result.status}`);
+              recordAction({
+                actionType: "resource.overflow_guard",
+                status: "failed",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  status: result.status
+                },
+                errorMessage: result.message || result.status
+              });
+            }
+          }).catch((error) => {
+            logWarn(`[Overflow Guard] Tick failed: ${error.message || error}`);
+            deferFullReschedule = true;
+          });
+
+          if (deferFullReschedule) {
+            scheduleOverflowGuardLoop({ retryMs: 90000 });
+          } else {
+            scheduleOverflowGuardLoop();
+          }
+        })();
+      }, delayMs);
+    };
+
+    const cancelCelebrationsLoopTimer = () => {
+      if (celebrationsLoopTimer) {
+        clearTimeout(celebrationsLoopTimer);
+        celebrationsLoopTimer = null;
+      }
+      nextCelebrationsRunAt = null;
+    };
+
+    const pickNextCelebrationsDelayMinutes = (min, max) => {
+      let next = randomIntBetween(min, max);
+      if (
+        lastCelebrationsDelayMinutes !== null &&
+        max > min &&
+        next === lastCelebrationsDelayMinutes
+      ) {
+        next = next === max ? next - 1 : next + 1;
+      }
+      lastCelebrationsDelayMinutes = next;
+      return next;
+    };
+
+    const scheduleCelebrationsLoop = (options = {}) => {
+      cancelCelebrationsLoopTimer();
+      if (done || !settings.celebrationsRoundRobinEnabled) {
+        return;
+      }
+
+      const min = Math.max(1, Math.floor(Number(settings.celebrationsLoopMinMinutes) || 60));
+      const max = Math.max(min, Math.floor(Number(settings.celebrationsLoopMaxMinutes) || 120));
+      // Only treat explicit retryMs as a short retry. Math.max(15000, undefined||0) was
+      // collapsing every normal reschedule to 15s and hammering the account.
+      const requestedRetryMs = Math.floor(Number(options.retryMs));
+      const useRetry =
+        Number.isFinite(requestedRetryMs) && requestedRetryMs > 0;
+      let delayMs;
+      if (useRetry) {
+        delayMs = Math.max(15000, requestedRetryMs);
+      } else {
+        const delayMinutes = pickNextCelebrationsDelayMinutes(min, max);
+        delayMs = delayMinutes * 60 * 1000;
+        logInfo(
+          `[Celebrations] Next Town Hall check in ${delayMinutes} minute(s). (type ${settings.celebrationsType || "auto"}, queue ${settings.celebrationsQueueDepth === 2 ? 2 : 1})`
+        );
+      }
+      nextCelebrationsRunAt = Date.now() + delayMs;
+
+      celebrationsLoopTimer = setTimeout(() => {
+        void (async () => {
+          if (done || !settings.celebrationsRoundRobinEnabled) {
+            scheduleCelebrationsLoop();
+            return;
+          }
+          if (actionInProgress) {
+            scheduleCelebrationsLoop({ retryMs: 45000 });
+            return;
+          }
+          const automationStatus = runtimeControls.getAutomationStatus
+            ? runtimeControls.getAutomationStatus()
+            : { paused: false, reason: "online" };
+          if (automationStatus.paused) {
+            if (!celebrationsResumeWaitLogged) {
+              logInfo(
+                `[Celebrations] Paused (${automationStatus.reason || "paused"}). Waiting for session to resume...`
+              );
+              celebrationsResumeWaitLogged = true;
+            }
+            scheduleCelebrationsLoop({ retryMs: 60000 });
+            return;
+          }
+          celebrationsResumeWaitLogged = false;
+
+          let deferFullReschedule = false;
+          await runAction("Celebrations RR", async () => {
+            const result = await celebrations.runCelebrationsRoundRobin(
+              getPage(),
+              settings,
+              villageState.villages,
+              { roundRobinIndex: celebrationsRoundRobinIndex }
+            );
+            if (Number.isFinite(Number(result.roundRobinIndex))) {
+              celebrationsRoundRobinIndex = Number(result.roundRobinIndex);
+            }
+            const label = result.checkedVillageName
+              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+              : result.checkedVillageId
+                ? `vid=${result.checkedVillageId}`
+                : "?";
+            if (result.status === "celebration_ok") {
+              logSuccess(
+                `[Celebrations] ${label}: held ${result.celebrationType || "celebration"}` +
+                  (result.culturePoints ? ` (~${result.culturePoints} CP)` : "") +
+                  "."
+              );
+              recordAction({
+                actionType: "celebration.hold",
+                status: "success",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  celebrationType: result.celebrationType || null,
+                  culturePoints: result.culturePoints || null
+                }
+              });
+            } else if (
+              result.status === "celebration_busy" ||
+              result.status === "celebration_queue_full" ||
+              result.status === "celebration_no_resources" ||
+              result.status === "celebration_unavailable"
+            ) {
+              logInfo(`[Celebrations] ${label}: ${result.message}`);
+            } else if (result.status === "celebration_no_candidates") {
+              logWarn(`[Celebrations] ${result.message}`);
+            } else if (result.status === "celebration_no_town_hall") {
+              logInfo(`[Celebrations] ${label}: ${result.message}`);
+            } else {
+              logWarn(`[Celebrations] ${label}: ${result.message || result.status}`);
+              recordAction({
+                actionType: "celebration.hold",
+                status: "failed",
+                details: {
+                  villageId: result.checkedVillageId,
+                  villageName: result.checkedVillageName,
+                  status: result.status
+                },
+                errorMessage: result.message || result.status
+              });
+            }
+          }).catch((error) => {
+            logWarn(`[Celebrations] Tick failed: ${error.message || error}`);
+            deferFullReschedule = true;
+          });
+
+          if (deferFullReschedule) {
+            scheduleCelebrationsLoop({ retryMs: 90000 });
+          } else {
+            scheduleCelebrationsLoop();
           }
         })();
       }, delayMs);
@@ -8897,6 +9867,25 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         nextInMinutes: npcCropNextInMinutes,
         granaryRatio: settings.npcCropConvertGranaryRatio
       };
+      const overflowGuardLoopStatus = {
+        enabled: settings.resourceOverflowGuardEnabled !== false,
+        minMinutes: settings.resourceOverflowLoopMinMinutes,
+        maxMinutes: settings.resourceOverflowLoopMaxMinutes,
+        nextInMinutes: nextOverflowGuardRunAt
+          ? Math.max(0, Math.ceil((nextOverflowGuardRunAt - Date.now()) / 60000))
+          : null,
+        triggerRatio: settings.resourceOverflowTriggerRatio,
+        targetRatio: settings.resourceOverflowTargetRatio,
+        maxDistance: settings.resourceOverflowMaxDistance
+      };
+      const celebrationsLoopStatus = {
+        enabled: settings.celebrationsRoundRobinEnabled,
+        minMinutes: settings.celebrationsLoopMinMinutes,
+        maxMinutes: settings.celebrationsLoopMaxMinutes,
+        nextInMinutes: nextCelebrationsRunAt
+          ? Math.max(0, Math.ceil((nextCelebrationsRunAt - Date.now()) / 60000))
+          : null
+      };
       const selectedVillage =
         villageState.villages.find((v) => v.id === villageState.selectedVillageId) || null;
       const activeVillage =
@@ -8934,7 +9923,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           cranny: crannyLoopStatus,
           activity: activityLoopStatus,
           top10: top10LoopStatus,
-          npcCrop: npcCropLoopStatus
+          npcCrop: npcCropLoopStatus,
+          overflowGuard: overflowGuardLoopStatus,
+          celebrations: celebrationsLoopStatus
         },
         activitySimulation: buildActivitySimulationStatus(),
         top10Tracking: buildTop10TrackingStatus(),
@@ -9033,13 +10024,31 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           ? Math.max(0, Math.ceil((nextNpcCropConvertRunAt - Date.now()) / 60000))
           : null
       };
+      const overflowGuardLoopStatus = {
+        enabled: settings.resourceOverflowGuardEnabled !== false,
+        minMinutes: settings.resourceOverflowLoopMinMinutes,
+        maxMinutes: settings.resourceOverflowLoopMaxMinutes,
+        nextInMinutes: Number.isFinite(nextOverflowGuardRunAt)
+          ? Math.max(0, Math.ceil((nextOverflowGuardRunAt - Date.now()) / 60000))
+          : null,
+        triggerRatio: settings.resourceOverflowTriggerRatio,
+        maxDistance: settings.resourceOverflowMaxDistance
+      };
+      const celebrationsLoopStatus = {
+        enabled: settings.celebrationsRoundRobinEnabled,
+        nextInMinutes: nextCelebrationsRunAt
+          ? Math.max(0, Math.ceil((nextCelebrationsRunAt - Date.now()) / 60000))
+          : null
+      };
       printSessionLoopStatus(settings, {
         sessionLoop: sessionLoopStatus,
         farmlistLoop: farmlistLoopStatus,
         builderLoop: builderLoopStatus,
         troopLoop: troopLoopStatus,
         crannyLoop: crannyLoopStatus,
-        npcCropLoop: npcCropLoopStatus
+        npcCropLoop: npcCropLoopStatus,
+        overflowGuard: overflowGuardLoopStatus,
+        celebrationsLoop: celebrationsLoopStatus
       }, activeBuilderPlanMode);
       printCompactMenuKeys(settings);
       printVillageContextStatus(villageState, settings);
@@ -9068,6 +10077,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       scheduleTop10TrackingLoop();
       scheduleRaidEvacuationLoop();
       scheduleNpcCropConvertLoop();
+      scheduleOverflowGuardLoop();
+      scheduleCelebrationsLoop();
       if (dashboardBridge) {
         dashboardBridge.publishSnapshot({ force: true });
         logInfo(`[Dashboard] Villages loaded — web UI ready`);
@@ -9150,6 +10161,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         nextNpcCropConvertRunAt,
         scheduleNpcCropConvertLoop,
         "NPC Crop"
+      );
+      check(
+        settings.resourceOverflowGuardEnabled !== false,
+        nextOverflowGuardRunAt,
+        scheduleOverflowGuardLoop,
+        "Overflow Guard"
+      );
+      check(
+        settings.celebrationsRoundRobinEnabled,
+        nextCelebrationsRunAt,
+        scheduleCelebrationsLoop,
+        "Celebrations"
       );
     }, 60000);
 
@@ -10139,6 +11162,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleTop10TrackingLoop();
         scheduleRaidEvacuationLoop();
         scheduleNpcCropConvertLoop();
+        scheduleOverflowGuardLoop();
+        scheduleCelebrationsLoop();
         continue;
       }
 
@@ -10197,6 +11222,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     if (npcCropConvertLoopTimer) {
       clearTimeout(npcCropConvertLoopTimer);
       npcCropConvertLoopTimer = null;
+    }
+    if (overflowGuardLoopTimer) {
+      clearTimeout(overflowGuardLoopTimer);
+      overflowGuardLoopTimer = null;
+    }
+    if (celebrationsLoopTimer) {
+      clearTimeout(celebrationsLoopTimer);
+      celebrationsLoopTimer = null;
     }
     menuRl.close();
   }

@@ -77,6 +77,13 @@ npm run start:24-7:pc
 
 Inside Cursor, continuity means Environment auto-start + a kept-open / scheduled Automation — use that only as a backup; the PC process is the source of truth.
 
+### Troop counts / village status
+
+- When the user asks for **troop counts**, **army strength**, or **current village status** troop lines, scrape **Account Overview → Troops**:
+  - `https://s1.nexian.world/overview.php?t=4` (or `{GAME_HOST}/overview.php?t=4`)
+- That table is **own troops per village (home + away)** plus a **Sum** row — prefer it over village1 `#troops` (at-home only).
+- Village Status (menu **0**) already appends overview own-troops for the selected village and account totals.
+
 ### Do not
 
 - Put Master Builder or gold builds on unless the user explicitly asks.

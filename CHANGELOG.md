@@ -2,7 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.27] — 2026-08-12
+
+### Changed
+
+- **Village Status troop report** — after the usual village page read, also scrapes **Account Overview → Troops** (`overview.php?t=4`) and prints **own troops** for the selected village (home + away) plus **account totals**. Village-page `#troops` remains labeled as at-home only.
+
+## [1.8.26] — 2026-08-12
+
+### Fixed
+
+- **Overflow / Celebrations / NPC loop timers** — normal reschedules no longer collapse to **15s**. `Math.max(15000, options.retryMs||0)` treated every tick as a short retry, so Celebrations (60–120m) and Overflow (8–15m) hammered the session. Explicit `retryMs` still floors at 15s.
+- **Marketplace confirm click** — second OK waits for the confirm page and no longer re-clicks the compose-form OK. Tentative success requires a real confirm-stage click.
+- **Overflow / evacuation marketplace lock** — both paths take the same exclusive session as smart circulation so they cannot race the builder market tab.
+- **Overflow / evacuation stock verify** — late header re-read after a failed first verify (same as circulation).
+
+## [1.8.25] — 2026-08-11
+
+### Added
+
+- **Resource overflow guard** — RR watcher that sends surplus to the **capital/pivot** when warehouse or granary fill hits the trigger (default **≥90%**), draining toward a keep ratio (default **75%**). Sends only if map distance ≤ **10 squares** (configurable); far villages never send even when overflowing. Reuses marketplace send helpers and the same receiver fill-ratio caps as smart circulation. Terminal **Settings → OG**; env `RESOURCE_OVERFLOW_*` (on by default). Combined with nearest-donor circulation so local surplus prefers nearby pulls/pushes.
+
+### Fixed
+
+- **Capital detection** — village scrape now honors `__vgConfig.capitalId` when the capital group DOM attribute is missing (Nexian), so pivot defaults and non-capital builder RR work again.
+
 ## [1.8.24] — 2026-08-09
+
+### Added
+
+- **Celebrations RR** — optional round-robin Town Hall celebrations for culture points. Polls villages on a min–max interval (default **60–120m**), opens `build.php?gid=24`, and clicks **Hold celebration** when available (`auto` prefers large else small). Queue depth **1 or 2** (default **1**): with depth 1, a celebration already in progress means skip (do not queue another). Terminal **Settings → C** (enable/timing/type/queue) and **F** (include/exclude village filter sheet). Env: `CELEBRATIONS_*` (off by default).
 
 ### Fixed
 
