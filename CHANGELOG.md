@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.28] — 2026-08-12
+
+### Fixed
+
+- **Farmlist send on Nexian** — auto-send now clicks `farmlist_selectfull_*` (select all raid targets per list). `farmlist_selectall_*` alone left `#btn_send_all` disabled and caused repeated `farmlist.send` failures. Raid `slot[]` checkboxes are scoped via the farmlist form (not the selectall table). Cooldown / nothing-ready ticks return **idle** instead of failed.
+
 ## [1.8.27] — 2026-08-12
 
 ### Changed

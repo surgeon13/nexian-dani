@@ -719,6 +719,19 @@ async function inspectFarmlistSendState(page, sendSelector) {
       const sendBtn = sel ? document.querySelector(sel) : null;
       const sendDisabled = isDisabled(sendBtn);
 
+      const getFarmlistScope = () => {
+        const anchor = document.querySelector(
+          'input[id^="farmlist_selectall_"], input[id^="farmlist_selectfull_"]'
+        );
+        if (anchor) {
+          return anchor.closest("form") || anchor.closest("#build") || document;
+        }
+        return document.getElementById("build") || document;
+      };
+
+      const scope = getFarmlistScope();
+      const listSelectAll = scope.querySelectorAll('input[id^="farmlist_selectall_"]');
+
       const boxes = [];
       const seen = new Set();
       const addBox = (el) => {
@@ -730,25 +743,23 @@ async function inspectFarmlistSendState(page, sendSelector) {
         }
         const id = String(el.id || "");
         const name = String(el.name || "");
-        if (/selectall|markall|mark_all/i.test(id + name)) {
+        if (/selectall|markall|mark_all|selectfull|save_as_default/i.test(id + name)) {
           return;
         }
         seen.add(el);
         boxes.push(el);
       };
 
-      for (const el of document.querySelectorAll('input[type="checkbox"]')) {
-        const id = String(el.id || "");
-        const name = String(el.name || "");
-        if (/farmlist|fl_|farm/i.test(`${id} ${name}`)) {
-          addBox(el);
-        }
+      // Nexian: raid target slot[] boxes live in the farmlist form, not inside selectall tables.
+      for (const el of scope.querySelectorAll('input[name="slot[]"]')) {
+        addBox(el);
       }
 
-      for (const table of document.querySelectorAll("table")) {
-        const text = String(table.textContent || "").toLowerCase();
-        if (text.includes("farm") && (text.includes("list") || text.includes("raid"))) {
-          for (const el of table.querySelectorAll('input[type="checkbox"]')) {
+      if (!boxes.length) {
+        for (const el of scope.querySelectorAll('input[type="checkbox"]')) {
+          const id = String(el.id || "");
+          const name = String(el.name || "");
+          if (/farmlist|fl_|farm|slot/i.test(`${id} ${name}`)) {
             addBox(el);
           }
         }
@@ -765,6 +776,17 @@ async function inspectFarmlistSendState(page, sendSelector) {
         }
       }
 
+      if (!enabledLists && listSelectAll.length) {
+        for (const el of listSelectAll) {
+          if (!el.disabled) {
+            enabledLists += 1;
+            if (el.checked) {
+              checkedLists += 1;
+            }
+          }
+        }
+      }
+
       const pageText = String((document.body && document.body.innerText) || "").toLowerCase();
       const hasFarmListUi = Boolean(
         sendBtn ||
@@ -774,7 +796,8 @@ async function inspectFarmlistSendState(page, sendSelector) {
 
       const nothingToSend =
         sendDisabled && hasFarmListUi && boxes.length > 0 && enabledLists === 0;
-      const noListsConfigured = hasFarmListUi && boxes.length === 0 && sendDisabled;
+      const noListsConfigured =
+        hasFarmListUi && listSelectAll.length === 0 && boxes.length === 0 && sendDisabled;
 
       let message = "";
       if (nothingToSend) {
@@ -821,6 +844,17 @@ async function ensureFarmlistSelectAllBeforeSend(page, settings) {
         }
       };
 
+      const getFarmlistScope = () => {
+        const anchor = document.querySelector(
+          'input[id^="farmlist_selectall_"], input[id^="farmlist_selectfull_"]'
+        );
+        if (anchor) {
+          return anchor.closest("form") || anchor.closest("#build") || document;
+        }
+        return document.getElementById("build") || document;
+      };
+
+      const scope = getFarmlistScope();
       const listBoxes = [];
       const seen = new Set();
       const addListBox = (el) => {
@@ -832,22 +866,32 @@ async function ensureFarmlistSelectAllBeforeSend(page, settings) {
         }
         const id = String(el.id || "");
         const name = String(el.name || "");
-        if (/selectall|markall|mark_all/i.test(id + name)) {
+        if (/selectall|markall|mark_all|selectfull|save_as_default/i.test(id + name)) {
           return;
-        }
-        if (!/farmlist|fl_|farm/i.test(`${id} ${name}`)) {
-          const table = el.closest("table");
-          const tableText = table ? String(table.textContent || "").toLowerCase() : "";
-          if (!(tableText.includes("farm") && (tableText.includes("list") || tableText.includes("raid")))) {
-            return;
-          }
         }
         seen.add(el);
         listBoxes.push(el);
       };
 
-      for (const el of document.querySelectorAll('input[type="checkbox"]')) {
+      for (const el of scope.querySelectorAll('input[name="slot[]"]')) {
         addListBox(el);
+      }
+
+      if (!listBoxes.length) {
+        for (const el of scope.querySelectorAll('input[type="checkbox"]')) {
+          addListBox(el);
+        }
+      }
+
+      // Nexian: selectfull selects all raid targets in each list; selectall alone does not.
+      for (const el of document.querySelectorAll('input[id^="farmlist_selectfull_"]')) {
+        if (el.disabled) {
+          continue;
+        }
+        if (!el.checked) {
+          el.checked = true;
+          fireChange(el);
+        }
       }
 
       let checkedLists = 0;
@@ -885,6 +929,7 @@ async function ensureFarmlistSelectAllBeforeSend(page, settings) {
 
   const selectors = [
     settings && settings.selectAllSelector,
+    'input[id^="farmlist_selectfull_"]',
     'input[id^="farmlist_selectall_"]',
     'input[id*="farmlist_selectall"]',
     'input[name="markAll"]'
@@ -1471,6 +1516,15 @@ async function sendFarmlists(getPage, settings, options = {}) {
         `${sendState.message}${villageHint} Set FARMLIST_VILLAGE_ID in .env to a village with Rally Point farmlists. URL: ${sendState.href || page.url()}`
       );
     }
+    if (sendState.enabledLists === 0) {
+      return {
+        status: "idle",
+        message:
+          `[Farmlist] No farmlists ready to send${villageHint}` +
+          (sendState.message ? ` (${sendState.message})` : "."),
+        ...sendState
+      };
+    }
   }
 
   const clicked = await activateFarmlistSendControl(page, chosenSendSelector);
@@ -1483,6 +1537,15 @@ async function sendFarmlists(getPage, settings, options = {}) {
         return {
           status: "idle",
           message: `[Farmlist] ${sendState.message}${villageHint}`,
+          ...sendState
+        };
+      }
+      if (sendState.enabledLists === 0) {
+        return {
+          status: "idle",
+          message:
+            `[Farmlist] No farmlists ready to send${villageHint}` +
+            (sendState.message ? ` (${sendState.message})` : "."),
           ...sendState
         };
       }
@@ -7619,7 +7682,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           });
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
-          const isIdleNothingToSend = /no farmlists ready to send|nothing to send/i.test(message);
+          const isIdleNothingToSend = /no farmlists ready to send|nothing to send|stayed disabled after select-all|no active farmlists/i.test(
+            message
+          );
           if (isIdleNothingToSend) {
             logInfo(`[Farmlist Loop] ${message}`);
             recordAction({
