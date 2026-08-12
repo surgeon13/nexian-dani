@@ -193,6 +193,119 @@ async function readVillageStockFromHeader(page) {
   });
 }
 
+/** Stock + warehouse/granary caps from resource header (`data-v` / `data-m`). */
+async function readVillageStockAndCapsFromHeader(page) {
+  return page.evaluate(() => {
+    const readPair = (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) {
+        return { cur: 0, max: 0 };
+      }
+      let cur = Number(el.getAttribute("data-v"));
+      let max = Number(el.getAttribute("data-m"));
+      const rawText = String(el.textContent || "").trim();
+      const slashIdx = rawText.indexOf("/");
+      if (!(Number.isFinite(cur) && cur >= 0)) {
+        const currentSlice = slashIdx >= 0 ? rawText.slice(0, slashIdx) : rawText;
+        cur = Number(String(currentSlice).replace(/[^\d]/g, ""));
+      }
+      if (!(Number.isFinite(max) && max > 0) && slashIdx >= 0) {
+        max = Number(String(rawText.slice(slashIdx + 1)).replace(/[^\d]/g, ""));
+      }
+      return {
+        cur: Number.isFinite(cur) && cur >= 0 ? Math.floor(cur) : 0,
+        max: Number.isFinite(max) && max > 0 ? Math.floor(max) : 0
+      };
+    };
+    const wood = readPair("#l4");
+    const clay = readPair("#l3");
+    const iron = readPair("#l2");
+    const crop = readPair("#l1");
+    return {
+      stock: { wood: wood.cur, clay: clay.cur, iron: iron.cur, crop: crop.cur },
+      warehouseCap: Math.max(wood.max, clay.max, iron.max),
+      granaryCap: crop.max
+    };
+  });
+}
+
+function normalizeRatio(raw, fallback) {
+  let n = Number(raw);
+  if (!Number.isFinite(n)) {
+    n = fallback;
+  }
+  if (n > 1 && n <= 100) {
+    n = n / 100;
+  }
+  if (!(n > 0 && n <= 1)) {
+    n = fallback;
+  }
+  return Math.min(1, Math.max(0.05, n));
+}
+
+function parseVillageIdSet(csv) {
+  const set = new Set();
+  String(csv || "")
+    .split(/[,;\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const n = Number(part);
+      if (Number.isFinite(n) && n > 0) {
+        set.add(Math.trunc(n));
+      }
+    });
+  return set;
+}
+
+/**
+ * Pivot for overflow / evacuation: configured IDs → capital → first other village.
+ */
+function resolvePivotVillage(villages, settings = {}, sourceVillageId = null) {
+  const list = (Array.isArray(villages) ? villages : []).filter(
+    (v) => Number.isFinite(Number(v && v.id)) && Number(v.id) > 0
+  );
+  const sourceId = Number.isFinite(Number(sourceVillageId)) ? Number(sourceVillageId) : null;
+  const notSource = (v) => sourceId == null || Number(v.id) !== sourceId;
+
+  const configured = parseVillageIdSet(
+    (settings && (settings.resourceOverflowPivotVillageIds || settings.raidEvacuationPivotVillageIds)) || ""
+  );
+  if (configured.size > 0) {
+    const hit = list.find((v) => configured.has(Number(v.id)) && notSource(v));
+    if (hit) {
+      return hit;
+    }
+  }
+
+  const capital = list.find((v) => v.isCapital && notSource(v));
+  if (capital) {
+    return capital;
+  }
+
+  return list.find((v) => notSource(v)) || null;
+}
+
+function fillRatiosForStock(stock, warehouseCap, granaryCap) {
+  const wh = Math.max(0, Math.floor(safeNumber(warehouseCap, 0)));
+  const gr = Math.max(0, Math.floor(safeNumber(granaryCap, 0)));
+  const ratio = (cur, cap) => (cap > 0 ? cur / cap : 0);
+  return {
+    wood: ratio(safeNumber(stock.wood, 0), wh),
+    clay: ratio(safeNumber(stock.clay, 0), wh),
+    iron: ratio(safeNumber(stock.iron, 0), wh),
+    crop: ratio(safeNumber(stock.crop, 0), gr),
+    warehouseCap: wh,
+    granaryCap: gr,
+    maxRatio: Math.max(
+      ratio(safeNumber(stock.wood, 0), wh),
+      ratio(safeNumber(stock.clay, 0), wh),
+      ratio(safeNumber(stock.iron, 0), wh),
+      ratio(safeNumber(stock.crop, 0), gr)
+    )
+  };
+}
+
 async function readHeaderStockMinOfPair(page) {
   const s0 = await readVillageStockFromHeader(page);
   await safePageWait(page, 500);
@@ -533,27 +646,58 @@ async function nexianSecondMarketOkClick(page) {
           return false;
         }
       };
-      const sendForm = document.querySelector("#send_select")?.closest("form");
-      const btn =
-        (sendForm &&
-          (sendForm.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
-            sendForm.querySelector("#btn_ok:not([disabled])"))) ||
-        document.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
-        document.querySelector("#btn_ok:not([disabled])");
-      if (!btn) {
-        return { clicked: false };
+
+      const sendSelect = document.querySelector("#send_select");
+      const sendForm = sendSelect ? sendSelect.closest("form") : null;
+      const editableResourceInputs = sendForm
+        ? Array.from(
+            sendForm.querySelectorAll(
+              "input[name='r1'], input[name='r2'], input[name='r3'], input[name='r4']"
+            )
+          ).filter((el) => !el.disabled && !el.readOnly)
+        : [];
+      // Still on the compose/send form — do NOT re-click the first OK.
+      if (sendSelect && editableResourceInputs.length > 0) {
+        return { clicked: false, stage: "compose" };
       }
-      return { clicked: clickHuman(btn) };
+
+      const confirmRoot =
+        document.querySelector("#send_confirm") ||
+        document.querySelector("form[name='snd']") ||
+        document.querySelector(".send_res") ||
+        document.querySelector("#confirm") ||
+        null;
+
+      const btn =
+        (confirmRoot &&
+          (confirmRoot.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
+            confirmRoot.querySelector("#btn_ok:not([disabled])") ||
+            confirmRoot.querySelector("button#btn_ok:not([disabled])"))) ||
+        document.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
+        document.querySelector("#btn_ok:not([disabled])") ||
+        document.querySelector("button#btn_ok:not([disabled])");
+
+      if (!btn) {
+        return { clicked: false, stage: "no_btn" };
+      }
+      // Refuse if the only OK is still inside an editable compose form.
+      if (sendForm && sendForm.contains(btn) && editableResourceInputs.length > 0) {
+        return { clicked: false, stage: "compose" };
+      }
+      return { clicked: clickHuman(btn), stage: confirmRoot ? "confirm" : "confirm_fallback" };
     });
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await safePageWait(page, attempt === 0 ? 850 : 450);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await safePageWait(page, attempt === 0 ? 900 : 550);
+    if (typeof page.waitForLoadState === "function") {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => null);
+    }
     const r = await pulse();
     if (r.clicked) {
-      return { clicked: true, method: `second_ok_${attempt}` };
+      return { clicked: true, method: `second_ok_${attempt}`, stage: r.stage || "confirm" };
     }
   }
-  return { clicked: false, method: "second_ok_miss" };
+  return { clicked: false, method: "second_ok_miss", stage: "miss" };
 }
 
 async function submitResourceSend(page, targetVillage, sendAmounts) {
@@ -786,8 +930,13 @@ async function submitResourceSend(page, targetVillage, sendAmounts) {
   }
 
   const okHeur = marketSendHeuristicSuccess(resultCheck, merchDrop, outgoingInc);
-  const nexianDoubleConfirmed = /^second_ok_\d+$/.test(confirmMeta.method);
+  const nexianDoubleConfirmed =
+    /^second_ok_\d+$/.test(confirmMeta.method) &&
+    (confirmMeta.stage === "confirm" || confirmMeta.stage === "confirm_fallback");
   if (!okHeur && resultCheck.ok !== true) {
+    // Tentative OK only when the second click was on a real confirm page (not compose).
+    // Stock verification still required downstream; this only avoids inconclusive_send
+    // when Nexian shows no success banner but merchants may have left.
     if (nexianDoubleConfirmed && resultCheck.ok !== false) {
       return {
         ok: true,
@@ -1012,7 +1161,14 @@ async function circulateResourcesForBuild(getPage, settings, options = {}) {
       );
     }
 
-    const targetScore = advancementScore(target, planMode);
+        const targetScore = advancementScore(target, planMode);
+    const overflowMaxDist = Math.max(
+      1,
+      Math.floor(safeNumber(settings.resourceOverflowMaxDistance, 10))
+    );
+    const overflowGuardOn =
+      String(settings.resourceOverflowGuardEnabled || "").toLowerCase() === "true" ||
+      settings.resourceOverflowGuardEnabled === true;
     const scored = donorPool
       .map((v) => ({
         donor: v,
@@ -1033,6 +1189,17 @@ async function circulateResourcesForBuild(getPage, settings, options = {}) {
           const bReady = b.score >= targetScore ? 1 : 0;
           if (aReady !== bReady) {
             return bReady - aReady;
+          }
+          // When overflow guard is on, soft-prefer donors inside the same distance budget
+          // used for overflow→pivot (keeps local surplus recycling with smart pulls).
+          if (overflowGuardOn) {
+            const da = Number.isFinite(a.dist) ? a.dist : Number.POSITIVE_INFINITY;
+            const db = Number.isFinite(b.dist) ? b.dist : Number.POSITIVE_INFINITY;
+            const aNear = da <= overflowMaxDist ? 1 : 0;
+            const bNear = db <= overflowMaxDist ? 1 : 0;
+            if (aNear !== bNear) {
+              return bNear - aNear;
+            }
           }
           const da = Number.isFinite(a.dist) ? a.dist : Number.POSITIVE_INFINITY;
           const db = Number.isFinite(b.dist) ? b.dist : Number.POSITIVE_INFINITY;
@@ -1244,7 +1411,15 @@ async function circulateResourcesForBuild(getPage, settings, options = {}) {
 }
 
 async function evacuateResourcesFromVillage() {
-  const args = arguments[0] || {};
+  beginMarketplaceExclusiveSession();
+  try {
+    return await evacuateResourcesFromVillageUnlocked(arguments[0] || {});
+  } finally {
+    endMarketplaceExclusiveSession();
+  }
+}
+
+async function evacuateResourcesFromVillageUnlocked(args = {}) {
   const getPage = args.getPage;
   const settings = args.settings || {};
   const sourceVillage = args.sourceVillage || null;
@@ -1406,7 +1581,16 @@ async function evacuateResourcesFromVillage() {
   }
 
   const postStock = await readDonorStockAfterReturnToVillage(page, settings, sourceId);
-  const verify = verifyDonorStockReflectsSend(donorStock, postStock, submitted.submitted, Date.now() - nowTs);
+  let verify = verifyDonorStockReflectsSend(donorStock, postStock, submitted.submitted, Date.now() - nowTs);
+  if (!verify.ok) {
+    await safePageWait(page, 1200);
+    await bumpTravianHeaderStockRefresh(page);
+    const late = await readStableHeaderStockMin(page);
+    const v2 = verifyDonorStockReflectsSend(donorStock, late, submitted.submitted, Date.now() - nowTs);
+    if (v2.ok) {
+      verify = v2;
+    }
+  }
   const strong = Boolean(submitted.verificationHints && submitted.verificationHints.strong);
   if (!(verify.ok || strong)) {
     return {
@@ -1439,9 +1623,403 @@ async function evacuateResourcesFromVillage() {
   };
 }
 
+/**
+ * Overflow guard: when warehouse/granary fill exceeds trigger ratio, send surplus to pivot
+ * (default capital) — but only if map distance ≤ maxDistance squares. Far villages never
+ * send, even when overflowing. Complements deficit-driven circulateResourcesForBuild.
+ */
+async function guardOverflowResourcesFromVillage(args = {}) {
+  // Pure distance/pivot checks do not need the marketplace lock.
+  const getPage = args.getPage;
+  const settings = args.settings || {};
+  const sourceVillage = args.sourceVillage || null;
+  const villages = Array.isArray(args.villages) ? args.villages : [];
+  const log = typeof args.log === "function" ? args.log : null;
+  const nowTs = Number.isFinite(Number(args.nowTs)) ? Number(args.nowTs) : Date.now();
+
+  const triggerRatio = normalizeRatio(
+    args.triggerRatio ?? settings.resourceOverflowTriggerRatio,
+    0.9
+  );
+  const targetRatio = normalizeRatio(
+    args.targetRatio ?? settings.resourceOverflowTargetRatio,
+    0.75
+  );
+  const maxDistance = Math.max(
+    1,
+    Math.floor(safeNumber(args.maxDistance ?? settings.resourceOverflowMaxDistance, 10))
+  );
+  const reservePerResource = Math.max(
+    0,
+    Math.floor(
+      safeNumber(
+        args.reservePerResource ?? settings.resourceCirculationReservePerResource,
+        PER_RESOURCE_RESERVE
+      )
+    )
+  );
+  const receiverFillRatio = normalizeRatio(
+    args.receiverStorageMaxFillRatio ?? settings.resourceCirculationReceiverMaxFillRatio,
+    0.8
+  );
+
+  if (!(getPage && sourceVillage && Number.isFinite(Number(sourceVillage.id)))) {
+    return { status: "overflow_skipped", message: "Missing source village/page context." };
+  }
+
+  const pivotVillage =
+    args.pivotVillage ||
+    resolvePivotVillage(villages, settings, sourceVillage.id);
+  if (!(pivotVillage && Number.isFinite(Number(pivotVillage.id)))) {
+    return { status: "overflow_skipped", message: "No pivot village (capital) available." };
+  }
+  if (Number(sourceVillage.id) === Number(pivotVillage.id)) {
+    return { status: "overflow_skipped", message: "Source is the pivot village; nothing to send." };
+  }
+
+  const distance = computeDistance(sourceVillage, pivotVillage);
+  if (!(Number.isFinite(distance) && distance <= maxDistance)) {
+    return {
+      status: "overflow_too_far",
+      message:
+        `Overflow blocked: ${sourceVillage.name || sourceVillage.id} → ` +
+        `${pivotVillage.name || pivotVillage.id} is ${
+          Number.isFinite(distance) ? distance.toFixed(1) : "?"
+        } squares (max ${maxDistance}). Far sends are never allowed.`,
+      distance: Number.isFinite(distance) ? distance : null,
+      maxDistance,
+      sourceVillageId: Number(sourceVillage.id),
+      pivotVillageId: Number(pivotVillage.id)
+    };
+  }
+
+  beginMarketplaceExclusiveSession();
+  try {
+    return await guardOverflowResourcesFromVillageUnlocked({
+      getPage,
+      settings,
+      sourceVillage,
+      villages,
+      pivotVillage,
+      log,
+      nowTs,
+      triggerRatio,
+      targetRatio,
+      maxDistance,
+      reservePerResource,
+      receiverFillRatio,
+      distance
+    });
+  } finally {
+    endMarketplaceExclusiveSession();
+  }
+}
+
+async function guardOverflowResourcesFromVillageUnlocked(args = {}) {
+  const getPage = args.getPage;
+  const settings = args.settings || {};
+  const sourceVillage = args.sourceVillage;
+  const pivotVillage = args.pivotVillage;
+  const log = typeof args.log === "function" ? args.log : null;
+  const nowTs = Number.isFinite(Number(args.nowTs)) ? Number(args.nowTs) : Date.now();
+  const triggerRatio = args.triggerRatio;
+  const targetRatio = args.targetRatio;
+  const maxDistance = args.maxDistance;
+  const reservePerResource = args.reservePerResource;
+  const receiverFillRatio = args.receiverFillRatio;
+  const distance = args.distance;
+
+  const page = getPage();
+  if (!page || page.isClosed()) {
+    throw new Error("Session page is currently unavailable.");
+  }
+
+  const sourceId = Number(sourceVillage.id);
+  const pivotId = Number(pivotVillage.id);
+
+  const base = settings.villageBuilderUrl || "https://nexian.world/village2.php";
+  await safeGotoWithRetry(page, withVillageId(base, sourceId), {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  }, 2);
+  await safePageWait(page, 520);
+  const capsSnap = await readVillageStockAndCapsFromHeader(page);
+  const stock = capsSnap.stock || cloneRes({});
+  const fills = fillRatiosForStock(stock, capsSnap.warehouseCap, capsSnap.granaryCap);
+
+  if (!(fills.warehouseCap > 0 || fills.granaryCap > 0)) {
+    return {
+      status: "overflow_skipped",
+      message: "Could not read warehouse/granary capacities.",
+      stock,
+      fills
+    };
+  }
+
+  if (!(fills.maxRatio + 1e-9 >= triggerRatio)) {
+    return {
+      status: "overflow_ok",
+      message:
+        `Below overflow trigger (${Math.round(fills.maxRatio * 100)}% < ${Math.round(triggerRatio * 100)}%).`,
+      stock,
+      fills,
+      triggerRatio,
+      distance
+    };
+  }
+
+  // Drain each overflowing resource down toward targetRatio * cap, keep a small reserve.
+  const keepWood = Math.max(
+    reservePerResource,
+    Math.floor(fills.warehouseCap * Math.min(targetRatio, triggerRatio))
+  );
+  const keepClay = keepWood;
+  const keepIron = keepWood;
+  const keepCrop = Math.max(
+    reservePerResource,
+    Math.floor(fills.granaryCap * Math.min(targetRatio, triggerRatio))
+  );
+
+  const sendPlan = {
+    wood: floorToMultiple(Math.max(0, stock.wood - keepWood), SEND_MULTIPLE),
+    clay: floorToMultiple(Math.max(0, stock.clay - keepClay), SEND_MULTIPLE),
+    iron: floorToMultiple(Math.max(0, stock.iron - keepIron), SEND_MULTIPLE),
+    crop: floorToMultiple(Math.max(0, stock.crop - keepCrop), SEND_MULTIPLE)
+  };
+
+  // Only ship resources that were actually over the trigger (avoid draining healthy sides).
+  if (fills.wood < triggerRatio) sendPlan.wood = 0;
+  if (fills.clay < triggerRatio) sendPlan.clay = 0;
+  if (fills.iron < triggerRatio) sendPlan.iron = 0;
+  if (fills.crop < triggerRatio) sendPlan.crop = 0;
+
+  let plannedTotal = sendPlan.wood + sendPlan.clay + sendPlan.iron + sendPlan.crop;
+  if (plannedTotal < SEND_MULTIPLE) {
+    return {
+      status: "overflow_skipped",
+      message: "Overflow detected but surplus below one merchant chunk after keep/target ratios.",
+      stock,
+      fills,
+      plannedSend: sendPlan,
+      distance
+    };
+  }
+
+  // Cap by pivot headroom (same fill-ratio rules as smart circulation).
+  let pivotStock = { wood: 0, clay: 0, iron: 0, crop: 0 };
+  let pivotWh = fills.warehouseCap;
+  let pivotGr = fills.granaryCap;
+  try {
+    await safeGotoWithRetry(page, withVillageId(base, pivotId), {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    }, 2);
+    await safePageWait(page, 400);
+    const pivotSnap = await readVillageStockAndCapsFromHeader(page);
+    pivotStock = pivotSnap.stock || pivotStock;
+    pivotWh = pivotSnap.warehouseCap || pivotWh;
+    pivotGr = pivotSnap.granaryCap || pivotGr;
+  } catch (_e) {
+    // fall through with conservative room estimate
+  }
+
+  const room = normalizeTargetRoom({
+    targetStock: pivotStock,
+    targetWarehouseCap: pivotWh,
+    targetGranaryCap: pivotGr,
+    receiverStorageMaxFillRatio: receiverFillRatio
+  });
+  sendPlan.wood = floorToMultiple(Math.min(sendPlan.wood, room.wood), SEND_MULTIPLE);
+  sendPlan.clay = floorToMultiple(Math.min(sendPlan.clay, room.clay), SEND_MULTIPLE);
+  sendPlan.iron = floorToMultiple(Math.min(sendPlan.iron, room.iron), SEND_MULTIPLE);
+  sendPlan.crop = floorToMultiple(Math.min(sendPlan.crop, room.crop), SEND_MULTIPLE);
+  plannedTotal = sendPlan.wood + sendPlan.clay + sendPlan.iron + sendPlan.crop;
+  if (plannedTotal < SEND_MULTIPLE) {
+    return {
+      status: "overflow_skipped",
+      message: `Pivot ${pivotVillage.name || pivotId} has no headroom ≤${Math.round(receiverFillRatio * 100)}% caps.`,
+      stock,
+      fills,
+      plannedSend: sendPlan,
+      distance,
+      pivotRoom: room
+    };
+  }
+
+  log?.(
+    `[Overflow Guard] ${sourceVillage.name || sourceId} fill max ${Math.round(fills.maxRatio * 100)}% → ` +
+      `${pivotVillage.name || pivotId} (${distance.toFixed(1)}≤${maxDistance} sq): plan ${formatResourceShort(sendPlan)}.`
+  );
+
+  const marketUrl = buildMarketSendUrl(settings, sourceId, pivotId);
+  if (!(marketUrl && (await openMarketSendTab(page, marketUrl, sourceId)))) {
+    return { status: "overflow_skipped", message: "Could not open market send tab for overflow guard." };
+  }
+
+  const fleet = await readMerchantFleetFromPage(page);
+  const perM =
+    fleet.perM && fleet.perM >= SEND_MULTIPLE
+      ? fleet.perM
+      : Math.max(
+          1000,
+          Math.floor(safeNumber(settings.raidEvacuationMerchantCapacityFallback, 1000))
+        );
+  const availM = fleet.availM != null && fleet.availM > 0 ? fleet.availM : 0;
+  if (availM <= 0) {
+    return {
+      status: "overflow_skipped",
+      message: "No available merchants for overflow send.",
+      plannedSend: sendPlan
+    };
+  }
+
+  const maxPayload = Math.max(0, Math.floor(availM * perM));
+  const trimToCapacity = (value) => floorToMultiple(Math.max(0, value), SEND_MULTIPLE);
+  let capped = {
+    wood: trimToCapacity(sendPlan.wood),
+    clay: trimToCapacity(sendPlan.clay),
+    iron: trimToCapacity(sendPlan.iron),
+    crop: trimToCapacity(sendPlan.crop)
+  };
+  let cappedTotal = capped.wood + capped.clay + capped.iron + capped.crop;
+  if (cappedTotal > maxPayload) {
+    const order = ["wood", "clay", "iron", "crop"].sort((a, b) => capped[b] - capped[a]);
+    while (cappedTotal > maxPayload) {
+      let changed = false;
+      for (const key of order) {
+        if (capped[key] >= SEND_MULTIPLE && cappedTotal > maxPayload) {
+          capped[key] -= SEND_MULTIPLE;
+          cappedTotal -= SEND_MULTIPLE;
+          changed = true;
+        }
+      }
+      if (!changed) {
+        break;
+      }
+    }
+  }
+  if (cappedTotal < SEND_MULTIPLE) {
+    return {
+      status: "overflow_skipped",
+      message: "Overflow payload below one merchant chunk after merchant-cap limits.",
+      plannedSend: sendPlan,
+      cappedSend: capped
+    };
+  }
+
+  const submitted = await submitResourceSend(page, pivotVillage, capped);
+  if (!submitted.ok) {
+    return {
+      status: "overflow_failed",
+      message: `Marketplace send failed: ${submitted.reason || "send_failed"} ${submitted.detail || ""}`.trim(),
+      plannedSend: sendPlan,
+      cappedSend: capped
+    };
+  }
+
+  const postStock = await readDonorStockAfterReturnToVillage(page, settings, sourceId);
+  let verify = verifyDonorStockReflectsSend(stock, postStock, submitted.submitted, Date.now() - nowTs);
+  if (!verify.ok) {
+    await safePageWait(page, 1200);
+    await bumpTravianHeaderStockRefresh(page);
+    const late = await readStableHeaderStockMin(page);
+    const v2 = verifyDonorStockReflectsSend(stock, late, submitted.submitted, Date.now() - nowTs);
+    if (v2.ok) {
+      verify = v2;
+    }
+  }
+  const strong = Boolean(submitted.verificationHints && submitted.verificationHints.strong);
+  if (!(verify.ok || strong)) {
+    return {
+      status: "overflow_failed",
+      message: `Overflow send not confirmed (${verify.detail || "unknown"}).`,
+      plannedSend: sendPlan,
+      cappedSend: capped,
+      verification: verify
+    };
+  }
+
+  const eta = estimateEtaMinutes(distance);
+  return {
+    status: "overflow_sent",
+    message:
+      `Overflow sent ${formatResourceShort(submitted.submitted)} → ${pivotVillage.name || pivotId}` +
+      ` (${distance.toFixed(1)} sq, ETA ~${eta}m).`,
+    sourceVillageId: sourceId,
+    sourceVillageName: sourceVillage.name || null,
+    pivotVillageId: pivotId,
+    pivotVillageName: pivotVillage.name || null,
+    distance,
+    maxDistance,
+    triggerRatio,
+    targetRatio,
+    fills,
+    sent: cloneRes(submitted.submitted),
+    etaMinutes: eta,
+    donorStockVerified: Boolean(verify.ok)
+  };
+}
+
+/**
+ * Round-robin overflow check: one non-pivot village per tick.
+ */
+async function runOverflowGuardRoundRobin(getPage, settings, villages, state = {}) {
+  const pivot = resolvePivotVillage(villages, settings, null);
+  const candidates = (Array.isArray(villages) ? villages : []).filter((v) => {
+    if (!(Number.isFinite(Number(v && v.id)) && Number(v.id) > 0)) {
+      return false;
+    }
+    if (v.underAttack) {
+      return false;
+    }
+    if (pivot && Number(v.id) === Number(pivot.id)) {
+      return false;
+    }
+    return true;
+  });
+
+  if (!candidates.length) {
+    return {
+      status: "overflow_no_candidates",
+      message: "No villages available for overflow guard RR."
+    };
+  }
+
+  let index = Number(state.roundRobinIndex) || 0;
+  if (!Number.isFinite(index) || index < 0) {
+    index = 0;
+  }
+  index = ((index % candidates.length) + candidates.length) % candidates.length;
+  const village = candidates[index];
+  const nextIndex = (index + 1) % candidates.length;
+
+  const result = await guardOverflowResourcesFromVillage({
+    getPage,
+    settings,
+    sourceVillage: village,
+    villages,
+    pivotVillage: pivot,
+    log: typeof state.log === "function" ? state.log : null
+  });
+
+  return {
+    ...result,
+    roundRobinIndex: nextIndex,
+    candidateCount: candidates.length,
+    checkedVillageId: village.id,
+    checkedVillageName: village.name || null,
+    pivotVillageId: pivot ? pivot.id : null,
+    pivotVillageName: pivot ? pivot.name || null : null
+  };
+}
+
 module.exports = {
   circulateResourcesForBuild,
   evacuateResourcesFromVillage,
+  guardOverflowResourcesFromVillage,
+  runOverflowGuardRoundRobin,
+  resolvePivotVillage,
+  computeDistance,
   formatResourceShort,
   sumShipmentsResources,
   MARKETPLACE_EXCLUSIVE_RETRY_MS,

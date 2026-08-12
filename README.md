@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.25** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.28** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -15,13 +15,14 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
 | **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
-| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert. |
+| **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert, celebrations RR. |
 | **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
 
 ### Automation modules
 
-- **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`U`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
+- **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`R`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
+- **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Far overflows never send. Settings **OG** / `RESOURCE_OVERFLOW_*`.
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
@@ -31,7 +32,10 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### What's new in 1.8.x (summary)
 
-- **1.8.25:** Village Status includes Account Overview troop table (`overview.php?t=4`) + account totals.
+- **1.8.28:** Farmlist send uses Nexian `farmlist_selectfull_*`; idle when nothing ready (no more false failures).
+- **1.8.27:** Village Status includes Account Overview troop table (`overview.php?t=4`) + account totals.
+- **1.8.26:** Fix Overflow/Celebrations/NPC 15s timer collapse; harden market confirm + exclusive lock.
+- **1.8.25:** Overflow guard (distance-limited send to capital) + capital detection via `__vgConfig.capitalId`.
 - **1.8.22:** Resource circulation prefers nearest donors (capital → adjacent off-village).
 - **1.8.21:** Planned settlement targets can set `villageName`; bot renames the new village once founded.
 - **1.8.20:** Portal login opens the `GAME_HOST` realm (Prime/`s1`) instead of the first Speed/`s2` Login button.
@@ -415,7 +419,9 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
+- **Overflow guard:** `RESOURCE_OVERFLOW_GUARD_ENABLED`, `RESOURCE_OVERFLOW_TRIGGER_RATIO`, `RESOURCE_OVERFLOW_TARGET_RATIO`, `RESOURCE_OVERFLOW_MAX_DISTANCE`, `RESOURCE_OVERFLOW_LOOP_MIN_MINUTES`, `RESOURCE_OVERFLOW_LOOP_MAX_MINUTES`, `RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS`
 - **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`
+- **Celebrations RR:** `CELEBRATIONS_ROUND_ROBIN_ENABLED`, `CELEBRATIONS_LOOP_MIN_MINUTES`, `CELEBRATIONS_LOOP_MAX_MINUTES`, `CELEBRATIONS_TYPE`, `CELEBRATIONS_QUEUE_DEPTH` (1 or 2, default 1), `CELEBRATIONS_INCLUDED_VILLAGE_IDS`, `CELEBRATIONS_EXCLUDED_VILLAGE_IDS`
 - **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
 
 Settings changed from the **`S`** menu persist back into `.env` for the keys wired in `login.js` (`persistRuntimeSettings`).
