@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.24** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.25** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -22,7 +22,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 ### Automation modules
 
 - **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`R`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
-- **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Far overflows never send. Settings **L** / `RESOURCE_OVERFLOW_*`.
+- **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Far overflows never send. Settings **OG** / `RESOURCE_OVERFLOW_*`.
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
