@@ -4465,6 +4465,149 @@ async function trainPlanBranch(getPage, settings, villageId, options = {}) {
   };
 }
 
+function buildAccountOverviewTroopsUrl(settings = {}) {
+  if (settings.accountOverviewTroopsUrl) {
+    return String(settings.accountOverviewTroopsUrl);
+  }
+  try {
+    const base = new URL(
+      settings.villageStatusUrl || settings.villageBuilderUrl || "https://s1.nexian.world/village1.php"
+    );
+    return `${base.origin}/overview.php?t=4`;
+  } catch (_error) {
+    return "https://s1.nexian.world/overview.php?t=4";
+  }
+}
+
+/**
+ * Account Overview → Troops (`overview.php?t=4`): own troops per village (home + away) + Sum.
+ * Prefer this over village1 `#troops` when reporting troop strength.
+ */
+async function readAccountOverviewOwnTroops(page, settings = {}) {
+  const url = buildAccountOverviewTroopsUrl(settings);
+  await safeGotoWithRetry(page, url, { waitUntil: "domcontentloaded", timeout: 60000 }, 2);
+  if (page && !page.isClosed()) {
+    await page.waitForTimeout(500).catch(() => null);
+  }
+
+  return page.evaluate(() => {
+    const parseCount = (text) =>
+      Number(String(text || "").replace(/\u00a0/g, " ").replace(/[^\d]/g, "")) || 0;
+
+    const tables = Array.from(document.querySelectorAll("table"));
+    let table =
+      tables.find((t) => {
+        const imgs = t.querySelectorAll("thead img.unit, thead img[class*='unit']");
+        return imgs.length >= 5 && t.querySelector("tbody td.vil a[href*='vid=']");
+      }) ||
+      tables.find(
+        (t) => t.querySelector("tr.sum") && t.querySelector("tbody td.vil a[href*='vid=']")
+      ) ||
+      null;
+
+    if (!table) {
+      return {
+        ok: false,
+        unitNames: [],
+        villages: [],
+        totals: {},
+        grandTotal: 0,
+        error: "overview_troops_table_not_found"
+      };
+    }
+
+    const headerRow = Array.from(table.querySelectorAll("thead tr")).find((tr) =>
+      tr.querySelector("img.unit, img[class*='unit']")
+    );
+    const unitNames = headerRow
+      ? Array.from(headerRow.querySelectorAll("img.unit, img[class*='unit']")).map((img) => {
+          const titled = String(img.getAttribute("title") || img.getAttribute("alt") || "")
+            .replace(/\u00a0/g, " ")
+            .trim();
+          if (titled) {
+            return titled;
+          }
+          const cls = String(img.className || "");
+          if (/\buhero\b/i.test(cls)) {
+            return "Hero";
+          }
+          const m = cls.match(/\bu(\d+)\b/i);
+          return m ? `u${m[1]}` : "Unit";
+        })
+      : [];
+
+    const villages = [];
+    let totals = {};
+    Array.from(table.querySelectorAll("tbody tr")).forEach((row) => {
+      if (row.classList.contains("spacer")) {
+        return;
+      }
+      const cells = Array.from(row.querySelectorAll("td"));
+      if (cells.length < 2) {
+        return;
+      }
+      const nameCell = cells[0];
+      const counts = cells.slice(1).map((td) => parseCount(td.textContent));
+      const label = String(nameCell.textContent || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (row.classList.contains("sum") || /^sum$/i.test(label)) {
+        totals = {};
+        unitNames.forEach((name, i) => {
+          totals[name] = counts[i] || 0;
+        });
+        return;
+      }
+
+      const link = nameCell.querySelector("a[href*='vid=']");
+      if (!link) {
+        return;
+      }
+      const href = String(link.getAttribute("href") || "");
+      const idMatch = href.match(/[?&]vid=(\d+)/i);
+      const villageId = idMatch ? Number(idMatch[1]) : null;
+      const villageName = String(link.textContent || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const troops = {};
+      unitNames.forEach((name, i) => {
+        const n = counts[i] || 0;
+        if (n > 0) {
+          troops[name] = n;
+        }
+      });
+      villages.push({
+        villageId,
+        villageName,
+        troops,
+        total: counts.reduce((a, b) => a + b, 0)
+      });
+    });
+
+    const grandTotal = Object.values(totals).reduce((a, b) => a + (Number(b) || 0), 0);
+    return {
+      ok: true,
+      unitNames,
+      villages,
+      totals,
+      grandTotal,
+      error: null
+    };
+  });
+}
+
+function formatOverviewTroopRows(troopsMap) {
+  const entries = Object.entries(troopsMap || {}).filter(([, n]) => Number(n) > 0);
+  return entries.map(([name, count]) => ({
+    label: color(name, ANSI.bold, ANSI.yellow),
+    value: color(String(count), ANSI.bold, ANSI.cyan),
+    raw: true
+  }));
+}
+
 async function showVillageStatus(getPage, settings, selectedVillageId, selectedVillage) {
   const page = getPage();
   await safeGotoWithRetry(page, withVillageId(settings.villageStatusUrl, selectedVillageId));
@@ -4634,6 +4777,19 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
     };
   });
   const incomingAttacks = getIncomingAttackAlerts(status.movements);
+
+  let overviewTroops = null;
+  try {
+    overviewTroops = await readAccountOverviewOwnTroops(page, settings);
+  } catch (error) {
+    overviewTroops = {
+      ok: false,
+      villages: [],
+      totals: {},
+      grandTotal: 0,
+      error: error && error.message ? error.message : String(error)
+    };
+  }
 
   printDivider("VILLAGE STATUS");
 
@@ -4812,10 +4968,10 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
   }
 
   if (!status.units.length) {
-    printSubDivider("UNITS");
+    printSubDivider("UNITS AT HOME (village page)");
     console.log(`  ${color("none", ANSI.dim)}`);
   } else {
-    printSubDivider("UNITS");
+    printSubDivider("UNITS AT HOME (village page)");
     printKeyValueRows(
       status.units.map((unit) => ({
         label: color(unit.name, ANSI.bold, ANSI.yellow),
@@ -4823,6 +4979,55 @@ async function showVillageStatus(getPage, settings, selectedVillageId, selectedV
         raw: true
       }))
     );
+  }
+
+  printSubDivider("OWN TROOPS (account overview)");
+  if (!(overviewTroops && overviewTroops.ok)) {
+    console.log(
+      `  ${color(
+        `unavailable${overviewTroops && overviewTroops.error ? `: ${overviewTroops.error}` : ""}`,
+        ANSI.dim
+      )}`
+    );
+  } else {
+    const selectedId = Number(selectedVillageId);
+    const villageRow =
+      (overviewTroops.villages || []).find((v) => Number(v.villageId) === selectedId) ||
+      (selectedVillage &&
+        (overviewTroops.villages || []).find(
+          (v) =>
+            String(v.villageName || "").toLowerCase() ===
+            String(selectedVillage.name || "").toLowerCase()
+        )) ||
+      null;
+
+    if (!villageRow || !(villageRow.total > 0)) {
+      console.log(`  ${color("none for this village", ANSI.dim)}`);
+    } else {
+      printKeyValueRows(formatOverviewTroopRows(villageRow.troops));
+      printKeyValueRows([
+        {
+          label: color("Village total", ANSI.bold, ANSI.white),
+          value: color(String(villageRow.total), ANSI.bold, ANSI.cyan),
+          raw: true
+        }
+      ]);
+    }
+
+    printSubDivider("ACCOUNT TROOP TOTALS (overview)");
+    const totalRows = formatOverviewTroopRows(overviewTroops.totals);
+    if (!totalRows.length) {
+      console.log(`  ${color("none", ANSI.dim)}`);
+    } else {
+      printKeyValueRows(totalRows);
+      printKeyValueRows([
+        {
+          label: color("Grand total", ANSI.bold, ANSI.white),
+          value: color(String(overviewTroops.grandTotal || 0), ANSI.bold, ANSI.cyan),
+          raw: true
+        }
+      ]);
+    }
   }
 
 }

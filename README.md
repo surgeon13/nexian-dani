@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.24** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.25** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -31,6 +31,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.25:** Village Status includes Account Overview troop table (`overview.php?t=4`) + account totals.
 - **1.8.22:** Resource circulation prefers nearest donors (capital → adjacent off-village).
 - **1.8.21:** Planned settlement targets can set `villageName`; bot renames the new village once founded.
 - **1.8.20:** Portal login opens the `GAME_HOST` realm (Prime/`s1`) instead of the first Speed/`s2` Login button.
