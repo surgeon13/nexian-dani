@@ -8,6 +8,15 @@ All notable changes to this project are documented in this file.
 
 - **Celebrations RR** — optional round-robin Town Hall celebrations for culture points. Polls villages on a min–max interval (default **60–120m**), opens `build.php?gid=24`, and clicks **Hold celebration** when available (`auto` prefers large else small). Terminal **Settings → C** (enable/timing/type) and **F** (include/exclude village filter sheet). Env: `CELEBRATIONS_*` (off by default).
 
+### Fixed
+
+- **Troop trainer “Available: 0” false empty** — Nexian’s barracks/stable `Available: N` is owned troop count, not max trainable. The trainer no longer treats owned `0` as “cannot train”, which had blocked Phalanx/Haeduan queues when those units were not already in the village.
+
+### Changed
+
+- **Troop plans train cavalry before infantry** — Stable / Great Stable branches run before Barracks so raid cavalry (TT, Haeduan) is not starved by infantry batches in the same tick.
+- **Reserve for cavalry** — if Stable/Great Stable returns `no_resources`, Barracks is skipped that tick so infantry cannot keep resources permanently below the cavalry threshold.
+
 ## [1.8.23] — 2026-08-08
 
 ### Added
