@@ -646,27 +646,58 @@ async function nexianSecondMarketOkClick(page) {
           return false;
         }
       };
-      const sendForm = document.querySelector("#send_select")?.closest("form");
-      const btn =
-        (sendForm &&
-          (sendForm.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
-            sendForm.querySelector("#btn_ok:not([disabled])"))) ||
-        document.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
-        document.querySelector("#btn_ok:not([disabled])");
-      if (!btn) {
-        return { clicked: false };
+
+      const sendSelect = document.querySelector("#send_select");
+      const sendForm = sendSelect ? sendSelect.closest("form") : null;
+      const editableResourceInputs = sendForm
+        ? Array.from(
+            sendForm.querySelectorAll(
+              "input[name='r1'], input[name='r2'], input[name='r3'], input[name='r4']"
+            )
+          ).filter((el) => !el.disabled && !el.readOnly)
+        : [];
+      // Still on the compose/send form — do NOT re-click the first OK.
+      if (sendSelect && editableResourceInputs.length > 0) {
+        return { clicked: false, stage: "compose" };
       }
-      return { clicked: clickHuman(btn) };
+
+      const confirmRoot =
+        document.querySelector("#send_confirm") ||
+        document.querySelector("form[name='snd']") ||
+        document.querySelector(".send_res") ||
+        document.querySelector("#confirm") ||
+        null;
+
+      const btn =
+        (confirmRoot &&
+          (confirmRoot.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
+            confirmRoot.querySelector("#btn_ok:not([disabled])") ||
+            confirmRoot.querySelector("button#btn_ok:not([disabled])"))) ||
+        document.querySelector("input#btn_ok[name='s1']:not([disabled])") ||
+        document.querySelector("#btn_ok:not([disabled])") ||
+        document.querySelector("button#btn_ok:not([disabled])");
+
+      if (!btn) {
+        return { clicked: false, stage: "no_btn" };
+      }
+      // Refuse if the only OK is still inside an editable compose form.
+      if (sendForm && sendForm.contains(btn) && editableResourceInputs.length > 0) {
+        return { clicked: false, stage: "compose" };
+      }
+      return { clicked: clickHuman(btn), stage: confirmRoot ? "confirm" : "confirm_fallback" };
     });
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await safePageWait(page, attempt === 0 ? 850 : 450);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await safePageWait(page, attempt === 0 ? 900 : 550);
+    if (typeof page.waitForLoadState === "function") {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => null);
+    }
     const r = await pulse();
     if (r.clicked) {
-      return { clicked: true, method: `second_ok_${attempt}` };
+      return { clicked: true, method: `second_ok_${attempt}`, stage: r.stage || "confirm" };
     }
   }
-  return { clicked: false, method: "second_ok_miss" };
+  return { clicked: false, method: "second_ok_miss", stage: "miss" };
 }
 
 async function submitResourceSend(page, targetVillage, sendAmounts) {
@@ -899,8 +930,13 @@ async function submitResourceSend(page, targetVillage, sendAmounts) {
   }
 
   const okHeur = marketSendHeuristicSuccess(resultCheck, merchDrop, outgoingInc);
-  const nexianDoubleConfirmed = /^second_ok_\d+$/.test(confirmMeta.method);
+  const nexianDoubleConfirmed =
+    /^second_ok_\d+$/.test(confirmMeta.method) &&
+    (confirmMeta.stage === "confirm" || confirmMeta.stage === "confirm_fallback");
   if (!okHeur && resultCheck.ok !== true) {
+    // Tentative OK only when the second click was on a real confirm page (not compose).
+    // Stock verification still required downstream; this only avoids inconclusive_send
+    // when Nexian shows no success banner but merchants may have left.
     if (nexianDoubleConfirmed && resultCheck.ok !== false) {
       return {
         ok: true,
@@ -1375,7 +1411,15 @@ async function circulateResourcesForBuild(getPage, settings, options = {}) {
 }
 
 async function evacuateResourcesFromVillage() {
-  const args = arguments[0] || {};
+  beginMarketplaceExclusiveSession();
+  try {
+    return await evacuateResourcesFromVillageUnlocked(arguments[0] || {});
+  } finally {
+    endMarketplaceExclusiveSession();
+  }
+}
+
+async function evacuateResourcesFromVillageUnlocked(args = {}) {
   const getPage = args.getPage;
   const settings = args.settings || {};
   const sourceVillage = args.sourceVillage || null;
@@ -1537,7 +1581,16 @@ async function evacuateResourcesFromVillage() {
   }
 
   const postStock = await readDonorStockAfterReturnToVillage(page, settings, sourceId);
-  const verify = verifyDonorStockReflectsSend(donorStock, postStock, submitted.submitted, Date.now() - nowTs);
+  let verify = verifyDonorStockReflectsSend(donorStock, postStock, submitted.submitted, Date.now() - nowTs);
+  if (!verify.ok) {
+    await safePageWait(page, 1200);
+    await bumpTravianHeaderStockRefresh(page);
+    const late = await readStableHeaderStockMin(page);
+    const v2 = verifyDonorStockReflectsSend(donorStock, late, submitted.submitted, Date.now() - nowTs);
+    if (v2.ok) {
+      verify = v2;
+    }
+  }
   const strong = Boolean(submitted.verificationHints && submitted.verificationHints.strong);
   if (!(verify.ok || strong)) {
     return {
@@ -1576,6 +1629,7 @@ async function evacuateResourcesFromVillage() {
  * send, even when overflowing. Complements deficit-driven circulateResourcesForBuild.
  */
 async function guardOverflowResourcesFromVillage(args = {}) {
+  // Pure distance/pivot checks do not need the marketplace lock.
   const getPage = args.getPage;
   const settings = args.settings || {};
   const sourceVillage = args.sourceVillage || null;
@@ -1638,6 +1692,42 @@ async function guardOverflowResourcesFromVillage(args = {}) {
       pivotVillageId: Number(pivotVillage.id)
     };
   }
+
+  beginMarketplaceExclusiveSession();
+  try {
+    return await guardOverflowResourcesFromVillageUnlocked({
+      getPage,
+      settings,
+      sourceVillage,
+      villages,
+      pivotVillage,
+      log,
+      nowTs,
+      triggerRatio,
+      targetRatio,
+      maxDistance,
+      reservePerResource,
+      receiverFillRatio,
+      distance
+    });
+  } finally {
+    endMarketplaceExclusiveSession();
+  }
+}
+
+async function guardOverflowResourcesFromVillageUnlocked(args = {}) {
+  const getPage = args.getPage;
+  const settings = args.settings || {};
+  const sourceVillage = args.sourceVillage;
+  const pivotVillage = args.pivotVillage;
+  const log = typeof args.log === "function" ? args.log : null;
+  const nowTs = Number.isFinite(Number(args.nowTs)) ? Number(args.nowTs) : Date.now();
+  const triggerRatio = args.triggerRatio;
+  const targetRatio = args.targetRatio;
+  const maxDistance = args.maxDistance;
+  const reservePerResource = args.reservePerResource;
+  const receiverFillRatio = args.receiverFillRatio;
+  const distance = args.distance;
 
   const page = getPage();
   if (!page || page.isClosed()) {
@@ -1828,7 +1918,16 @@ async function guardOverflowResourcesFromVillage(args = {}) {
   }
 
   const postStock = await readDonorStockAfterReturnToVillage(page, settings, sourceId);
-  const verify = verifyDonorStockReflectsSend(stock, postStock, submitted.submitted, Date.now() - nowTs);
+  let verify = verifyDonorStockReflectsSend(stock, postStock, submitted.submitted, Date.now() - nowTs);
+  if (!verify.ok) {
+    await safePageWait(page, 1200);
+    await bumpTravianHeaderStockRefresh(page);
+    const late = await readStableHeaderStockMin(page);
+    const v2 = verifyDonorStockReflectsSend(stock, late, submitted.submitted, Date.now() - nowTs);
+    if (v2.ok) {
+      verify = v2;
+    }
+  }
   const strong = Boolean(submitted.verificationHints && submitted.verificationHints.strong);
   if (!(verify.ok || strong)) {
     return {

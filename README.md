@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.25** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.26** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -32,6 +32,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.26:** Fix Overflow/Celebrations/NPC 15s timer collapse; harden market confirm + exclusive lock.
 - **1.8.25:** Overflow guard (distance-limited send to capital) + capital detection via `__vgConfig.capitalId`.
 - **1.8.22:** Resource circulation prefers nearest donors (capital → adjacent off-village).
 - **1.8.21:** Planned settlement targets can set `villageName`; bot renames the new village once founded.

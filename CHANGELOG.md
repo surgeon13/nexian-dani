@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.26] — 2026-08-12
+
+### Fixed
+
+- **Overflow / Celebrations / NPC loop timers** — normal reschedules no longer collapse to **15s**. `Math.max(15000, options.retryMs||0)` treated every tick as a short retry, so Celebrations (60–120m) and Overflow (8–15m) hammered the session. Explicit `retryMs` still floors at 15s.
+- **Marketplace confirm click** — second OK waits for the confirm page and no longer re-clicks the compose-form OK. Tentative success requires a real confirm-stage click.
+- **Overflow / evacuation marketplace lock** — both paths take the same exclusive session as smart circulation so they cannot race the builder market tab.
+- **Overflow / evacuation stock verify** — late header re-read after a failed first verify (same as circulation).
+
 ## [1.8.25] — 2026-08-11
 
 ### Added

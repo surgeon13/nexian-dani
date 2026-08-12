@@ -8641,10 +8641,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const min = Math.max(1, Math.floor(Number(settings.npcCropConvertMinMinutes) || 10));
       const max = Math.max(min, Math.floor(Number(settings.npcCropConvertMaxMinutes) || 20));
-      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      // Only treat explicit retryMs as a short retry. Math.max(15000, undefined||0) was
+      // collapsing every normal reschedule to 15s and hammering the account.
+      const requestedRetryMs = Math.floor(Number(options.retryMs));
+      const useRetry =
+        Number.isFinite(requestedRetryMs) && requestedRetryMs > 0;
       let delayMs;
-      if (retryMs > 0) {
-        delayMs = retryMs;
+      if (useRetry) {
+        delayMs = Math.max(15000, requestedRetryMs);
       } else {
         const delayMinutes = pickNextNpcCropConvertDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
@@ -8782,10 +8786,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const min = Math.max(1, Math.floor(Number(settings.resourceOverflowLoopMinMinutes) || 8));
       const max = Math.max(min, Math.floor(Number(settings.resourceOverflowLoopMaxMinutes) || 15));
-      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      // Only treat explicit retryMs as a short retry. Math.max(15000, undefined||0) was
+      // collapsing every normal reschedule to 15s and hammering the account.
+      const requestedRetryMs = Math.floor(Number(options.retryMs));
+      const useRetry =
+        Number.isFinite(requestedRetryMs) && requestedRetryMs > 0;
       let delayMs;
-      if (retryMs > 0) {
-        delayMs = retryMs;
+      if (useRetry) {
+        delayMs = Math.max(15000, requestedRetryMs);
       } else {
         const delayMinutes = pickNextOverflowGuardDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
@@ -8921,10 +8929,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       const min = Math.max(1, Math.floor(Number(settings.celebrationsLoopMinMinutes) || 60));
       const max = Math.max(min, Math.floor(Number(settings.celebrationsLoopMaxMinutes) || 120));
-      const retryMs = Math.max(15000, Math.floor(Number(options.retryMs) || 0));
+      // Only treat explicit retryMs as a short retry. Math.max(15000, undefined||0) was
+      // collapsing every normal reschedule to 15s and hammering the account.
+      const requestedRetryMs = Math.floor(Number(options.retryMs));
+      const useRetry =
+        Number.isFinite(requestedRetryMs) && requestedRetryMs > 0;
       let delayMs;
-      if (retryMs > 0) {
-        delayMs = retryMs;
+      if (useRetry) {
+        delayMs = Math.max(15000, requestedRetryMs);
       } else {
         const delayMinutes = pickNextCelebrationsDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
