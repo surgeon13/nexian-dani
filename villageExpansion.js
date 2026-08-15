@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { buildSlotUrl } = require("./villageBuilder");
+const { buildSlotUrl, discoverInnerBuildingSlotFromMap } = require("./villageBuilder");
 
 const RESIDENCE_SLOT = 25;
 const SETTLERS_NEEDED = 3;
@@ -350,11 +350,30 @@ function describeSettlerBuilding(slotInfo) {
   return name || "Residence/Palace";
 }
 
-async function readResidencePage(page, baseUrl, villageId) {
-  const url = buildSlotUrl(baseUrl, RESIDENCE_SLOT, villageId);
+/**
+ * Find Residence/Palace slot from the village map.
+ * Gaul (and some layouts) place Residence off the classic Roman slot 25.
+ */
+async function resolveResidenceSlot(page, baseUrl, villageId) {
+  for (const name of ["Palace", "Residence"]) {
+    const slot = await discoverInnerBuildingSlotFromMap(page, baseUrl, villageId, name).catch(() => null);
+    const id = Number(slot);
+    if (Number.isFinite(id) && id > 0) {
+      return id;
+    }
+  }
+  return RESIDENCE_SLOT;
+}
+
+async function readResidencePage(page, baseUrl, villageId, slotOverride = null) {
+  const resolvedSlot =
+    Number.isFinite(Number(slotOverride)) && Number(slotOverride) > 0
+      ? Math.trunc(Number(slotOverride))
+      : await resolveResidenceSlot(page, baseUrl, villageId);
+  const url = buildSlotUrl(baseUrl, resolvedSlot, villageId);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-  return page.evaluate(() => {
+  const info = await page.evaluate(() => {
     const titleEl = document.querySelector("#build h1, #content h1, #build .build_title h1");
     const titleText = titleEl ? titleEl.textContent.replace(/\u00a0/g, " ").trim() : "";
     const levelMatch = titleText.match(/^(.+?)\s+level\s+(\d+)/i);
@@ -545,6 +564,11 @@ async function readResidencePage(page, baseUrl, villageId) {
       pageUrl: window.location.href
     };
   });
+
+  return {
+    ...info,
+    slot: resolvedSlot
+  };
 }
 
 async function getSettlerCountFromRallyPoint(page, village, settings = {}) {
@@ -838,6 +862,7 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
   const isSettlerBuilding = isSettlerBuildingName(slotInfo.buildingName);
   const treatAsEmpty =
     Boolean(slotInfo.isEmptySlot) || isBlankBuildingName(slotInfo.buildingName);
+  const slotLabel = Number.isFinite(Number(slotInfo.slot)) ? Number(slotInfo.slot) : RESIDENCE_SLOT;
 
   if (isSettlerBuilding && slotInfo.currentLevel >= 10) {
     return {
@@ -845,7 +870,8 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
       phase: "residence",
       residenceLevel: slotInfo.currentLevel,
       buildingName: buildingLabel,
-      message: `${buildingLabel} level ${slotInfo.currentLevel} is ready.`
+      slot: slotLabel,
+      message: `${buildingLabel} level ${slotInfo.currentLevel} is ready (slot ${slotLabel}).`
     };
   }
 
@@ -853,7 +879,8 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
     return {
       status: "residence_slot_mismatch",
       phase: "residence",
-      message: `Slot ${RESIDENCE_SLOT} is '${slotInfo.buildingName}', not an empty slot/Residence/Palace.`
+      slot: slotLabel,
+      message: `Slot ${slotLabel} is '${slotInfo.buildingName}', not an empty slot/Residence/Palace.`
     };
   }
 
@@ -871,7 +898,8 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
       return {
         status: "residence_unavailable",
         phase: "residence",
-        message: "Palace/Residence is not currently available in this slot."
+        slot: slotLabel,
+        message: `Palace/Residence is not currently available in slot ${slotLabel}.`
       };
     }
 
@@ -880,6 +908,7 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
       return {
         status: "residence_build_click_failed",
         phase: "residence",
+        slot: slotLabel,
         message: `Could not click ${preferredNames[0]} construction button.`
       };
     }
@@ -889,7 +918,8 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
       status: "residence_started",
       phase: "residence",
       buildingName: startedLabel,
-      message: `Started ${startedLabel} construction at slot 25.`
+      slot: slotLabel,
+      message: `Started ${startedLabel} construction at slot ${slotLabel}.`
     };
   }
 
@@ -903,6 +933,7 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
         phase: "residence_resources",
         residenceLevel: slotInfo.currentLevel,
         buildingName: buildingLabel,
+        slot: slotLabel,
         stock: slotInfo.stock,
         warehouseCap: slotInfo.warehouseCap,
         granaryCap: slotInfo.granaryCap,
@@ -913,12 +944,16 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
           : `${buildingLabel} upgrade is currently only available via Master Builder. Waiting for resources to use normal build queue.`
       };
     }
+    // Queue already full / upgrade in progress — treat as waiting for level 10.
     return {
-      status: "residence_upgrade_blocked",
+      status: "residence_upgrading",
       phase: "residence",
       residenceLevel: slotInfo.currentLevel,
       buildingName: buildingLabel,
-      message: `${buildingLabel} is level ${slotInfo.currentLevel}, but upgrade button is unavailable or disabled.`
+      slot: slotLabel,
+      message:
+        `${buildingLabel} is level ${slotInfo.currentLevel} at slot ${slotLabel}; ` +
+        "upgrade button unavailable (likely already queued). Waiting for level 10 before training settlers."
     };
   }
   await page.waitForTimeout(1500);
@@ -927,7 +962,8 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
     phase: "residence",
     residenceLevel: slotInfo.currentLevel,
     buildingName: buildingLabel,
-    message: `Queued ${buildingLabel} upgrade from level ${slotInfo.currentLevel}.`
+    slot: slotLabel,
+    message: `Queued ${buildingLabel} upgrade from level ${slotInfo.currentLevel} (slot ${slotLabel}).`
   };
 }
 
@@ -939,7 +975,7 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED, settings =
   if (!isSettlerBuildingName(slotInfo.buildingName)) {
     return {
       status: "no_residence",
-      message: `Slot ${RESIDENCE_SLOT} is '${slotInfo.buildingName}', not Residence/Palace.`
+      message: `Slot ${slotInfo.slot || RESIDENCE_SLOT} is '${slotInfo.buildingName}', not Residence/Palace.`
     };
   }
 

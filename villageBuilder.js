@@ -2784,5 +2784,6 @@ module.exports = {
   previewPlan,
   resetVillageProgress,
   syncProgressToWorldState,
-  buildSlotUrl
+  buildSlotUrl,
+  discoverInnerBuildingSlotFromMap
 };
