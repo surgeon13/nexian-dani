@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- **Expansion Residence/Palace slot discovery** — finds Residence/Palace from the village map instead of always using slot 25 (Gaul layouts often place Residence elsewhere, e.g. slot 22). Waiting for an in-progress upgrade to level 10 reports `residence_upgrading` instead of a hard mismatch.
+- **Expansion Residence/Palace slot discovery** — finds Residence/Palace from the village map (loose label match), village overview build queue (`slot N | Residence`), or a short probe of common inner slots — not only hardcoded slot 25. Gaul layouts often place Residence elsewhere (e.g. slot 22 on **8β**). Waiting for an in-progress upgrade to level 10 reports `residence_upgrading` instead of a hard mismatch.
 
 ## [1.8.28] — 2026-08-12
 
