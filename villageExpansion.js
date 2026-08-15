@@ -1,6 +1,11 @@
 const fs = require("fs");
 const path = require("path");
-const { buildSlotUrl, discoverInnerBuildingSlotFromMap } = require("./villageBuilder");
+const {
+  buildSlotUrl,
+  discoverInnerBuildingSlotFromMap,
+  surveyInnerSlotsFromVillageMap,
+  readSlotPage
+} = require("./villageBuilder");
 
 const RESIDENCE_SLOT = 25;
 const SETTLERS_NEEDED = 3;
@@ -351,10 +356,29 @@ function describeSettlerBuilding(slotInfo) {
 }
 
 /**
- * Find Residence/Palace slot from the village map.
+ * Find Residence/Palace slot from the village map / overview / probe.
  * Gaul (and some layouts) place Residence off the classic Roman slot 25.
  */
 async function resolveResidenceSlot(page, baseUrl, villageId) {
+  const labelLooksLikeSettlerBuilding = (label) => {
+    const n = normalizeText(label);
+    return n.includes("palace") || n.includes("residence");
+  };
+
+  // 1) Map survey (loose label match — titles vary by tribe/UI).
+  const survey = await surveyInnerSlotsFromVillageMap(page, baseUrl, villageId).catch(() => []);
+  if (Array.isArray(survey) && survey.length) {
+    const palace = survey.find((row) => normalizeText(row.label).includes("palace"));
+    if (palace && Number.isFinite(Number(palace.slotId))) {
+      return Number(palace.slotId);
+    }
+    const residence = survey.find((row) => normalizeText(row.label).includes("residence"));
+    if (residence && Number.isFinite(Number(residence.slotId))) {
+      return Number(residence.slotId);
+    }
+  }
+
+  // 2) Strict name match via builder helper (Palace preferred).
   for (const name of ["Palace", "Residence"]) {
     const slot = await discoverInnerBuildingSlotFromMap(page, baseUrl, villageId, name).catch(() => null);
     const id = Number(slot);
@@ -362,6 +386,49 @@ async function resolveResidenceSlot(page, baseUrl, villageId) {
       return id;
     }
   }
+
+  // 3) Village overview / build queue text: "slot 22 | Residence (level 9)"
+  try {
+    const overviewUrl = (() => {
+      try {
+        const parsed = new URL(baseUrl);
+        const u = new URL(`${parsed.origin}/village1.php`);
+        if (villageId) {
+          u.searchParams.set("vid", String(villageId));
+        }
+        return u.toString();
+      } catch (_err) {
+        return null;
+      }
+    })();
+    if (overviewUrl) {
+      await page.goto(overviewUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      const fromQueue = await page.evaluate(() => {
+        const text = String((document.body && document.body.innerText) || "");
+        const match = text.match(/slot\s+(\d+)\s*\|\s*(Palace|Residence)\b/i);
+        return match ? Number(match[1]) : null;
+      });
+      if (Number.isFinite(Number(fromQueue)) && Number(fromQueue) > 0) {
+        return Number(fromQueue);
+      }
+    }
+  } catch (_err) {
+    /* ignore */
+  }
+
+  // 4) Probe common inner slots (Gaul often uses 22).
+  const candidates = [22, 25, 24, 23, 21, 20, 19, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38];
+  for (const slot of candidates) {
+    try {
+      const info = await readSlotPage(page, baseUrl, slot, villageId);
+      if (info && labelLooksLikeSettlerBuilding(info.buildingName) && !info.isEmptySlot) {
+        return slot;
+      }
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+
   return RESIDENCE_SLOT;
 }
 
