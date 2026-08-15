@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.29] — 2026-08-15
+
+### Fixed
+
+- **Expansion Residence/Palace slot discovery** — finds Residence/Palace from the village map instead of always using slot 25 (Gaul layouts often place Residence elsewhere, e.g. slot 22). Waiting for an in-progress upgrade to level 10 reports `residence_upgrading` instead of a hard mismatch.
+
 ## [1.8.28] — 2026-08-12
 
 ### Fixed
