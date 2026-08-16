@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.31] — 2026-08-16
+
+### Fixed
+
+- **Settler training queue counting** — settlers already in the Residence/Palace training queue count toward the 3 needed, so expansion does not try to fund/train extras while 2 are already queued.
+
 ## [1.8.30] — 2026-08-16
 
 ### Fixed
