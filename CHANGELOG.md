@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.30] — 2026-08-16
+
+### Fixed
+
+- **Expansion Residence queue detection** — build-queue UI (`.buildingList`) is no longer treated as an empty building site. When Residence/Palace already has an upgrade in queue (or only Master Builder is clickable with no resource deficit), status is `residence_upgrading` instead of a false `need_residence_resources` that skipped circulation.
+
 ## [1.8.29] — 2026-08-15
 
 ### Fixed
