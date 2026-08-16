@@ -450,9 +450,19 @@ async function readResidencePage(page, baseUrl, villageId, slotOverride = null) 
     const trainRows = Array.from(
       document.querySelectorAll("form[name='snd'] table.build_details tbody tr, table.build_details tbody tr")
     );
-    const isEmptySlot = Boolean(
-      document.querySelector("#build .buildingList, #contract_building, .buildingList, table.new_building")
-    ) || /construction of a new building|empty building site/i.test(titleText);
+    // Do NOT treat the build-queue .buildingList as an empty slot — that UI appears on
+    // existing buildings while an upgrade is already queued.
+    const hasNewBuildingChooser = Boolean(
+      document.querySelector("#contract_building table.new_building, table.new_building")
+    );
+    const isEmptySlot =
+      (/construction of a new building|empty building site/i.test(titleText) || hasNewBuildingChooser) &&
+      !levelMatch;
+    const bodyText = String((document.body && document.body.innerText) || "");
+    const upgradeInQueue = /upgrade to level\s+\d+\s*\(\s*in queue\s*\)/i.test(bodyText) ||
+      (/in queue/i.test(bodyText) && /upgrade to level/i.test(bodyText));
+    const constructionInProgress = /remaining\s+\d+:\d+/i.test(bodyText) &&
+      /(residence|palace)\s*\(level/i.test(bodyText);
 
     const canClick = (element) => Boolean(
       element &&
@@ -615,6 +625,8 @@ async function readResidencePage(page, baseUrl, villageId, slotOverride = null) 
       unitOptions,
       troopCounts,
       isEmptySlot,
+      upgradeInQueue,
+      constructionInProgress,
       costs,
       hasUpgradeButton: Boolean(regularUpgradeButton),
       hasRegularUpgradeButton: Boolean(regularUpgradeButton),
@@ -990,11 +1002,38 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
     };
   }
 
+  if (slotInfo.upgradeInQueue || slotInfo.constructionInProgress) {
+    return {
+      status: "residence_upgrading",
+      phase: "residence",
+      residenceLevel: slotInfo.currentLevel,
+      buildingName: buildingLabel,
+      slot: slotLabel,
+      message:
+        `${buildingLabel} is level ${slotInfo.currentLevel} at slot ${slotLabel}; ` +
+        "upgrade already in the build queue. Waiting for level 10 before training settlers."
+    };
+  }
+
   const upgraded = await clickResidenceUpgrade(page);
   if (!upgraded) {
     const deficit = calculateResourceDeficit(slotInfo.stock, slotInfo.costs);
     const deficitEntries = Object.entries(deficit);
     if (slotInfo.hasMasterBuilderUpgradeButton && !slotInfo.hasRegularUpgradeButton) {
+      // Only MB available usually means regular queue is busy or resources are short.
+      // Empty deficit + no clickable regular button → wait (queue busy), don't fake a resource need.
+      if (!deficitEntries.length) {
+        return {
+          status: "residence_upgrading",
+          phase: "residence",
+          residenceLevel: slotInfo.currentLevel,
+          buildingName: buildingLabel,
+          slot: slotLabel,
+          message:
+            `${buildingLabel} is level ${slotInfo.currentLevel} at slot ${slotLabel}; ` +
+            "regular upgrade unavailable (queue likely busy). Waiting for level 10 before training settlers."
+        };
+      }
       return {
         status: "need_residence_resources",
         phase: "residence_resources",
@@ -1006,9 +1045,7 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
         granaryCap: slotInfo.granaryCap,
         required: slotInfo.costs || {},
         deficit,
-        message: deficitEntries.length
-          ? `${buildingLabel} upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
-          : `${buildingLabel} upgrade is currently only available via Master Builder. Waiting for resources to use normal build queue.`
+        message: `${buildingLabel} upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
       };
     }
     // Queue already full / upgrade in progress — treat as waiting for level 10.
