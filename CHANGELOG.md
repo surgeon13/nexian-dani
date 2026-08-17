@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.32] — 2026-08-17
+
+### Changed
+
+- **Builder RR interval** — min minutes may be **0** (was floored at 1). A 0-minute pick waits ~5–15s so the loop cannot spin. Set `BUILDER_LOOP_MIN_MINUTES` / `MAX` (e.g. `0` / `1`).
+
 ## [1.8.31] — 2026-08-16
 
 ### Fixed

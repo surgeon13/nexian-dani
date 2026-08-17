@@ -406,11 +406,12 @@ const settings = {
 
 syncSettingsFromProxyStore(settings);
 
-function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
+function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax, minFloor = 1) {
   let min = Number.isFinite(minValue) ? minValue : fallbackMin;
   let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
-  min = Math.max(1, Math.floor(min));
-  max = Math.max(1, Math.floor(max));
+  const floor = Number.isFinite(Number(minFloor)) ? Math.max(0, Math.floor(Number(minFloor))) : 1;
+  min = Math.max(floor, Math.floor(min));
+  max = Math.max(floor, Math.floor(max));
   if (min > max) {
     const t = min;
     min = max;
@@ -590,7 +591,8 @@ function applySessionLoopDefaults() {
     settings.builderLoopMinMinutes,
     settings.builderLoopMaxMinutes,
     5,
-    10
+    10,
+    0
   );
   settings.builderLoopMinMinutes = builderLoop.min;
   settings.builderLoopMaxMinutes = builderLoop.max;
@@ -1929,7 +1931,8 @@ async function run() {
       Number(nextConfig.minMinutes),
       Number(nextConfig.maxMinutes),
       settings.builderLoopMinMinutes,
-      settings.builderLoopMaxMinutes
+      settings.builderLoopMaxMinutes,
+      0
     );
 
     settings.builderLoopMinMinutes = range.min;

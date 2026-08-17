@@ -6764,11 +6764,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
-    const normalizeMinuteRange = (minValue, maxValue, fallbackMin, fallbackMax) => {
+    const normalizeMinuteRange = (minValue, maxValue, fallbackMin, fallbackMax, minFloor = 1) => {
       let min = Number.isFinite(minValue) ? minValue : fallbackMin;
       let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
-      min = Math.max(1, Math.floor(min));
-      max = Math.max(1, Math.floor(max));
+      const floor = Number.isFinite(Number(minFloor)) ? Math.max(0, Math.floor(Number(minFloor))) : 1;
+      min = Math.max(floor, Math.floor(min));
+      max = Math.max(floor, Math.floor(max));
       if (min > max) {
         const t = min;
         min = max;
@@ -7824,7 +7825,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.builderLoopMinMinutes,
         settings.builderLoopMaxMinutes,
         5,
-        10
+        10,
+        0
       );
       settings.builderLoopMinMinutes = normalized.min;
       settings.builderLoopMaxMinutes = normalized.max;
@@ -7863,13 +7865,22 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.builderLoopMinMinutes,
         settings.builderLoopMaxMinutes
       );
+      // 0 minutes means "as soon as possible"; keep a short floor so the loop cannot spin.
+      const delayMs =
+        minutes <= 0
+          ? 5000 + Math.floor(Math.random() * 10000)
+          : minutes * 60 * 1000;
       const activePlan = getBuilderPlanMeta(activeBuilderPlanMode);
       builderResumeWaitLogged = false;
-      nextBuilderRunAt = Date.now() + minutes * 60 * 1000;
+      nextBuilderRunAt = Date.now() + delayMs;
       const schedulePlanLabel = builderRrUsesResourceThenVillagePipeline()
         ? "resource→village"
         : activePlan.short;
-      logInfo(`[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${minutes} minute(s).`);
+      const delayLabel =
+        minutes <= 0
+          ? `~${Math.max(1, Math.ceil(delayMs / 1000))}s`
+          : `${minutes} minute(s)`;
+      logInfo(`[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${delayLabel}.`);
 
       const runBuilderScheduledTick = async () => {
         if (done || !settings.builderLoopEnabled) {
@@ -8201,7 +8212,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         scheduleBuilderLoop();
       };
 
-      builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), minutes * 60 * 1000);
+      builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
     };
 
     const getTroopVillageLoopKey = (village) => troopPlans.villageKey(village);
