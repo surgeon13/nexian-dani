@@ -284,8 +284,8 @@ const settings = {
   statusAfterFarmlistsCooldownMinutes: numberEnv("STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES", 15),
   builderLoopEnabled:
     String(process.env.BUILDER_LOOP_ENABLED || "false").toLowerCase() === "true",
-  builderLoopMinMinutes: numberEnv("BUILDER_LOOP_MIN_MINUTES", 5),
-  builderLoopMaxMinutes: numberEnv("BUILDER_LOOP_MAX_MINUTES", 10),
+  builderLoopMinMinutes: numberEnv("BUILDER_LOOP_MIN_MINUTES", 0.5),
+  builderLoopMaxMinutes: numberEnv("BUILDER_LOOP_MAX_MINUTES", 1),
   builderRoundRobinEnabled:
     String(process.env.BUILDER_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   builderRoundRobinExcludedVillageIds:
@@ -306,6 +306,13 @@ const settings = {
       .toLowerCase();
     return defaultPlan !== "village";
   })(),
+  // Once a village's resource-fields plan is fully complete (all fields at
+  // their template's max level, e.g. 10), automatically add it to
+  // BUILDER_RR_EXCLUDED_VILLAGE_IDS and stop building it — instead of
+  // (or in addition to) falling through to the village-stage plan.
+  builderRrAutoExcludeOnResourceComplete:
+    String(process.env.BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE || "true").toLowerCase() ===
+    "true",
   troopTrainingRoundRobinEnabled:
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   troopTrainingLoopMinMinutes: numberEnv("TROOP_TRAINING_LOOP_MIN_MINUTES", 5),
@@ -387,8 +394,8 @@ const settings = {
   npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
   celebrationsRoundRobinEnabled:
     String(process.env.CELEBRATIONS_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
-  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 60),
-  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 120),
+  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 30),
+  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 60),
   celebrationsType: String(process.env.CELEBRATIONS_TYPE || "auto").trim().toLowerCase() || "auto",
   celebrationsQueueDepth: (() => {
     const n = Math.floor(Number(process.env.CELEBRATIONS_QUEUE_DEPTH || 1));
@@ -406,11 +413,16 @@ const settings = {
 
 syncSettingsFromProxyStore(settings);
 
+// Lowest allowed loop interval (minutes). Loops accept fractional minutes
+// (e.g. 0.5 = 30s); this floor just guards against 0/negative misconfig
+// causing a runaway tight loop.
+const MIN_LOOP_MINUTES = 0.1;
+
 function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
   let min = Number.isFinite(minValue) ? minValue : fallbackMin;
   let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
-  min = Math.max(1, Math.floor(min));
-  max = Math.max(1, Math.floor(max));
+  min = Math.max(MIN_LOOP_MINUTES, min);
+  max = Math.max(MIN_LOOP_MINUTES, max);
   if (min > max) {
     const t = min;
     min = max;
@@ -420,7 +432,15 @@ function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
 }
 
 function randomIntBetween(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  if (max <= min) {
+    return min;
+  }
+  if (Number.isInteger(min) && Number.isInteger(max)) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+  // Fractional bounds (e.g. 0.5-1 minute): sample continuously instead of
+  // treating min/max as an inclusive integer range.
+  return Math.random() * (max - min) + min;
 }
 
 function waitMs(ms) {
@@ -505,6 +525,9 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_RR_EXCLUDED_VILLAGE_IDS: String(settings.builderRoundRobinExcludedVillageIds || ""),
     BUILDER_DEFAULT_PLAN_MODE: settings.builderDefaultPlanMode === "village" ? "village" : "resource",
     BUILDER_RR_RESOURCE_THEN_VILLAGE: settings.builderRrResourceThenVillage ? "true" : "false",
+    BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE: settings.builderRrAutoExcludeOnResourceComplete
+      ? "true"
+      : "false",
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),
@@ -589,8 +612,8 @@ function applySessionLoopDefaults() {
   const builderLoop = normalizeRange(
     settings.builderLoopMinMinutes,
     settings.builderLoopMaxMinutes,
-    5,
-    10
+    0.5,
+    1
   );
   settings.builderLoopMinMinutes = builderLoop.min;
   settings.builderLoopMaxMinutes = builderLoop.max;
@@ -701,8 +724,8 @@ function applySessionLoopDefaults() {
   const celebrationsLoop = normalizeRange(
     settings.celebrationsLoopMinMinutes,
     settings.celebrationsLoopMaxMinutes,
-    60,
-    120
+    30,
+    60
   );
   settings.celebrationsLoopMinMinutes = celebrationsLoop.min;
   settings.celebrationsLoopMaxMinutes = celebrationsLoop.max;

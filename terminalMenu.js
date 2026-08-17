@@ -6764,11 +6764,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    // Lowest allowed loop interval (minutes). Loops accept fractional
+    // minutes (e.g. 0.5 = 30s); this floor just guards against 0/negative
+    // misconfig causing a runaway tight loop.
+    const MIN_LOOP_MINUTES = 0.1;
+
     const normalizeMinuteRange = (minValue, maxValue, fallbackMin, fallbackMax) => {
       let min = Number.isFinite(minValue) ? minValue : fallbackMin;
       let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
-      min = Math.max(1, Math.floor(min));
-      max = Math.max(1, Math.floor(max));
+      min = Math.max(MIN_LOOP_MINUTES, min);
+      max = Math.max(MIN_LOOP_MINUTES, max);
       if (min > max) {
         const t = min;
         min = max;
@@ -6777,8 +6782,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return { min, max };
     };
 
-    const randomIntBetween = (min, max) =>
-      Math.floor(Math.random() * (max - min + 1)) + min;
+    const randomIntBetween = (min, max) => {
+      if (max <= min) {
+        return min;
+      }
+      if (Number.isInteger(min) && Number.isInteger(max)) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+      // Fractional bounds (e.g. 0.5-1 minute): sample continuously instead
+      // of treating min/max as an inclusive integer range.
+      return Math.random() * (max - min) + min;
+    };
 
     const pickNextFarmlistDelayMinutes = (min, max) => {
       let next = randomIntBetween(min, max);
@@ -7869,7 +7883,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const schedulePlanLabel = builderRrUsesResourceThenVillagePipeline()
         ? "resource→village"
         : activePlan.short;
-      logInfo(`[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${minutes} minute(s).`);
+      logInfo(
+        `[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${Number(minutes.toFixed(2))} minute(s).`
+      );
 
       const runBuilderScheduledTick = async () => {
         if (done || !settings.builderLoopEnabled) {
@@ -8052,26 +8068,40 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 break;
               }
 
-              if (
-                finalResult &&
-                finalResult.status === "all_complete" &&
-                loopPlan.key === "resource" &&
-                builderRrUsesResourceThenVillagePipeline() &&
-                !isBuilderPlanFullyComplete(targetVillage, "village")
-              ) {
-                loopPlan = getBuilderPlanMeta("village");
-                logInfo(
-                  `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — continuing with village stage plan.`
-                );
-                await ensureVillageBrowserContext(targetVillage, "Builder Loop");
-                finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
-                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
-                  goldCompleteMax: settings.builderGoldCompleteMax,
-                  masterBuilderEnabled: settings.builderMasterBuilderEnabled,
-                  planMode: loopPlan.key
-                });
-                followupAttempt += 1;
-                continue;
+              if (finalResult && finalResult.status === "all_complete" && loopPlan.key === "resource") {
+                if (settings.builderRrAutoExcludeOnResourceComplete) {
+                  const excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
+                  if (!excludedSet.has(Number(targetVillage.id))) {
+                    excludedSet.add(Number(targetVillage.id));
+                    settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedSet);
+                    if (runtimeControls.persistSettings) {
+                      await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
+                    }
+                    logSuccess(
+                      `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — excluded from Builder RR.`
+                    );
+                  }
+                  break;
+                }
+
+                if (
+                  builderRrUsesResourceThenVillagePipeline() &&
+                  !isBuilderPlanFullyComplete(targetVillage, "village")
+                ) {
+                  loopPlan = getBuilderPlanMeta("village");
+                  logInfo(
+                    `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — continuing with village stage plan.`
+                  );
+                  await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+                  finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
+                    goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                    goldCompleteMax: settings.builderGoldCompleteMax,
+                    masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                    planMode: loopPlan.key
+                  });
+                  followupAttempt += 1;
+                  continue;
+                }
               }
 
               if (

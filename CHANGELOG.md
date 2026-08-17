@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.30] — 2026-08-17
+
+### Added
+
+- **Builder RR auto-exclude on resource-fields completion** — new `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` (default `true`). Once a village's resource-fields plan is fully complete (all fields at their template's max level, e.g. 10), the builder loop stops upgrading that village's fields and auto-adds it to `BUILDER_RR_EXCLUDED_VILLAGE_IDS` (persisted to `.env`) instead of falling through to the village-stage plan. Set to `false` to keep the previous resource→village continuation behavior (`BUILDER_RR_RESOURCE_THEN_VILLAGE`).
+
+### Changed
+
+- **Builder loop interval** — default `BUILDER_LOOP_MIN_MINUTES`/`BUILDER_LOOP_MAX_MINUTES` lowered from `5`–`10` to `0.5`–`1`. Loop-interval settings now accept fractional minutes (e.g. `0.5` = 30s); a 0.1-minute floor guards against a runaway tight loop from misconfiguration.
+- **Celebrations RR interval** — default `CELEBRATIONS_LOOP_MIN_MINUTES`/`CELEBRATIONS_LOOP_MAX_MINUTES` lowered from `60`–`120` to `30`–`60`.
+
 ## [1.8.29] — 2026-08-15
 
 ### Fixed
