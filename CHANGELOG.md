@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.32] — 2026-08-17
+
+### Changed
+
+- **Builder RR interval** — min minutes may be **0** (was floored at 1). A 0-minute pick waits ~5–15s so the loop cannot spin. Set `BUILDER_LOOP_MIN_MINUTES` / `MAX` (e.g. `0` / `1`).
+
+## [1.8.31] — 2026-08-16
+
+### Fixed
+
+- **Settler training queue counting** — settlers already in the Residence/Palace training queue count toward the 3 needed, so expansion does not try to fund/train extras while 2 are already queued.
+
+## [1.8.30] — 2026-08-16
+
+### Fixed
+
+- **Expansion Residence queue detection** — build-queue UI (`.buildingList`) is no longer treated as an empty building site. When Residence/Palace already has an upgrade in queue (or only Master Builder is clickable with no resource deficit), status is `residence_upgrading` instead of a false `need_residence_resources` that skipped circulation.
+
 ## [1.8.29] — 2026-08-15
 
 ### Fixed

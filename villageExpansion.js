@@ -450,9 +450,47 @@ async function readResidencePage(page, baseUrl, villageId, slotOverride = null) 
     const trainRows = Array.from(
       document.querySelectorAll("form[name='snd'] table.build_details tbody tr, table.build_details tbody tr")
     );
-    const isEmptySlot = Boolean(
-      document.querySelector("#build .buildingList, #contract_building, .buildingList, table.new_building")
-    ) || /construction of a new building|empty building site/i.test(titleText);
+    // Do NOT treat the build-queue .buildingList as an empty slot — that UI appears on
+    // existing buildings while an upgrade is already queued.
+    const hasNewBuildingChooser = Boolean(
+      document.querySelector("#contract_building table.new_building, table.new_building")
+    );
+    const isEmptySlot =
+      (/construction of a new building|empty building site/i.test(titleText) || hasNewBuildingChooser) &&
+      !levelMatch;
+    const bodyText = String((document.body && document.body.innerText) || "");
+    const upgradeInQueue = /upgrade to level\s+\d+\s*\(\s*in queue\s*\)/i.test(bodyText) ||
+      (/in queue/i.test(bodyText) && /upgrade to level/i.test(bodyText));
+    const constructionInProgress = /remaining\s+\d+:\d+/i.test(bodyText) &&
+      /(residence|palace)\s*\(level/i.test(bodyText);
+
+    // Count settlers already in the Residence/Palace training queue
+    // (e.g. "2 Settler  20m56.35s  41m07s  20:39:00") so we don't re-order extras.
+    let settlersInTraining = 0;
+    const trainingBlockMatch = bodyText.match(
+      /Training[\s\S]{0,800}?(?:Cost Rising|Culture points|Loyalty|Demolish|$)/i
+    );
+    const trainingBlock = trainingBlockMatch ? trainingBlockMatch[0] : bodyText;
+    const queuedSettlerMatches = trainingBlock.matchAll(/(\d+)\s+Settlers?\b/gi);
+    for (const match of queuedSettlerMatches) {
+      settlersInTraining += Number(match[1]) || 0;
+    }
+    if (!settlersInTraining) {
+      document
+        .querySelectorAll(
+          "table.under_progress tr, #train_overview tr, .trainOverview tr, #build table tr"
+        )
+        .forEach((row) => {
+          const text = String(row.textContent || "");
+          if (!/settler/i.test(text)) {
+            return;
+          }
+          const countMatch = text.match(/^\s*(\d+)\s+/);
+          if (countMatch) {
+            settlersInTraining += Number(countMatch[1]) || 0;
+          }
+        });
+    }
 
     const canClick = (element) => Boolean(
       element &&
@@ -615,6 +653,9 @@ async function readResidencePage(page, baseUrl, villageId, slotOverride = null) 
       unitOptions,
       troopCounts,
       isEmptySlot,
+      upgradeInQueue,
+      constructionInProgress,
+      settlersInTraining,
       costs,
       hasUpgradeButton: Boolean(regularUpgradeButton),
       hasRegularUpgradeButton: Boolean(regularUpgradeButton),
@@ -990,11 +1031,38 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
     };
   }
 
+  if (slotInfo.upgradeInQueue || slotInfo.constructionInProgress) {
+    return {
+      status: "residence_upgrading",
+      phase: "residence",
+      residenceLevel: slotInfo.currentLevel,
+      buildingName: buildingLabel,
+      slot: slotLabel,
+      message:
+        `${buildingLabel} is level ${slotInfo.currentLevel} at slot ${slotLabel}; ` +
+        "upgrade already in the build queue. Waiting for level 10 before training settlers."
+    };
+  }
+
   const upgraded = await clickResidenceUpgrade(page);
   if (!upgraded) {
     const deficit = calculateResourceDeficit(slotInfo.stock, slotInfo.costs);
     const deficitEntries = Object.entries(deficit);
     if (slotInfo.hasMasterBuilderUpgradeButton && !slotInfo.hasRegularUpgradeButton) {
+      // Only MB available usually means regular queue is busy or resources are short.
+      // Empty deficit + no clickable regular button → wait (queue busy), don't fake a resource need.
+      if (!deficitEntries.length) {
+        return {
+          status: "residence_upgrading",
+          phase: "residence",
+          residenceLevel: slotInfo.currentLevel,
+          buildingName: buildingLabel,
+          slot: slotLabel,
+          message:
+            `${buildingLabel} is level ${slotInfo.currentLevel} at slot ${slotLabel}; ` +
+            "regular upgrade unavailable (queue likely busy). Waiting for level 10 before training settlers."
+        };
+      }
       return {
         status: "need_residence_resources",
         phase: "residence_resources",
@@ -1006,9 +1074,7 @@ async function ensureResidenceLevel10(page, village, settings = {}) {
         granaryCap: slotInfo.granaryCap,
         required: slotInfo.costs || {},
         deficit,
-        message: deficitEntries.length
-          ? `${buildingLabel} upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
-          : `${buildingLabel} upgrade is currently only available via Master Builder. Waiting for resources to use normal build queue.`
+        message: `${buildingLabel} upgrade requires more resources before regular queue is available. Deficit: ${deficitEntries.map(([res, amount]) => `${res}: -${amount}`).join(", ")}.`
       };
     }
     // Queue already full / upgrade in progress — treat as waiting for level 10.
@@ -1057,13 +1123,25 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED, settings =
   const settlerEntry = Object.entries(slotInfo.troopCounts).find(([name]) =>
     normalizeText(name).includes("settler")
   );
-  const currentSettlers = settlerEntry ? settlerEntry[1] : 0;
+  const readySettlers = settlerEntry ? settlerEntry[1] : 0;
+  const settlersInTraining = Math.max(0, Number(slotInfo.settlersInTraining) || 0);
+  const currentSettlers = readySettlers + settlersInTraining;
+
+  if (readySettlers >= needed) {
+    return {
+      status: "settlers_ready",
+      count: readySettlers,
+      queued: settlersInTraining,
+      message: `${readySettlers} settlers ready.`
+    };
+  }
 
   if (currentSettlers >= needed) {
     return {
-      status: "settlers_ready",
-      count: currentSettlers,
-      message: `${currentSettlers} settlers ready.`
+      status: "settlers_queued",
+      count: readySettlers,
+      queued: settlersInTraining,
+      message: `${settlersInTraining} settler(s) already training (${readySettlers} ready); waiting for ${needed} total.`
     };
   }
 
@@ -1078,14 +1156,15 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED, settings =
     };
   }
 
-  const toTrain = Math.min(needed - currentSettlers, settlerOption.maxTrainable);
+  const remainingToTrain = Math.max(0, needed - currentSettlers);
+  const toTrain = Math.min(remainingToTrain, settlerOption.maxTrainable);
   if (toTrain <= 0) {
     const perUnitCosts = settlerOption.costs || {};
     const required = {
-      wood: Math.max(0, (Number(perUnitCosts.wood) || 0) * Math.max(1, needed - currentSettlers)),
-      clay: Math.max(0, (Number(perUnitCosts.clay) || 0) * Math.max(1, needed - currentSettlers)),
-      iron: Math.max(0, (Number(perUnitCosts.iron) || 0) * Math.max(1, needed - currentSettlers)),
-      crop: Math.max(0, (Number(perUnitCosts.crop) || 0) * Math.max(1, needed - currentSettlers))
+      wood: Math.max(0, (Number(perUnitCosts.wood) || 0) * Math.max(1, remainingToTrain)),
+      clay: Math.max(0, (Number(perUnitCosts.clay) || 0) * Math.max(1, remainingToTrain)),
+      iron: Math.max(0, (Number(perUnitCosts.iron) || 0) * Math.max(1, remainingToTrain)),
+      crop: Math.max(0, (Number(perUnitCosts.crop) || 0) * Math.max(1, remainingToTrain))
     };
     const deficit = calculateResourceDeficit(slotInfo.stock, required);
     const hasResourceDeficit = Object.keys(deficit).length > 0;
@@ -1101,11 +1180,15 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED, settings =
         stock: slotInfo.stock,
         warehouseCap: slotInfo.warehouseCap,
         granaryCap: slotInfo.granaryCap,
+        queued: settlersInTraining,
+        count: readySettlers,
         message: `Not enough resources to train settlers. Deficit: ${deficitText}.`
       };
     }
     return {
       status: "cannot_train",
+      queued: settlersInTraining,
+      count: readySettlers,
       message: "Cannot train settlers now (check resources or queue)."
     };
   }
@@ -1135,8 +1218,9 @@ async function trainSettlers(page, village, needed = SETTLERS_NEEDED, settings =
   await page.waitForTimeout(2000);
   return {
     status: "settlers_queued",
-    queued: toTrain,
-    message: `Queued ${toTrain} settler(s) for training.`
+    queued: toTrain + settlersInTraining,
+    count: readySettlers,
+    message: `Queued ${toTrain} settler(s) for training (${readySettlers + settlersInTraining + toTrain}/${needed} total including queue).`
   };
 }
 
@@ -1149,6 +1233,7 @@ async function getResidenceStatus(page, village, settings = {}) {
     normalizeText(name).includes("settler")
   );
   let settlerCount = settlerEntry ? settlerEntry[1] : 0;
+  const settlersInTraining = Math.max(0, Number(slotInfo.settlersInTraining) || 0);
   let stock = slotInfo.stock;
 
   if (isSettlerBuilding && slotInfo.currentLevel >= 10) {
@@ -1159,7 +1244,7 @@ async function getResidenceStatus(page, village, settings = {}) {
     }
 
     // Keep rally point as a final fallback if overview still reports low settlers.
-    if (settlerCount < SETTLERS_NEEDED) {
+    if (settlerCount + settlersInTraining < SETTLERS_NEEDED) {
       const rallyPointSettlers = await getSettlerCountFromRallyPoint(page, village, settings);
       settlerCount = Math.max(settlerCount, Number(rallyPointSettlers) || 0);
     }
@@ -1169,7 +1254,9 @@ async function getResidenceStatus(page, village, settings = {}) {
     isResidence: isSettlerBuilding,
     buildingName: describeSettlerBuilding(slotInfo),
     residenceLevel: slotInfo.currentLevel,
-    settlerCount,
+    settlerCount: settlerCount + settlersInTraining,
+    settlersReady: settlerCount,
+    settlersInTraining,
     canTrainSettlers: isSettlerBuilding && slotInfo.currentLevel >= 10,
     unitOptions: slotInfo.unitOptions,
     stock,
