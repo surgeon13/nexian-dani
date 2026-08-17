@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.31] — 2026-08-17
+
+### Added
+
+- **Capital granary watcher** — new `CAPITAL_GRANARY_WATCHER_ENABLED` (default `true`) checks the capital village's granary on every NPC Crop Convert tick, independent of the other villages' round-robin turn, and NPC-trades crop → wood/clay/iron once it crosses the threshold. Optional `CAPITAL_GRANARY_WATCHER_RATIO` overrides the trigger threshold for the capital only (falls back to `NPC_CROP_CONVERT_GRANARY_RATIO`). Capital is excluded from the shared round-robin while the watcher is on, to avoid double-checking it. Still requires `NPC_CROP_CONVERT_ENABLED=true` — it shares that loop's schedule rather than running on its own timer.
+
 ## [1.8.30] — 2026-08-17
 
 ### Added

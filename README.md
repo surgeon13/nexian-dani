@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.30** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.31** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -26,7 +26,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
-- **NPC crop convert** — When granary fills to the threshold (default 95%), NPC-trade so crop becomes **0%** and wood/clay/iron share the rest. Round-robin one village per poll (`NPC_CROP_CONVERT_*`, Settings **N**). Costs gold in-game; off by default.
+- **NPC crop convert** — When granary fills to the threshold (default 95%), NPC-trade so crop becomes **0%** and wood/clay/iron share the rest. Round-robin one village per poll (`NPC_CROP_CONVERT_*`, Settings **N**). Costs gold in-game; off by default. **Capital granary watcher** (`CAPITAL_GRANARY_WATCHER_*`, on by default) checks the capital every tick instead of waiting for its round-robin turn.
 - **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
 - **24/7 keep-alive** — `scripts/keep-alive.sh` polls every **15s** and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
 
@@ -421,7 +421,7 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
 - **Overflow guard:** `RESOURCE_OVERFLOW_GUARD_ENABLED`, `RESOURCE_OVERFLOW_TRIGGER_RATIO`, `RESOURCE_OVERFLOW_TARGET_RATIO`, `RESOURCE_OVERFLOW_MAX_DISTANCE`, `RESOURCE_OVERFLOW_LOOP_MIN_MINUTES`, `RESOURCE_OVERFLOW_LOOP_MAX_MINUTES`, `RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS`
-- **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`
+- **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`, `CAPITAL_GRANARY_WATCHER_ENABLED`, `CAPITAL_GRANARY_WATCHER_RATIO`
 - **Celebrations RR:** `CELEBRATIONS_ROUND_ROBIN_ENABLED`, `CELEBRATIONS_LOOP_MIN_MINUTES`, `CELEBRATIONS_LOOP_MAX_MINUTES`, `CELEBRATIONS_TYPE`, `CELEBRATIONS_QUEUE_DEPTH` (1 or 2, default 1), `CELEBRATIONS_INCLUDED_VILLAGE_IDS`, `CELEBRATIONS_EXCLUDED_VILLAGE_IDS`
 - **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
 

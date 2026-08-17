@@ -392,6 +392,23 @@ const settings = {
     process.env.NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS || ""
   ).trim(),
   npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
+  // Capital granary watcher: checked every NPC Crop Convert tick (regardless
+  // of round-robin turn), independent of the other villages' rotation.
+  // Requires NPC_CROP_CONVERT_ENABLED=true — it shares that loop's timer.
+  capitalGranaryWatcherEnabled:
+    String(process.env.CAPITAL_GRANARY_WATCHER_ENABLED || "true").toLowerCase() === "true",
+  // Optional threshold override for the capital; falls back to
+  // NPC_CROP_CONVERT_GRANARY_RATIO when unset.
+  capitalGranaryWatcherRatio: (() => {
+    const raw = Number(process.env.CAPITAL_GRANARY_WATCHER_RATIO);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+      return raw;
+    }
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+      return raw / 100;
+    }
+    return null;
+  })(),
   celebrationsRoundRobinEnabled:
     String(process.env.CELEBRATIONS_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 30),
@@ -569,6 +586,9 @@ function persistRuntimeSettings(selectedKeys) {
     NPC_CROP_CONVERT_MAX_MINUTES: String(settings.npcCropConvertMaxMinutes),
     NPC_CROP_CONVERT_GRANARY_RATIO: String(settings.npcCropConvertGranaryRatio),
     NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS: String(settings.npcCropConvertExcludedVillageIds || ""),
+    CAPITAL_GRANARY_WATCHER_ENABLED: settings.capitalGranaryWatcherEnabled ? "true" : "false",
+    CAPITAL_GRANARY_WATCHER_RATIO:
+      settings.capitalGranaryWatcherRatio == null ? "" : String(settings.capitalGranaryWatcherRatio),
     NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID: String(
       settings.npcCropConvertMarketplaceBuildingId || 33
     ),

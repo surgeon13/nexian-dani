@@ -2071,8 +2071,11 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
 
   const npcModeLabel = settings.npcCropConvertEnabled ? "ON" : "OFF";
   const npcModeColor = settings.npcCropConvertEnabled ? ANSI.green : ANSI.yellow;
+  const capitalWatcherRatioPct = Math.round(
+    (settings.capitalGranaryWatcherRatio ?? settings.npcCropConvertGranaryRatio ?? 0.95) * 100
+  );
   console.log(
-    `  ${color("NPC Crop Convert:", ANSI.gray)} ${color(npcModeLabel, ANSI.bold, npcModeColor)} ${color(`(${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes} min, ≥${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`, ANSI.bold)}`
+    `  ${color("NPC Crop Convert:", ANSI.gray)} ${color(npcModeLabel, ANSI.bold, npcModeColor)} ${color(`(${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes} min, ≥${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`, ANSI.bold)} ${color(`[capital watcher: ${settings.capitalGranaryWatcherEnabled ? `ON ≥${capitalWatcherRatioPct}%` : "OFF"}]`, ANSI.gray)}`
   );
   if (settings.npcCropConvertEnabled) {
     const nextNpcText = Number.isFinite(npcCropStatus.nextInMinutes)
@@ -8985,10 +8988,66 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
           let deferFullReschedule = false;
           await runAction("NPC Crop Convert", async () => {
+            if (settings.capitalGranaryWatcherEnabled) {
+              const capitalVillage = (villageState.villages || []).find((v) => v.isCapital);
+              if (capitalVillage) {
+                const capitalResult = await npcCropConvert.convertCropIfGranaryFull(
+                  getPage(),
+                  settings,
+                  capitalVillage,
+                  {
+                    granaryRatio:
+                      settings.capitalGranaryWatcherRatio ?? settings.npcCropConvertGranaryRatio
+                  }
+                );
+                const capitalLabel = `${capitalVillage.name || "Capital"} (vid=${capitalVillage.id})`;
+                if (capitalResult.status === "npc_ok") {
+                  logSuccess(
+                    `[Capital Granary] ${capitalLabel}: converted crop → wood/clay/iron (${capitalResult.message || "ok"}).`
+                  );
+                  recordAction({
+                    actionType: "npc.crop_convert",
+                    status: "success",
+                    details: {
+                      villageId: capitalVillage.id,
+                      villageName: capitalVillage.name,
+                      watcher: "capital",
+                      before: capitalResult.before || null,
+                      desired: capitalResult.afterDesired || null,
+                      granaryPercent: capitalResult.granaryPercent
+                    }
+                  });
+                } else if (capitalResult.status === "npc_below_threshold") {
+                  logInfo(`[Capital Granary] ${capitalLabel}: ${capitalResult.message}`);
+                } else if (capitalResult.status === "npc_marketplace_busy") {
+                  logInfo(`[Capital Granary] ${capitalLabel}: ${capitalResult.message}`);
+                } else {
+                  logWarn(`[Capital Granary] ${capitalLabel}: ${capitalResult.message || capitalResult.status}`);
+                  recordAction({
+                    actionType: "npc.crop_convert",
+                    status: "failed",
+                    details: {
+                      villageId: capitalVillage.id,
+                      villageName: capitalVillage.name,
+                      watcher: "capital",
+                      status: capitalResult.status
+                    },
+                    errorMessage: capitalResult.message || capitalResult.status
+                  });
+                }
+              }
+            }
+
+            // Capital is handled by the dedicated watcher above (when enabled) —
+            // exclude it from the shared round-robin so it isn't double-checked.
+            const rrVillages = settings.capitalGranaryWatcherEnabled
+              ? (villageState.villages || []).filter((v) => !v.isCapital)
+              : villageState.villages;
+
             const result = await npcCropConvert.runNpcCropConvertRoundRobin(
               getPage(),
               settings,
-              villageState.villages,
+              rrVillages,
               { roundRobinIndex: npcCropConvertRoundRobinIndex }
             );
             if (Number.isFinite(Number(result.roundRobinIndex))) {
