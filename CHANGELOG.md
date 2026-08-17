@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.30] — 2026-08-17
+
+### Fixed
+
+- **Direct connection when no `PROXY_SERVER` is set** — Chromium now launches with an explicit `proxy: { server: "direct://" }` instead of no proxy option at all, so it can't silently inherit `http_proxy`/`https_proxy`/`HTTPS_PROXY` from the host shell/process. Only takes effect when `.env` leaves `PROXY_SERVER` empty; a configured proxy still applies as before.
+
 ## [1.8.29] — 2026-08-15
 
 ### Fixed

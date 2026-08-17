@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.29** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.30** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -32,6 +32,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### What's new in 1.8.x (summary)
 
+- **1.8.30:** Chromium launches with explicit direct-connection proxy option when `PROXY_SERVER` is unset, so it never inherits a host `http_proxy`/`https_proxy`.
 - **1.8.29:** Expansion finds Residence/Palace via village map (not hardcoded slot 25).
 - **1.8.28:** Farmlist send uses Nexian `farmlist_selectfull_*`; idle when nothing ready (no more false failures).
 - **1.8.27:** Village Status includes Account Overview troop table (`overview.php?t=4`) + account totals.

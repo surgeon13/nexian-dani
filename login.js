@@ -1238,7 +1238,9 @@ async function createSession(headless) {
 
   const launchChromium = (options) => chromium.launch({ args: launchArgs, ...options });
   const playwrightProxy = getPlaywrightProxy(settings);
-  const proxyLaunchOptions = playwrightProxy ? { proxy: playwrightProxy } : {};
+  // No PROXY_SERVER configured -> force a direct connection instead of leaving Chromium to
+  // inherit any http_proxy/https_proxy/HTTPS_PROXY env vars from the host process/shell.
+  const proxyLaunchOptions = { proxy: playwrightProxy || { server: "direct://" } };
 
   if (!effectiveHeadless) {
     browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
