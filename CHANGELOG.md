@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.34] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: leaked Android node silently skipped the real Node install** — `termux-proot-setup.sh`'s "is Node already present?" check only compared version numbers, so when Termux's own Bionic/Android node was reachable on `$PATH` inside the `proot-distro login` shell (proot does not always fully reset `PATH`), a high version number (e.g. v26) satisfied `>= 20` and the script skipped installing a real glibc Node — silently running `npm install` / `npx playwright install chromium` against the wrong Node and reproducing the exact `Unsupported platform: android` error the chroot exists to avoid. Now: `PATH` is forced to a chroot-only value at the top of the provisioning and run scripts, the presence check verifies `process.platform === 'linux'` (not just version), a failed post-install check hard-fails with the resolved node path/version/platform printed instead of continuing, and `node_modules`/`package-lock.json` are wiped before `npm install` to clear any previously-poisoned install. `termux-proot-run.sh` got the same `PATH`-forcing and a pre-flight platform check before launching `node login.js`.
+
 ## [1.8.33] — 2026-08-18
 
 ### Added

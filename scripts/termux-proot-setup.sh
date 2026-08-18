@@ -51,18 +51,34 @@ log "(This step does real work and can take several minutes on a phone.)"
 
 proot-distro login "$DISTRO" -- bash -lc "
   set -e
+  # Force a chroot-only PATH. proot does not always fully reset \$PATH on
+  # login, and Termux's own (Android/Bionic) node binary can otherwise
+  # still be found first — which looks like success but is actually the
+  # exact same 'Unsupported platform: android' failure in disguise.
+  export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   export DEBIAN_FRONTEND=noninteractive
   echo '[inside $DISTRO] apt-get update/upgrade'
   apt-get update -y
   apt-get install -y curl git ca-certificates gnupg build-essential
 
-  if ! command -v node >/dev/null 2>&1 || [ \"\$(node -v | sed -E 's/^v([0-9]+).*/\1/')\" -lt $NODE_MAJOR ]; then
+  node_is_valid() {
+    command -v node >/dev/null 2>&1 || return 1
+    node -e \"process.exit((process.platform === 'linux' && parseInt(process.versions.node, 10) >= $NODE_MAJOR) ? 0 : 1)\"
+  }
+
+  if node_is_valid; then
+    echo '[inside $DISTRO] Node.js already present and valid: '\"\$(command -v node)\"' '\"\$(node -v)\"' (platform='\"\$(node -p process.platform)\"')'
+  else
     echo '[inside $DISTRO] installing Node.js $NODE_MAJOR via NodeSource'
     curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
     apt-get install -y nodejs
-  else
-    echo '[inside $DISTRO] Node.js already present: '\"\$(node -v)\"
+    if ! node_is_valid; then
+      echo '[inside $DISTRO] node after install: '\"\$(command -v node || echo not-found)\"' '\"\$(node -v 2>&1 || true)\"' platform='\"\$(node -p process.platform 2>&1 || true)\"'' >&2
+      echo '[inside $DISTRO] FATAL: node still is not a valid Linux Node.js $NODE_MAJOR+ after install — refusing to continue with an Android node.' >&2
+      exit 1
+    fi
   fi
+  echo '[inside $DISTRO] using node: '\"\$(command -v node)\"' '\"\$(node -v)\"' platform='\"\$(node -p process.platform)\"
 
   if [ -d '$GUEST_PROJECT_DIR/.git' ]; then
     echo '[inside $DISTRO] repo already cloned at $GUEST_PROJECT_DIR — pulling latest'
@@ -73,6 +89,12 @@ proot-distro login "$DISTRO" -- bash -lc "
   fi
 
   cd '$GUEST_PROJECT_DIR'
+
+  # Wipe any node_modules/lockfile left over from a prior run that may have
+  # installed under a leaked non-Linux node (see node_is_valid above) —
+  # cheap safety net against a partially-poisoned install.
+  rm -rf node_modules package-lock.json
+
   echo '[inside $DISTRO] npm install'
   npm install --no-audit --no-fund
 
@@ -86,7 +108,7 @@ proot-distro login "$DISTRO" -- bash -lc "
     echo '[inside $DISTRO] creating .env.termux from the phone-friendly .env.termux.example template'
     cp '$GUEST_PROJECT_DIR/.env.termux.example' '$GUEST_PROJECT_DIR/.env.termux'
   fi
-" || die "Provisioning inside the $DISTRO chroot failed — see the [inside $DISTRO] output above for which step broke."
+" || die "Provisioning inside the $DISTRO chroot failed — see the [inside $DISTRO] output above for which step broke. If it failed at 'npx playwright install chromium' with 'Unsupported platform: android' again, that means proot is still leaking Termux's own node onto \$PATH even with PATH forced above — run 'proot-distro login $DISTRO -- bash -lc \"command -v node; node -p process.platform\"' by hand to see what it resolves to."
 
 log "Provisioning finished."
 echo

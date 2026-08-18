@@ -63,7 +63,16 @@ fi
 
 log "Launching: cd $GUEST_PROJECT_DIR && node ${NODE_ARGS[*]}"
 proot-distro login "$DISTRO" -- bash -lc "
+  # Force a chroot-only PATH — see the same note in termux-proot-setup.sh.
+  # Without this, a leaked Termux/Android node can silently run the bot
+  # against the wrong Node build (surfaces as the exact same Playwright
+  # 'Unsupported platform: android' error we're specifically avoiding here).
+  export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   cd '$GUEST_PROJECT_DIR' || exit 1
+  if ! command -v node >/dev/null 2>&1 || ! node -e \"process.exit(process.platform === 'linux' ? 0 : 1)\"; then
+    echo '[termux-proot-run] FATAL: node inside the chroot is missing or not a Linux build (found: '\"\$(command -v node || echo none)\"' platform='\"\$(node -p process.platform 2>&1 || echo '?')\"'). Re-run scripts/termux-proot-setup.sh.' >&2
+    exit 1
+  fi
   args=($(printf '%q ' "${NODE_ARGS[@]}"))
   # Resolve the --env-file-if-present=... placeholder now that we're
   # actually inside the chroot and can see its filesystem.
