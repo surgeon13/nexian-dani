@@ -79,7 +79,13 @@ CLONE_BRANCH_ARGS=""
 BRANCH_CHECKOUT_CMD="true"
 if [ -n "$REPO_BRANCH" ]; then
   CLONE_BRANCH_ARGS="--branch '$REPO_BRANCH'"
-  BRANCH_CHECKOUT_CMD="git fetch origin '$REPO_BRANCH' && git checkout '$REPO_BRANCH' || echo '[inside $DISTRO] could not fetch/checkout branch $REPO_BRANCH — continuing with whatever is checked out'"
+  # git reset --hard before switching: npm install regularly leaves
+  # package-lock.json locally modified, which previously made 'git checkout'
+  # fail outright (a real user hit exactly this). This chroot copy is a
+  # deployment target, not a workspace with precious local edits, so
+  # discarding tracked-file changes here is safe — .env/.env.termux are
+  # gitignored and untouched by this.
+  BRANCH_CHECKOUT_CMD="git fetch origin '$REPO_BRANCH' && git reset --hard >/dev/null 2>&1 && git checkout -B '$REPO_BRANCH' 'origin/$REPO_BRANCH' || echo '[inside $DISTRO] could not fetch/checkout branch $REPO_BRANCH — continuing with whatever is checked out'"
 fi
 
 proot-distro login "$DISTRO" -- bash -lc "

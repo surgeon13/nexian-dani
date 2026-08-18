@@ -77,11 +77,17 @@ done
 
 SYNC_CMD="true"
 if [[ "$DO_SYNC" == "true" ]]; then
+  # git reset --hard before switching/pulling: npm install regularly leaves
+  # package-lock.json locally modified inside the chroot, which previously
+  # made 'git checkout'/'git pull' fail outright (a real user hit exactly
+  # this). This chroot copy is a deployment target, not a workspace with
+  # precious local edits, so discarding tracked-file changes here is safe —
+  # .env/.env.termux are gitignored and untouched by this.
   if [ -n "$REPO_BRANCH" ]; then
-    SYNC_CMD="if [ -d .git ]; then git fetch origin '$REPO_BRANCH' && git checkout '$REPO_BRANCH' && git pull --ff-only || echo '[termux-proot-run] chroot git sync failed/skipped — continuing with whatever is checked out ('\"\$(git rev-parse --abbrev-ref HEAD 2>&1)\"')'; fi"
+    SYNC_CMD="if [ -d .git ]; then git fetch origin '$REPO_BRANCH' && git reset --hard >/dev/null 2>&1 && git checkout -B '$REPO_BRANCH' 'origin/$REPO_BRANCH' || echo '[termux-proot-run] chroot git sync failed/skipped — continuing with whatever is checked out ('\"\$(git rev-parse --abbrev-ref HEAD 2>&1)\"')'; fi"
     log "Will sync the chroot's checkout to branch '$REPO_BRANCH' before launching (pass --no-sync to skip)."
   else
-    SYNC_CMD="if [ -d .git ]; then git pull --ff-only || echo '[termux-proot-run] chroot git pull failed/skipped — continuing with existing checkout'; fi"
+    SYNC_CMD="if [ -d .git ]; then git reset --hard >/dev/null 2>&1 && git pull --ff-only || echo '[termux-proot-run] chroot git pull failed/skipped — continuing with existing checkout'; fi"
     log "Could not detect a branch from the Termux-side checkout — will just 'git pull' the chroot's current branch before launching (pass --no-sync to skip)."
   fi
 fi

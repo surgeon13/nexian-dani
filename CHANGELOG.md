@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.40] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: git sync silently failed whenever `package-lock.json` had local changes** — both `termux-proot-setup.sh`'s branch checkout and the auto-sync added to `termux-proot-run.sh` in 1.8.39 used plain `git checkout`/`git pull`, which abort with "local changes would be overwritten" the moment `npm install` (which runs during setup, and can leave `package-lock.json` modified) has touched a tracked file — exactly the conflict a real user hit manually days earlier, now happening silently inside the *automatic* sync instead, defeating its whole purpose. Both now `git reset --hard` (discarding tracked-file changes — safe, this chroot copy is a deployment target, not a workspace with precious local edits; `.env`/`.env.termux` are gitignored and untouched) before `git checkout -B <branch> origin/<branch>`, which cannot be blocked by local modifications.
+
+  Verified by reproducing the exact failure first (dirty `package-lock.json` + stale commit, real local git repos — old command: aborts, exit 1, confirmed identical to the reported symptom) and then confirming the hardened command succeeds against the identical dirty state (exit 0, correctly resets and fast-forwards to the latest remote commit).
+
 ## [1.8.39] — 2026-08-18
 
 ### Fixed
