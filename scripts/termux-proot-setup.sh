@@ -28,6 +28,22 @@ NODE_MAJOR="20"
 log() { echo "[termux-proot-setup] $*"; }
 die() { echo "[termux-proot-setup] ERROR: $*" >&2; exit 1; }
 
+# Clone/checkout the SAME branch as the Termux-side checkout this script is
+# running from, not whatever GitHub's default branch happens to be. Without
+# this, the chroot's independent git clone can silently diverge from what
+# you're actually working from — e.g. missing files that only exist on an
+# unmerged feature branch (this bit a real user: the chroot cloned main,
+# which doesn't have .env.termux.example, so .env.termux was never created).
+# Override with NEXIAN_REPO_BRANCH= if you deliberately want something else.
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_BRANCH="${NEXIAN_REPO_BRANCH:-$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
+if [ -z "$REPO_BRANCH" ] || [ "$REPO_BRANCH" = "HEAD" ]; then
+  log "Could not detect a branch from the Termux-side checkout at $SCRIPT_DIR (detached HEAD or not a git repo) — the chroot clone will use GitHub's default branch instead."
+  REPO_BRANCH=""
+else
+  log "Termux-side checkout is on branch '$REPO_BRANCH' — the chroot clone/checkout will match it."
+fi
+
 if [[ "${PREFIX:-}" != *com.termux* ]]; then
   die "This script must be run inside Termux (\$PREFIX does not look like a Termux prefix). Detected PREFIX='${PREFIX:-<unset>}'."
 fi
@@ -58,6 +74,13 @@ fi
 
 log "Provisioning inside the $DISTRO chroot: apt deps, Node.js $NODE_MAJOR, git clone, npm install, Playwright Chromium + OS deps..."
 log "(This step does real work and can take several minutes on a phone.)"
+
+CLONE_BRANCH_ARGS=""
+BRANCH_CHECKOUT_CMD="true"
+if [ -n "$REPO_BRANCH" ]; then
+  CLONE_BRANCH_ARGS="--branch '$REPO_BRANCH'"
+  BRANCH_CHECKOUT_CMD="git fetch origin '$REPO_BRANCH' && git checkout '$REPO_BRANCH' || echo '[inside $DISTRO] could not fetch/checkout branch $REPO_BRANCH — continuing with whatever is checked out'"
+fi
 
 proot-distro login "$DISTRO" -- bash -lc "
   set -e
@@ -91,11 +114,13 @@ proot-distro login "$DISTRO" -- bash -lc "
   echo '[inside $DISTRO] using node: '\"\$(command -v node)\"' '\"\$(node -v)\"' platform='\"\$(node -p process.platform)\"
 
   if [ -d '$GUEST_PROJECT_DIR/.git' ]; then
-    echo '[inside $DISTRO] repo already cloned at $GUEST_PROJECT_DIR — pulling latest'
-    git -C '$GUEST_PROJECT_DIR' pull --ff-only || echo '[inside $DISTRO] pull failed/skipped (local changes?) — continuing with existing checkout'
+    echo '[inside $DISTRO] repo already cloned at $GUEST_PROJECT_DIR — syncing branch and pulling latest'
+    cd '$GUEST_PROJECT_DIR'
+    $BRANCH_CHECKOUT_CMD
+    git pull --ff-only || echo '[inside $DISTRO] pull failed/skipped (local changes?) — continuing with existing checkout'
   else
-    echo '[inside $DISTRO] cloning $REPO_URL into $GUEST_PROJECT_DIR'
-    git clone '$REPO_URL' '$GUEST_PROJECT_DIR'
+    echo '[inside $DISTRO] cloning $REPO_URL into $GUEST_PROJECT_DIR (branch: ${REPO_BRANCH:-default})'
+    git clone $CLONE_BRANCH_ARGS '$REPO_URL' '$GUEST_PROJECT_DIR'
   fi
 
   cd '$GUEST_PROJECT_DIR'

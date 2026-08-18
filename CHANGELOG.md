@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.36] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: chroot's git clone silently diverged from the Termux-side branch** — `termux-proot-setup.sh` cloned the repo inside the chroot with no branch specified, so it always got GitHub's default branch regardless of what branch the user actually had checked out in Termux. In practice this meant `.env.termux` was never created (the chroot's `main` checkout doesn't have `.env.termux.example`, which only exists on an unmerged feature branch), with no error — the script just silently skipped that step. Now: the script detects the current branch of the Termux-side checkout it's running from (`git rev-parse --abbrev-ref HEAD`, override with `NEXIAN_REPO_BRANCH=`) and clones/checks out the same branch inside the chroot, keeping both copies in sync. Falls back to GitHub's default branch, unchanged, if detection isn't possible (detached HEAD, not a git repo).
+
 ## [1.8.35] — 2026-08-18
 
 ### Fixed
