@@ -81,6 +81,11 @@ proot-distro login "$DISTRO" -- bash -lc "
 
   echo '[inside $DISTRO] npx playwright install-deps chromium (apt system libs Chromium needs)'
   npx playwright install-deps chromium
+
+  if [ ! -f '$GUEST_PROJECT_DIR/.env.termux' ] && [ -f '$GUEST_PROJECT_DIR/.env.termux.example' ]; then
+    echo '[inside $DISTRO] creating .env.termux from the phone-friendly .env.termux.example template'
+    cp '$GUEST_PROJECT_DIR/.env.termux.example' '$GUEST_PROJECT_DIR/.env.termux'
+  fi
 " || die "Provisioning inside the $DISTRO chroot failed — see the [inside $DISTRO] output above for which step broke."
 
 log "Provisioning finished."
@@ -88,16 +93,29 @@ echo
 log "Next steps:"
 cat <<EOF
 
-1) Copy your .env into the chroot's copy of the repo (it is a SEPARATE
-   filesystem from your Termux-side checkout — edits to one do not affect
-   the other). From Termux:
+1) A phone-friendly '$GUEST_PROJECT_DIR/.env.termux' was created from
+   .env.termux.example — same as .env.example but with several loop
+   intervals relaxed (mostly 2-4x longer) to cut how often Chromium wakes
+   up through proot's overhead. It still has PLACEHOLDER credentials.
+   Fill in real NEXIAN_USERNAME / NEXIAN_PASSWORD / GAME_HOST by pulling
+   them from your Termux-side .env (a SEPARATE filesystem from the chroot
+   copy — edits to one do not affect the other), without clobbering the
+   relaxed intervals:
 
-     proot-distro login $DISTRO --bind "\$HOME:/root/termux-home" -- \\
-       cp /root/termux-home/nexian-dani/.env $GUEST_PROJECT_DIR/.env
+     proot-distro login $DISTRO --bind "\$HOME:/root/termux-home" -- bash -lc '
+       SRC=/root/termux-home/nexian-dani/.env
+       DST=$GUEST_PROJECT_DIR/.env.termux
+       for key in NEXIAN_USERNAME NEXIAN_PASSWORD GAME_HOST; do
+         val=\$(grep -E "^\${key}=" "\$SRC" | tail -1)
+         [ -z "\$val" ] && continue
+         grep -qE "^\${key}=" "\$DST" \\
+           && sed -i "s|^\${key}=.*|\$val|" "\$DST" \\
+           || echo "\$val" >> "\$DST"
+       done
+     '
 
    (If your proot-distro version's 'login' does not support --bind the same
-   way, just re-copy the credentials by hand — 'proot-distro login $DISTRO'
-   then create $GUEST_PROJECT_DIR/.env from $GUEST_PROJECT_DIR/.env.example.)
+   way, just edit $GUEST_PROJECT_DIR/.env.termux by hand instead.)
 
 2) Grab a wake lock so Termux is less likely to be killed in the background,
    and disable Android's battery optimization for Termux in
@@ -106,12 +124,14 @@ cat <<EOF
      termux-wake-lock
 
 3) Run it (headless — there is no display here unless you separately set up
-   termux-x11):
+   termux-x11). scripts/termux-proot-run.sh does this automatically and
+   uses .env.termux when present (falls back to .env otherwise):
 
-     proot-distro login $DISTRO -- bash -lc "cd $GUEST_PROJECT_DIR && node login.js"
+     bash scripts/termux-proot-run.sh
 
-   Or use scripts/termux-proot-run.sh for a one-liner that does the wake-lock
-   + login together.
+   or by hand:
+
+     proot-distro login $DISTRO -- bash -lc "cd $GUEST_PROJECT_DIR && node login.js --env-file=.env.termux"
 
 Known limitations (read before relying on this for real use):
   - Chromium runs through proot's syscall-translation layer — expect it to

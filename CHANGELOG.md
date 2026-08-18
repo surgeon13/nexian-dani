@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.33] — 2026-08-18
+
+### Added
+
+- **`.env.termux.example`** — phone-friendly config profile for the Android (Termux) path: same as `.env.example` but with several loop intervals relaxed 2-4x (builder loop, celebrations, NPC crop convert, overflow guard, Top 10 tracking, session rest) to reduce how often Chromium does real work through `proot`'s syscall-translation overhead, plus `DASHBOARD_OPEN_BROWSER=false` (nothing to auto-open in a headless chroot).
+- `scripts/termux-proot-setup.sh` now creates `.env.termux` from that template automatically and prints a copy-paste command to merge real credentials in from the Termux-side `.env` without overwriting the relaxed intervals.
+- `scripts/termux-proot-run.sh` now uses `.env.termux` automatically when present in the chroot (falls back to plain `.env`; an explicit `--env-file=` argument still wins).
+
 ## [1.8.32] — 2026-08-18
 
 ### Added

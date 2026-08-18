@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.32** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.33** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -411,10 +411,10 @@ bash scripts/termux-proot-setup.sh   # one-time: installs proot-distro + Ubuntu,
                                       # the chroot, npm install, Playwright + deps
 ```
 
-Then copy your `.env` into the chroot's copy of the repo (it's a separate filesystem — see the script's printed instructions) and run it:
+Setup also creates `.env.termux` from **`.env.termux.example`** — same as `.env.example` but with several loop intervals relaxed (mostly 2-4x longer: builder loop, celebrations, NPC crop convert, overflow guard, Top 10 tracking, session rest) to cut how often Chromium wakes up and does real work through `proot`'s overhead. Fill in real credentials there (the setup script prints a copy-paste command that merges them in from your Termux-side `.env` without clobbering the relaxed intervals — the chroot copy of the repo is a separate filesystem), then run it:
 
 ```bash
-bash scripts/termux-proot-run.sh             # node login.js, headless
+bash scripts/termux-proot-run.sh             # node login.js — uses .env.termux automatically when present
 bash scripts/termux-proot-run.sh --dashboard # node login.js --dashboard --keep-open
 ```
 

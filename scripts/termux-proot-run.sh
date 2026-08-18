@@ -34,6 +34,7 @@ else
 fi
 
 NODE_ARGS=("login.js")
+HAS_ENV_FILE_ARG=false
 for arg in "$@"; do
   case "$arg" in
     --headed)
@@ -43,14 +44,45 @@ for arg in "$@"; do
     --dashboard)
       NODE_ARGS+=("--dashboard" "--keep-open")
       ;;
+    --env-file=*)
+      HAS_ENV_FILE_ARG=true
+      NODE_ARGS+=("$arg")
+      ;;
     *)
       NODE_ARGS+=("$arg")
       ;;
   esac
 done
 
+# Prefer the phone-friendly .env.termux (relaxed loop intervals, see
+# .env.termux.example) over plain .env when it exists in the chroot copy of
+# the repo, unless the caller already passed their own --env-file=.
+if [[ "$HAS_ENV_FILE_ARG" == "false" ]]; then
+  NODE_ARGS+=("--env-file-if-present=.env.termux")
+fi
+
 log "Launching: cd $GUEST_PROJECT_DIR && node ${NODE_ARGS[*]}"
-proot-distro login "$DISTRO" -- bash -lc "cd '$GUEST_PROJECT_DIR' && node ${NODE_ARGS[*]}"
+proot-distro login "$DISTRO" -- bash -lc "
+  cd '$GUEST_PROJECT_DIR' || exit 1
+  args=($(printf '%q ' "${NODE_ARGS[@]}"))
+  # Resolve the --env-file-if-present=... placeholder now that we're
+  # actually inside the chroot and can see its filesystem.
+  resolved=()
+  for a in \"\${args[@]}\"; do
+    case \"\$a\" in
+      --env-file-if-present=*)
+        f=\"\${a#--env-file-if-present=}\"
+        if [ -f \"\$f\" ]; then
+          resolved+=(\"--env-file=\$f\")
+        fi
+        ;;
+      *)
+        resolved+=(\"\$a\")
+        ;;
+    esac
+  done
+  exec node \"\${resolved[@]}\"
+"
 STATUS=$?
 
 if command -v termux-wake-unlock >/dev/null 2>&1; then
