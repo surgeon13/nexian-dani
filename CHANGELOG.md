@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.32] — 2026-08-18
+
+### Added
+
+- **Android (Termux) support, experimental** — `scripts/termux-proot-setup.sh` (`npm run termux:setup`) provisions a real glibc Linux userland on-device via `proot-distro` (Ubuntu chroot inside Termux, no root), since Termux's own Bionic-libc environment cannot run Playwright at all (`Unsupported platform: android`, and even bypassing that check, a glibc Chromium binary won't load under Bionic). Installs Node.js + the repo + Playwright/Chromium inside the chroot. `scripts/termux-proot-run.sh` (`npm run termux:run`) launches it with a `termux-wake-lock` to reduce (not eliminate) Android backgrounding kills. Documented in README with explicit limitations — this is not a substitute for running on a PC/VPS, which remains the recommended 24/7 path.
+
 ## [1.8.31] — 2026-08-17
 
 ### Added

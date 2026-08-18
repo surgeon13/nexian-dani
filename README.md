@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.31** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.32** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -55,6 +55,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 
 - **Node.js 18+**
 - **Windows**, **macOS**, or **Linux** (launch scripts differ; see Troubleshooting.)
+- **Android**, experimental, via Termux + `proot-distro` only — see [Android (Termux)](#android-termux--experimental).
 
 ---
 
@@ -79,6 +80,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `setup-pc.cmd` | Windows: npm install + Playwright Chromium. |
 | `.cursor/environment.json` | Cursor Cloud: install deps + auto-start 24/7 stack on agent boot. |
 | `scripts/cursor-cloud-*.sh` | Cloud install / start / ensure helpers (`npm run cursor:*`). |
+| `scripts/termux-proot-*.sh` | Android (Termux) experimental setup / run helpers via `proot-distro` (`npm run termux:*`). |
 | `AGENTS.md` | Cloud Agent keep-alive + PC host + Automation instructions. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers); Palace on realm host. |
@@ -144,6 +146,8 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run setup:pc` / `setup-pc.cmd` | Install deps + Playwright Chromium on a PC |
 | `npm run cursor:ensure` | Cursor Cloud health check / restart (`cursor-cloud-ensure.sh`) |
 | `npm run cursor:start` | Materialize secrets + start 24/7 stack |
+| `npm run termux:setup` | **Android (Termux), experimental:** one-time `proot-distro` Ubuntu + Node + Playwright setup |
+| `npm run termux:run` | **Android (Termux), experimental:** launch inside the `proot-distro` chroot |
 | `npm run playwright:install` | Install Playwright Chromium only |
 | `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `session-presence.json`, `templates/progress.json` |
 
@@ -391,6 +395,36 @@ Use **Ctrl+F5** once after updates to refresh cached CSS/JS.
 Dashboard OOM crashes were a **software bug** (fixed in v1.5.5+), not limited to Raspberry Pi — they could happen on a strong PC after the bot ran for hours. Causes included loading entire `log.jsonl` files into RAM, sending full troop payloads over SSE every few seconds, and rebuilding status snapshots on every loop tick.
 
 After `git pull`, restart the dashboard. Log rotation (v1.5.7+) keeps `log.jsonl` small automatically; older logs live in `log-archive/`. You can still run `npm run clean:runtime` to wipe the active session files. Prefer one dashboard browser tab.
+
+---
+
+## Android (Termux) — experimental
+
+**Termux by itself cannot run this.** Playwright's browser downloader explicitly refuses Android (`Unsupported platform: android` from `playwright-core`), and even bypassing that, Termux's Bionic libc cannot execute Playwright's glibc-built Chromium binary. This is not a bug in this repo — it's Playwright and Termux never having been designed to work together for a real browser instance.
+
+The only working path is a real glibc Linux userland on-device via [`proot-distro`](https://github.com/termux/proot-distro) (installs an Ubuntu rootfs inside Termux, no root required). Node/Playwright/Chromium run *inside that chroot*, not in Termux directly.
+
+```bash
+pkg install git -y   # if you haven't already cloned this repo under Termux
+bash scripts/termux-proot-setup.sh   # one-time: installs proot-distro + Ubuntu,
+                                      # Node.js, clones/updates the repo inside
+                                      # the chroot, npm install, Playwright + deps
+```
+
+Then copy your `.env` into the chroot's copy of the repo (it's a separate filesystem — see the script's printed instructions) and run it:
+
+```bash
+bash scripts/termux-proot-run.sh             # node login.js, headless
+bash scripts/termux-proot-run.sh --dashboard # node login.js --dashboard --keep-open
+```
+
+(`npm run termux:setup` / `npm run termux:run` are the same two scripts.)
+
+**Read this before relying on it:**
+- Chromium runs through `proot`'s syscall-translation layer — slower and occasionally flakier than a native Linux host.
+- Android will still try to kill backgrounded apps to reclaim memory. `termux-wake-lock` (used automatically by `termux-proot-run.sh`) plus setting Termux's battery mode to **Unrestricted** (Settings → Apps → Termux → Battery) reduces but does not eliminate this.
+- `--headed` has nowhere to render unless you separately set up [termux-x11](https://github.com/termux/termux-x11).
+- This whole combination is unofficial — neither Playwright nor `proot-distro` claims to support it. Treat it as experimental, not a replacement for the PC/VPS path above, which remains the recommended way to run this 24/7.
 
 ---
 
