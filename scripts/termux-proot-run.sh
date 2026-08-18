@@ -6,6 +6,7 @@
 #   bash scripts/termux-proot-run.sh                # node login.js (headless)
 #   bash scripts/termux-proot-run.sh --dashboard     # node login.js --dashboard --keep-open
 #   bash scripts/termux-proot-run.sh --headed        # only works with termux-x11 set up separately
+#   bash scripts/termux-proot-run.sh --no-sync       # skip the chroot git sync below (faster restarts)
 #
 # See scripts/termux-proot-setup.sh for the one-time setup this depends on,
 # and its "Known limitations" section before relying on this for real use.
@@ -26,6 +27,22 @@ if ! command -v proot-distro >/dev/null 2>&1; then
   die "proot-distro not found. Run scripts/termux-proot-setup.sh first."
 fi
 
+# The chroot at $GUEST_PROJECT_DIR is a SEPARATE git checkout from the
+# Termux-side one this script itself lives in — they do not stay in sync
+# automatically. Pulling updates on the Termux side (e.g. to get this very
+# script's latest version) does nothing to the chroot's copy of login.js,
+# which is what actually runs. This bit real users repeatedly (stale flag
+# names, stale bugfixes) until this sync was added: by default, every run
+# fetches/checks-out/pulls the same branch as the Termux-side checkout
+# before launching, so the two can't silently drift apart. Pass --no-sync to
+# skip this (e.g. for faster restarts once you know both sides match, or if
+# you're offline).
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_BRANCH="${NEXIAN_REPO_BRANCH:-$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
+if [ -z "$REPO_BRANCH" ] || [ "$REPO_BRANCH" = "HEAD" ]; then
+  REPO_BRANCH=""
+fi
+
 if command -v termux-wake-lock >/dev/null 2>&1; then
   log "Acquiring wake lock (termux-wake-lock) so Termux is less likely to be killed in the background..."
   termux-wake-lock || log "termux-wake-lock failed — continuing anyway, but the process is more likely to be killed when the screen locks."
@@ -35,6 +52,7 @@ fi
 
 NODE_ARGS=("login.js")
 HAS_ENV_FILE_ARG=false
+DO_SYNC=true
 for arg in "$@"; do
   case "$arg" in
     --headed)
@@ -48,11 +66,25 @@ for arg in "$@"; do
       HAS_ENV_FILE_ARG=true
       NODE_ARGS+=("$arg")
       ;;
+    --no-sync)
+      DO_SYNC=false
+      ;;
     *)
       NODE_ARGS+=("$arg")
       ;;
   esac
 done
+
+SYNC_CMD="true"
+if [[ "$DO_SYNC" == "true" ]]; then
+  if [ -n "$REPO_BRANCH" ]; then
+    SYNC_CMD="if [ -d .git ]; then git fetch origin '$REPO_BRANCH' && git checkout '$REPO_BRANCH' && git pull --ff-only || echo '[termux-proot-run] chroot git sync failed/skipped — continuing with whatever is checked out ('\"\$(git rev-parse --abbrev-ref HEAD 2>&1)\"')'; fi"
+    log "Will sync the chroot's checkout to branch '$REPO_BRANCH' before launching (pass --no-sync to skip)."
+  else
+    SYNC_CMD="if [ -d .git ]; then git pull --ff-only || echo '[termux-proot-run] chroot git pull failed/skipped — continuing with existing checkout'; fi"
+    log "Could not detect a branch from the Termux-side checkout — will just 'git pull' the chroot's current branch before launching (pass --no-sync to skip)."
+  fi
+fi
 
 # Default to the phone-friendly .env.termux unless the caller passed their
 # own --nexian-env-file=. This no longer needs to check whether the file
@@ -80,6 +112,7 @@ proot-distro login "$DISTRO" -- bash -lc "
   # 'Unsupported platform: android' error we're specifically avoiding here).
   export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   cd '$GUEST_PROJECT_DIR' || exit 1
+  $SYNC_CMD
   if ! command -v node >/dev/null 2>&1 || ! node -e \"process.exit(process.platform === 'linux' ? 0 : 1)\"; then
     echo '[termux-proot-run] FATAL: node inside the chroot is missing or not a Linux build (found: '\"\$(command -v node || echo none)\"' platform='\"\$(node -p process.platform 2>&1 || echo '?')\"'). Re-run scripts/termux-proot-setup.sh.' >&2
     exit 1

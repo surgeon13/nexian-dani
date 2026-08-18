@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.39] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: the chroot's checkout silently drifted from the Termux-side one, again** — `termux-proot-run.sh` runs from Termux, but the actual `login.js` it launches lives in a completely separate git checkout inside the chroot (`/root/nexian-dani`). Pulling updates on the Termux side (to pick up this very script's fixes) did nothing to the chroot's copy, so a real user's chroot kept running a stale pre-`--nexian-env-file=` `login.js` — reproducing the "Missing credentials... in .env" symptom a third time even after both the underlying flag-collision bug and the branch-detection fix (1.8.36/1.8.38) had already landed, purely because the chroot itself was never told to update.
+
+  `termux-proot-run.sh` now syncs the chroot's checkout to the same branch as the Termux-side one (fetch/checkout/pull, same branch-detection as `termux-proot-setup.sh`) before every launch, by default. Sync failure (offline, no matching remote) is non-fatal — logs a warning and continues with whatever's checked out, same as `termux-proot-setup.sh`'s existing behavior. Pass `--no-sync` to skip it (faster restarts once both sides are known to match).
+
+  Verified via real execution (PATH-mocked `proot-distro`, not sourced) confirming the generated inner script for both the default and `--no-sync` paths, plus standalone functional tests of the actual git fetch/checkout/pull chain against real local repos — both the success path (branch switch across a working remote) and the failure path (no matching remote — falls through to the non-fatal warning, does not crash).
+
 ## [1.8.38] — 2026-08-18
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.38** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.39** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -419,6 +419,8 @@ Setup also creates `.env.termux` from **`.env.termux.example`** — same as `.en
 bash scripts/termux-proot-run.sh             # node login.js — uses .env.termux automatically when present
 bash scripts/termux-proot-run.sh --dashboard # node login.js --dashboard --keep-open
 ```
+
+The chroot at `/root/nexian-dani` is a **separate git checkout** from the Termux-side one — pulling updates in Termux (e.g. to get a newer `termux-proot-run.sh`) does not update the chroot's copy of `login.js` on its own. To avoid the two silently drifting apart, `termux-proot-run.sh` fetches/checks-out/pulls the same branch as the Termux-side checkout inside the chroot before every launch. Pass `--no-sync` to skip that (faster restarts once you know both sides match, or if you're offline).
 
 (`npm run termux:setup` / `npm run termux:run` are the same two scripts.)
 
