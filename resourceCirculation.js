@@ -2013,11 +2013,88 @@ async function runOverflowGuardRoundRobin(getPage, settings, villages, state = {
   };
 }
 
+/**
+ * Overflow guard, all non-pivot villages checked every tick — not just one
+ * per round-robin turn. A pure round-robin here meant each village was only
+ * actually checked once every (villageCount * loopInterval), which is far
+ * too infrequent to catch a warehouse/granary filling up between checks on
+ * an account with more than a couple of villages — surplus would sit there
+ * uncapped until its turn came around. Overflow guard's whole job is
+ * defensive (prevent a fill-up), so unlike e.g. Celebrations RR (where you
+ * deliberately want to space actions out one at a time), checking
+ * everyone every tick is the correct default here. Sequential, not
+ * parallel: every check shares the same browser page.
+ */
+async function runOverflowGuardAllVillages(getPage, settings, villages, state = {}) {
+  const pivot = resolvePivotVillage(villages, settings, null);
+  const candidates = (Array.isArray(villages) ? villages : []).filter((v) => {
+    if (!(Number.isFinite(Number(v && v.id)) && Number(v.id) > 0)) {
+      return false;
+    }
+    if (v.underAttack) {
+      return false;
+    }
+    if (pivot && Number(v.id) === Number(pivot.id)) {
+      return false;
+    }
+    return true;
+  });
+
+  if (!candidates.length) {
+    return {
+      status: "overflow_no_candidates",
+      message: "No villages available for overflow guard.",
+      results: []
+    };
+  }
+
+  const results = [];
+  for (const village of candidates) {
+    let result;
+    try {
+      result = await guardOverflowResourcesFromVillage({
+        getPage,
+        settings,
+        sourceVillage: village,
+        villages,
+        pivotVillage: pivot,
+        log: typeof state.log === "function" ? state.log : null
+      });
+    } catch (error) {
+      if (isResourceExhaustionError(error)) {
+        throw error;
+      }
+      // One village's transient failure (closed page, nav error, etc.)
+      // should not stop the rest of the batch from being checked.
+      result = {
+        status: "overflow_failed",
+        message: error && error.message ? error.message : String(error)
+      };
+    }
+    results.push({
+      ...result,
+      checkedVillageId: village.id,
+      checkedVillageName: village.name || null,
+      pivotVillageId: pivot ? pivot.id : null,
+      pivotVillageName: pivot ? pivot.name || null : null
+    });
+  }
+
+  return {
+    status: "overflow_batch_complete",
+    results,
+    candidateCount: candidates.length,
+    pivotVillageId: pivot ? pivot.id : null,
+    pivotVillageName: pivot ? pivot.name || null : null
+  };
+}
+
 module.exports = {
   circulateResourcesForBuild,
   evacuateResourcesFromVillage,
   guardOverflowResourcesFromVillage,
   runOverflowGuardRoundRobin,
+  runOverflowGuardAllVillages,
   resolvePivotVillage,
   computeDistance,
   formatResourceShort,

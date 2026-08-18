@@ -77,6 +77,13 @@ function logError(message) {
   console.error(colorTaggedMessage(message, ANSI.red, ANSI.bold));
 }
 
+// For urgent-but-not-crashed situations worth calling out in red (e.g. a
+// resource overflow guard being blocked, so surplus keeps accumulating) —
+// distinct from logError, which is for actual failures and goes to stderr.
+function logDanger(message) {
+  console.log(colorTaggedMessage(message, ANSI.red, ANSI.bold));
+}
+
 class MenuInterruptError extends Error {
   constructor(message) {
     super(message);
@@ -9194,6 +9201,50 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return next;
     };
 
+    const logOverflowGuardResult = (result) => {
+      const label = result.checkedVillageName
+        ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+        : result.checkedVillageId
+          ? `vid=${result.checkedVillageId}`
+          : "?";
+      if (result.status === "overflow_sent") {
+        logSuccess(`[Overflow Guard] ${label}: ${result.message}`);
+        recordAction({
+          actionType: "resource.overflow_guard",
+          status: "success",
+          details: {
+            villageId: result.checkedVillageId,
+            villageName: result.checkedVillageName,
+            pivotVillageId: result.pivotVillageId,
+            pivotVillageName: result.pivotVillageName,
+            sent: result.sent || null,
+            distance: result.distance
+          }
+        });
+      } else if (result.status === "overflow_too_far") {
+        // Surplus is sitting there and cannot be relieved — worth calling
+        // out in red rather than burying it as routine info, since this
+        // village's warehouse/granary will just keep filling up.
+        logDanger(`[Overflow Guard] ${label}: ${result.message}`);
+      } else if (result.status === "overflow_ok" || result.status === "overflow_skipped") {
+        logInfo(`[Overflow Guard] ${label}: ${result.message}`);
+      } else if (result.status === "overflow_no_candidates") {
+        logWarn(`[Overflow Guard] ${result.message}`);
+      } else {
+        logDanger(`[Overflow Guard] ${label}: ${result.message || result.status}`);
+        recordAction({
+          actionType: "resource.overflow_guard",
+          status: "failed",
+          details: {
+            villageId: result.checkedVillageId,
+            villageName: result.checkedVillageName,
+            status: result.status
+          },
+          errorMessage: result.message || result.status
+        });
+      }
+    };
+
     const scheduleOverflowGuardLoop = (options = {}) => {
       cancelOverflowGuardLoopTimer();
       if (done || settings.resourceOverflowGuardEnabled === false) {
@@ -9250,57 +9301,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
           let deferFullReschedule = false;
           await runAction("Overflow Guard", async () => {
-            const result = await resourceCirculation.runOverflowGuardRoundRobin(
-              getPage,
-              settings,
-              villageState.villages,
-              {
-                roundRobinIndex: overflowGuardRoundRobinIndex,
-                log: (msg) => logInfo(msg)
-              }
-            );
-            if (Number.isFinite(Number(result.roundRobinIndex))) {
-              overflowGuardRoundRobinIndex = Number(result.roundRobinIndex);
-            }
-            const label = result.checkedVillageName
-              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
-              : result.checkedVillageId
-                ? `vid=${result.checkedVillageId}`
-                : "?";
-            if (result.status === "overflow_sent") {
-              logSuccess(`[Overflow Guard] ${label}: ${result.message}`);
-              recordAction({
-                actionType: "resource.overflow_guard",
-                status: "success",
-                details: {
-                  villageId: result.checkedVillageId,
-                  villageName: result.checkedVillageName,
-                  pivotVillageId: result.pivotVillageId,
-                  pivotVillageName: result.pivotVillageName,
-                  sent: result.sent || null,
-                  distance: result.distance
+            if (settings.resourceOverflowCheckAllEachTick !== false) {
+              const batch = await resourceCirculation.runOverflowGuardAllVillages(
+                getPage,
+                settings,
+                villageState.villages,
+                { log: (msg) => logInfo(msg) }
+              );
+              if (batch.status === "overflow_no_candidates") {
+                logWarn(`[Overflow Guard] ${batch.message}`);
+              } else {
+                for (const result of batch.results) {
+                  logOverflowGuardResult(result);
                 }
-              });
-            } else if (
-              result.status === "overflow_ok" ||
-              result.status === "overflow_skipped" ||
-              result.status === "overflow_too_far"
-            ) {
-              logInfo(`[Overflow Guard] ${label}: ${result.message}`);
-            } else if (result.status === "overflow_no_candidates") {
-              logWarn(`[Overflow Guard] ${result.message}`);
+              }
             } else {
-              logWarn(`[Overflow Guard] ${label}: ${result.message || result.status}`);
-              recordAction({
-                actionType: "resource.overflow_guard",
-                status: "failed",
-                details: {
-                  villageId: result.checkedVillageId,
-                  villageName: result.checkedVillageName,
-                  status: result.status
-                },
-                errorMessage: result.message || result.status
-              });
+              const result = await resourceCirculation.runOverflowGuardRoundRobin(
+                getPage,
+                settings,
+                villageState.villages,
+                {
+                  roundRobinIndex: overflowGuardRoundRobinIndex,
+                  log: (msg) => logInfo(msg)
+                }
+              );
+              if (Number.isFinite(Number(result.roundRobinIndex))) {
+                overflowGuardRoundRobinIndex = Number(result.roundRobinIndex);
+              }
+              logOverflowGuardResult(result);
             }
           }).catch((error) => {
             logWarn(`[Overflow Guard] Tick failed: ${error.message || error}`);

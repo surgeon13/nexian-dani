@@ -395,6 +395,14 @@ const settings = {
   resourceOverflowMaxDistance: numberEnv("RESOURCE_OVERFLOW_MAX_DISTANCE", 10),
   resourceOverflowLoopMinMinutes: numberEnv("RESOURCE_OVERFLOW_LOOP_MIN_MINUTES", 8),
   resourceOverflowLoopMaxMinutes: numberEnv("RESOURCE_OVERFLOW_LOOP_MAX_MINUTES", 15),
+  // Check every non-pivot village on each tick instead of one per
+  // round-robin turn. With more than a couple of villages, one-per-tick
+  // meant most villages only got checked once every (villageCount *
+  // loopInterval) — far too infrequent to actually prevent a warehouse or
+  // granary from filling up between checks. Set false to restore the old
+  // one-village-per-tick behavior.
+  resourceOverflowCheckAllEachTick:
+    String(process.env.RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK || "true").toLowerCase() === "true",
   resourceOverflowPivotVillageIds: String(
     process.env.RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS || ""
   ).trim(),
@@ -604,6 +612,7 @@ function persistRuntimeSettings(selectedKeys) {
     RESOURCE_OVERFLOW_MAX_DISTANCE: String(settings.resourceOverflowMaxDistance),
     RESOURCE_OVERFLOW_LOOP_MIN_MINUTES: String(settings.resourceOverflowLoopMinMinutes),
     RESOURCE_OVERFLOW_LOOP_MAX_MINUTES: String(settings.resourceOverflowLoopMaxMinutes),
+    RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK: settings.resourceOverflowCheckAllEachTick ? "true" : "false",
     RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS: String(settings.resourceOverflowPivotVillageIds || ""),
     NPC_CROP_CONVERT_ENABLED: settings.npcCropConvertEnabled ? "true" : "false",
     NPC_CROP_CONVERT_MIN_MINUTES: String(settings.npcCropConvertMinMinutes),

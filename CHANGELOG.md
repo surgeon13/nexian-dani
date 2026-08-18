@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.42] — 2026-08-18
+
+### Fixed
+
+- **Overflow Guard's round-robin was too slow to actually prevent overflow on accounts with several villages** — one village was checked per tick, so with N non-pivot villages, any single village was only actually checked once every `N × loop interval` — easily an hour or more, plenty of time for a warehouse/granary to fill to 100% between checks. Reported by a real user: surpluses filling "to the end" despite Overflow Guard being on. New `runOverflowGuardAllVillages()` checks every non-pivot village every tick by default (`RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`, default `true`) — sequential (shares one browser page), with one village's transient failure no longer aborting the rest of the batch. Set `false` to restore the old one-per-tick behavior.
+- **"Blocked by distance" was logged as routine info, easy to miss** — the exact situation causing unrelieved overflow (a village too far from its pivot — "Far sends are never allowed") was logged via `logInfo` (plain cyan), indistinguishable from routine "nothing to do" messages. Now logged via a new `logDanger()` (red+bold body), same for any other overflow failure — worth noticing, not scrolling past.
+
+### Added
+
+- **Yellow `[Tag]` / red-body log distinction extended** — `logDanger()` joins the existing `logInfo`/`logSuccess`/`logWarn`/`logError` set: same yellow `[Bracketed Tag]` prefix convention, red+bold message body, for urgent-but-not-crashed situations (currently: Overflow Guard blocked/failed). Goes to stdout like `logInfo`/`logSuccess`/`logWarn` (not stderr like `logError`), since it's a status to notice, not a hard failure.
+
 ## [1.8.41] — 2026-08-18
 
 ### Fixed

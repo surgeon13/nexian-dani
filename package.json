@@ -1,6 +1,6 @@
 {
   "name": "nexian",
-  "version": "1.8.41",
+  "version": "1.8.42",
   "description": "Menu-driven Playwright automation helper for Nexian",
   "main": "login.js",
   "scripts": {
