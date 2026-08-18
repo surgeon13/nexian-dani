@@ -38,12 +38,22 @@ if ! command -v proot-distro >/dev/null 2>&1; then
   pkg install -y proot-distro git || die "pkg install proot-distro git failed"
 fi
 
-log "Checking for an existing '$DISTRO' proot-distro install..."
-if proot-distro list --installed 2>/dev/null | grep -qiw "$DISTRO"; then
-  log "'$DISTRO' is already installed under proot-distro — skipping install step."
+log "Installing '$DISTRO' rootfs if not already present (this downloads a few hundred MB on first run, be patient)..."
+# Don't rely on 'proot-distro list --installed' — its output format isn't
+# guaranteed stable across proot-distro versions. Instead, treat "already
+# exists" from 'install' itself as the ground truth (it's a normal, expected
+# outcome on a second run, not a failure).
+INSTALL_OUTPUT="$(proot-distro install "$DISTRO" 2>&1)"
+INSTALL_STATUS=$?
+if [ "$INSTALL_STATUS" -ne 0 ]; then
+  if echo "$INSTALL_OUTPUT" | grep -qi "already exists"; then
+    log "'$DISTRO' is already installed under proot-distro — continuing with the existing rootfs."
+  else
+    echo "$INSTALL_OUTPUT" >&2
+    die "proot-distro install $DISTRO failed (see output above). Run 'proot-distro list' to see available distro names for your proot-distro version if 'ubuntu' itself is the problem."
+  fi
 else
-  log "Installing '$DISTRO' rootfs (this downloads a few hundred MB, be patient)..."
-  proot-distro install "$DISTRO" || die "proot-distro install $DISTRO failed. Run 'proot-distro list' to see available distro names for your proot-distro version — the CLI has changed across versions and this script cannot verify it for you."
+  echo "$INSTALL_OUTPUT"
 fi
 
 log "Provisioning inside the $DISTRO chroot: apt deps, Node.js $NODE_MAJOR, git clone, npm install, Playwright Chromium + OS deps..."

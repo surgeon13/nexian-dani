@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.35] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: re-running setup on an existing Ubuntu install failed hard** — `termux-proot-setup.sh` checked `proot-distro list --installed` to decide whether to install, but that output format isn't reliable across `proot-distro` versions (confirmed in practice: it didn't detect an existing install), so the script tried to install again and hit `Error: container 'ubuntu' already exists.` and aborted. Now the script just runs `proot-distro install` unconditionally and treats an "already exists" failure as the expected, non-fatal outcome of a second run — any other failure still aborts with the real error shown.
+
 ## [1.8.34] — 2026-08-18
 
 ### Fixed
