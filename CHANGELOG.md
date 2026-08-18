@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.41] — 2026-08-18
+
+### Fixed
+
+- **Builder RR auto-exclude never caught villages that finished resource fields before the setting took effect** — `resolveBuilderPlanModeForVillage()` (used for RR candidate selection) only checked whether the resource plan was complete, then fell through to the village-stage plan — it had no awareness of `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` at all. The actual exclusion logic only ran mid-tick, at the exact moment a village's resource plan transitioned from incomplete to complete; a village that was *already* resource-complete going into a tick (e.g. it finished before this setting was enabled) would skip straight to "village" mode and keep building village-stage templates indefinitely, never triggering the exclude. A real user hit exactly this: "counts through all templates instead of finishing and excluding." `resolveBuilderPlanModeForVillage()` now returns no pending work as soon as resource is complete when auto-exclude is on, regardless of village-stage status.
+- Added a catch-up step at the start of each builder-loop tick: any non-excluded village whose resource plan is *already* complete now gets properly added to `BUILDER_RR_EXCLUDED_VILLAGE_IDS` (persisted, logged) immediately — previously such a village would just be silently skipped by the candidate filter without ever actually being recorded as excluded.
+
+### Added
+
+- **Yellow `[Tag]` prefixes in terminal log output** — `logInfo`/`logSuccess`/`logWarn`/`logError` now color a leading `[Bracketed Tag]` (e.g. `[Builder Loop]`, `[Capital Granary]`, `[NPC Crop]`) yellow, distinct from the rest of the line's normal log-level color, so the source tag is easy to spot when scanning a busy terminal. Applies uniformly across all logged tags, not just Builder Loop. Messages without a leading bracket tag are unaffected.
+
 ## [1.8.40] — 2026-08-18
 
 ### Fixed

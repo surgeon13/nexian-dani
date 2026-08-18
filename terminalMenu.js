@@ -44,20 +44,37 @@ function color(text, ...codes) {
   return `${codes.join("")}${text}${ANSI.reset}`;
 }
 
+// Colors a leading "[Tag]" prefix (e.g. "[Builder Loop]") yellow, distinct
+// from the rest of the line's normal log-level color, so the source tag is
+// easy to visually scan for in a busy terminal. Falls back to plain
+// log-level coloring for messages with no such prefix.
+function colorTaggedMessage(message, ...bodyCodes) {
+  const str = String(message);
+  if (!USE_COLORS) {
+    return str;
+  }
+  const match = str.match(/^(\[[^\]]+\])([\s\S]*)$/);
+  if (!match) {
+    return color(str, ...bodyCodes);
+  }
+  const [, tag, rest] = match;
+  return `${ANSI.yellow}${tag}${ANSI.reset}${bodyCodes.join("")}${rest}${ANSI.reset}`;
+}
+
 function logInfo(message) {
-  console.log(color(message, ANSI.cyan));
+  console.log(colorTaggedMessage(message, ANSI.cyan));
 }
 
 function logSuccess(message) {
-  console.log(color(message, ANSI.green, ANSI.bold));
+  console.log(colorTaggedMessage(message, ANSI.green, ANSI.bold));
 }
 
 function logWarn(message) {
-  console.log(color(message, ANSI.yellow));
+  console.log(colorTaggedMessage(message, ANSI.yellow));
 }
 
 function logError(message) {
-  console.error(color(message, ANSI.red, ANSI.bold));
+  console.error(colorTaggedMessage(message, ANSI.red, ANSI.bold));
 }
 
 class MenuInterruptError extends Error {
@@ -6652,6 +6669,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (!isBuilderPlanFullyComplete(village, "resource")) {
           return "resource";
         }
+        // Resource plan is already complete. If auto-exclude-on-complete is
+        // on, this village has no more RR work regardless of village-stage
+        // status — it should have been excluded the tick resource finished,
+        // but a village that was ALREADY resource-complete before this
+        // setting took effect (or any other timing gap) would otherwise
+        // fall through to "village" here and keep building forever, never
+        // hitting the loopPlan.key === "resource" check that actually
+        // excludes it. Bug a real user hit: builder kept "counting through
+        // all templates" instead of stopping.
+        if (settings.builderRrAutoExcludeOnResourceComplete) {
+          return null;
+        }
         if (!isBuilderPlanFullyComplete(village, "village")) {
           return "village";
         }
@@ -7934,6 +7963,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
           const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
           const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+
+          // Catch-up: a village whose resource plan is already complete
+          // (e.g. it finished before auto-exclude was turned on, or any
+          // other timing gap versus the mid-tick exclude below) should
+          // actually be recorded in BUILDER_RR_EXCLUDED_VILLAGE_IDS, not
+          // just silently skipped by villageHasPendingBuilderWork — a real
+          // user hit exactly this: the builder kept "counting through all
+          // templates" for such a village instead of ever excluding it.
+          if (settings.builderRrAutoExcludeOnResourceComplete && builderRrUsesResourceThenVillagePipeline()) {
+            let excludedChanged = false;
+            for (const village of nonCapitalVillages) {
+              const villageId = Number(village.id);
+              if (!excludedVillageIds.has(villageId) && isBuilderPlanFullyComplete(village, "resource")) {
+                excludedVillageIds.add(villageId);
+                excludedChanged = true;
+                logSuccess(
+                  `[Builder Loop] Resource fields already complete for ${villageDisplayName(village)} — excluded from Builder RR.`
+                );
+              }
+            }
+            if (excludedChanged) {
+              settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedVillageIds);
+              if (runtimeControls.persistSettings) {
+                await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
+              }
+            }
+          }
+
           const rrCandidateVillages = nonCapitalVillages.filter(
             (village) =>
               !excludedVillageIds.has(Number(village.id)) && villageHasPendingBuilderWork(village)
