@@ -79,6 +79,22 @@ const envFile = getArgValue("--env-file=") || process.env.NEXIAN_ENV_FILE || ".e
 const resolvedEnvPath = path.resolve(process.cwd(), envFile);
 const resolvedEnvExamplePath = path.resolve(__dirname, ".env.example");
 
+// Flavor-aware template resolution: an env file like ".env.termux" prefers a
+// matching ".env.termux.example" (e.g. phone-tuned defaults) over the
+// generic .env.example, when one exists next to it. Falls back to
+// .env.example unchanged otherwise (e.g. ".env.nexian" has no dedicated
+// template today, and that's fine — same behavior as before this existed).
+function resolveEnvExampleSource(envPath) {
+  const base = path.basename(envPath);
+  if (base !== ".env" && base.startsWith(".env")) {
+    const flavorExample = path.join(path.dirname(envPath), `${base}.example`);
+    if (fs.existsSync(flavorExample)) {
+      return flavorExample;
+    }
+  }
+  return resolvedEnvExamplePath;
+}
+
 function upsertEnvKeys(envPath, defaults) {
   const exists = fs.existsSync(envPath);
   const current = exists ? fs.readFileSync(envPath, "utf8") : "";
@@ -102,9 +118,10 @@ function upsertEnvKeys(envPath, defaults) {
 
 function ensureEnvFile(envPath) {
   if (!fs.existsSync(envPath)) {
-    if (fs.existsSync(resolvedEnvExamplePath)) {
-      fs.copyFileSync(resolvedEnvExamplePath, envPath);
-      console.log(`Created ${path.basename(envPath)} from .env.example`);
+    const source = resolveEnvExampleSource(envPath);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, envPath);
+      console.log(`Created ${path.basename(envPath)} from ${path.basename(source)}`);
     } else {
       const minimal = [
         "NEXIAN_URL=https://nexian.world/",

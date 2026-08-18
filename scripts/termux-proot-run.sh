@@ -54,11 +54,15 @@ for arg in "$@"; do
   esac
 done
 
-# Prefer the phone-friendly .env.termux (relaxed loop intervals, see
-# .env.termux.example) over plain .env when it exists in the chroot copy of
-# the repo, unless the caller already passed their own --env-file=.
+# Default to the phone-friendly .env.termux unless the caller passed their
+# own --env-file=. This no longer needs to check whether the file exists:
+# login.js's ensureEnvFile() auto-creates any missing --env-file target,
+# preferring a same-named "<file>.example" template (.env.termux.example,
+# with the relaxed intervals) when present, falling back to the generic
+# .env.example otherwise. Either way you get a working, running config —
+# only real credentials (NEXIAN_USERNAME/PASSWORD, GAME_HOST) need editing.
 if [[ "$HAS_ENV_FILE_ARG" == "false" ]]; then
-  NODE_ARGS+=("--env-file-if-present=.env.termux")
+  NODE_ARGS+=("--env-file=.env.termux")
 fi
 
 log "Launching: cd $GUEST_PROJECT_DIR && node ${NODE_ARGS[*]}"
@@ -73,24 +77,7 @@ proot-distro login "$DISTRO" -- bash -lc "
     echo '[termux-proot-run] FATAL: node inside the chroot is missing or not a Linux build (found: '\"\$(command -v node || echo none)\"' platform='\"\$(node -p process.platform 2>&1 || echo '?')\"'). Re-run scripts/termux-proot-setup.sh.' >&2
     exit 1
   fi
-  args=($(printf '%q ' "${NODE_ARGS[@]}"))
-  # Resolve the --env-file-if-present=... placeholder now that we're
-  # actually inside the chroot and can see its filesystem.
-  resolved=()
-  for a in \"\${args[@]}\"; do
-    case \"\$a\" in
-      --env-file-if-present=*)
-        f=\"\${a#--env-file-if-present=}\"
-        if [ -f \"\$f\" ]; then
-          resolved+=(\"--env-file=\$f\")
-        fi
-        ;;
-      *)
-        resolved+=(\"\$a\")
-        ;;
-    esac
-  done
-  exec node \"\${resolved[@]}\"
+  exec node $(printf '%q ' "${NODE_ARGS[@]}")
 "
 STATUS=$?
 

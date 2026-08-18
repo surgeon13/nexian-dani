@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.36** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.37** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -123,7 +123,7 @@ node login.js --headed --keep-open
 
 (or `npm run login:headed`, or `start-headed.cmd` on Windows.)
 
-If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only.
+If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only. This applies to any `--env-file=` target, not just plain `.env`: a missing `--env-file=.env.termux` gets created from `.env.termux.example` if one exists next to it (falling back to the generic `.env.example` otherwise), so a fresh machine only ever needs its credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) edited in before the first real run — `login.js` refuses to proceed with placeholder credentials and tells you exactly which file to edit.
 
 ---
 

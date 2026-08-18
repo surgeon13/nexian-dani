@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.37] — 2026-08-18
+
+### Added
+
+- **Flavor-aware `--env-file=` auto-creation** — `login.js`'s existing "auto-create a missing env file" behavior (previously always sourced from the generic `.env.example`) now prefers a same-named template when one exists: a missing `--env-file=.env.termux` is created from `.env.termux.example` (phone-tuned defaults) instead of the generic template, falling back unchanged when no flavor-specific template exists (e.g. `.env.nexian`, which has none today). Combined with `login.js`'s existing placeholder-credential guard (refuses to run and tells you which file to edit), this means: on any fresh machine, running the bot once creates a fully working config with sensible defaults, and the user only ever needs to edit real credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) to get going — no dependency on a setup script separately pre-copying the right template.
+- `scripts/termux-proot-run.sh` simplified accordingly: always passes `--env-file=.env.termux` (unless the caller passed their own `--env-file=`) and relies on `login.js` to create it correctly, instead of the script's own file-existence-check-and-placeholder-resolution logic from 1.8.33.
+
 ## [1.8.36] — 2026-08-18
 
 ### Fixed
