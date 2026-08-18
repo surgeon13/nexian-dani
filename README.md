@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.42** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.43** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.43] — 2026-08-18
+
+### Fixed
+
+- **Builder Loop's skipped-tick cleanup destroyed a concurrently-running manual builder run** — when the auto builder loop's tick was cleanly skipped because another action (e.g. a manual "2"/"3" template run from the terminal menu) already held the page, the tick still unconditionally advanced the round-robin index and called `restoreSelectedVillageContext()` — which does a real `page.goto()` — afterward. That navigation happened while the concurrent manual run's `page.evaluate()` was still in flight, destroying its execution context (`Execution context was destroyed, most likely because of a navigation`) and failing the manual run outright. A real user hit this: a manual resource-builder run on an already-complete village (burning through many `already_satisfied` steps to re-sync stale progress tracking) got killed mid-run by the auto loop's own cleanup.
+
+  Fixed precisely: a genuinely skipped tick (no page navigation, no RR-index advance) now just retries in 20s without touching the page. A real error from the build step itself still behaves exactly as before (RR advances, context restore still runs, normal reschedule) — only the clean-skip path changed. Verified via an isolated simulation of all three code paths (success / skip / error) confirming each does exactly what it should.
+
 ## [1.8.42] — 2026-08-18
 
 ### Fixed

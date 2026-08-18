@@ -8103,9 +8103,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }
 
         let shouldFastRetryDifferentVillage = false;
+        let executed = false;
+        let hadError = false;
         try {
           const startedAt = Date.now();
-          const executed = await runAction("auto-builder", async () => {
+          executed = await runAction("auto-builder", async () => {
             let loopPlan = getBuilderPlanMeta(
               resolveBuilderPlanModeForVillage(targetVillage) || activeBuilderPlanMode
             );
@@ -8261,6 +8263,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             maybeLogBuilderEfficiencyWindow();
           }, { raidGuardPriority: true });
         } catch (error) {
+          hadError = true;
           const message = error && error.message ? error.message : String(error);
           recordAction({
             actionType: "building.upgrade",
@@ -8282,6 +8285,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           } else {
             logError(`[Builder Loop] Auto-build failed: ${message}`);
           }
+        }
+
+        if (!executed && !hadError) {
+          // The build step was cleanly SKIPPED (another action — e.g. a
+          // manual builder run — was already using the page); this is
+          // distinct from a thrown error, which the catch block above
+          // already handled. Do NOT advance the RR index or navigate the
+          // page here: restoreSelectedVillageContext below does a real
+          // page.goto, and calling it unconditionally after a skip — while
+          // the concurrent action's page.evaluate() was still in flight —
+          // destroyed that action's execution context ("Execution context
+          // was destroyed, most likely because of a navigation"). A real
+          // user hit exactly this. Just retry soon without touching the page.
+          const delayMs = 20000;
+          nextBuilderRunAt = Date.now() + delayMs;
+          builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+          return;
         }
 
         if (settings.builderRoundRobinEnabled) {
