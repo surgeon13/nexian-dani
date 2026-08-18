@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.38] — 2026-08-18
+
+### Fixed
+
+- **`--env-file=` collided with Node's own native flag, silently bypassing auto-creation** — Node.js (≥20.6) has a built-in native `--env-file=<path>` CLI flag that intercepts that exact argument *before* `login.js` ever runs, and exits immediately with `node: <path>: not found` if the target doesn't exist yet — completely bypassing `ensureEnvFile()`'s auto-creation from the 1.8.37 fix. This is a pre-existing latent bug across the whole project (`login:nexian`/`dashboard:nexian*` npm scripts, `dashboard-dev.sh`/`.ps1`/`.cmd`, the Termux scripts), not something introduced by the Termux work — it just never surfaced before because nobody had pointed `--env-file=` at a file that didn't already exist. A real user hit it running the Termux path for the first time.
+
+  Renamed this project's own flag to **`--nexian-env-file=`** everywhere (`login.js`, all `package.json` scripts, `dashboard-dev.*` launchers, `scripts/termux-proot-*.sh`, `.env.termux.example`, README) to avoid the collision entirely. Launcher scripts that exposed their own `--env-file`/`-EnvFile` option for user convenience (`dashboard-dev.sh`, `dashboard-dev.ps1`) keep that external name — only what they forward to `node` changed.
+
+  Verified against real Node.js: `node script.js --env-file=missing.env` (flag *after* the script name, matching this project's actual invocation pattern) reproduces the exact reported error and the script never runs; `node script.js --nexian-env-file=missing.env` runs normally with the argument available in `process.argv`. Full end-to-end confirmation with the real `login.js`: a missing `.env.termux` is now correctly created from `.env.termux.example` and the placeholder-credential guard fires cleanly, no crash.
+
 ## [1.8.37] — 2026-08-18
 
 ### Added

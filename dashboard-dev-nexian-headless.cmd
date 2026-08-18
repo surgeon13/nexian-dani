@@ -9,7 +9,7 @@ echo Nexian dashboard (dev) — .env.nexian, headless browser + web UI
 echo   Dashboard: http://127.0.0.1:3847
 echo.
 
-node login.js --dashboard --keep-open --env-file=.env.nexian %*
+node login.js --dashboard --keep-open --nexian-env-file=.env.nexian %*
 set EXIT_CODE=%ERRORLEVEL%
 
 if "%EXIT_CODE%"=="130" (

@@ -44,7 +44,7 @@ for arg in "$@"; do
     --dashboard)
       NODE_ARGS+=("--dashboard" "--keep-open")
       ;;
-    --env-file=*)
+    --nexian-env-file=*)
       HAS_ENV_FILE_ARG=true
       NODE_ARGS+=("$arg")
       ;;
@@ -55,14 +55,21 @@ for arg in "$@"; do
 done
 
 # Default to the phone-friendly .env.termux unless the caller passed their
-# own --env-file=. This no longer needs to check whether the file exists:
-# login.js's ensureEnvFile() auto-creates any missing --env-file target,
-# preferring a same-named "<file>.example" template (.env.termux.example,
-# with the relaxed intervals) when present, falling back to the generic
-# .env.example otherwise. Either way you get a working, running config —
-# only real credentials (NEXIAN_USERNAME/PASSWORD, GAME_HOST) need editing.
+# own --nexian-env-file=. This no longer needs to check whether the file
+# exists: login.js's ensureEnvFile() auto-creates any missing
+# --nexian-env-file target, preferring a same-named "<file>.example"
+# template (.env.termux.example, with the relaxed intervals) when present,
+# falling back to the generic .env.example otherwise. Either way you get a
+# working, running config — only real credentials (NEXIAN_USERNAME/PASSWORD,
+# GAME_HOST) need editing.
+#
+# This must be --nexian-env-file, NOT --env-file: Node itself (>=20.6) has a
+# native --env-file=<path> flag that intercepts that exact argument before
+# login.js runs, and exits hard with "node: <path>: not found" if the file
+# doesn't exist yet — bypassing ensureEnvFile()'s auto-creation entirely.
+# This bit a real user on first run. See the same note in login.js.
 if [[ "$HAS_ENV_FILE_ARG" == "false" ]]; then
-  NODE_ARGS+=("--env-file=.env.termux")
+  NODE_ARGS+=("--nexian-env-file=.env.termux")
 fi
 
 log "Launching: cd $GUEST_PROJECT_DIR && node ${NODE_ARGS[*]}"

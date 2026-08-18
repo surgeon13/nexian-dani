@@ -11,7 +11,7 @@ $argsList = @(
   "login.js",
   "--dashboard",
   "--keep-open",
-  "--env-file=$EnvFile"
+  "--nexian-env-file=$EnvFile"
 )
 
 if (-not $Headless) {

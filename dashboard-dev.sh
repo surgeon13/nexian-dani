@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ARGS=(login.js --dashboard --keep-open "--env-file=$ENV_FILE")
+ARGS=(login.js --dashboard --keep-open "--nexian-env-file=$ENV_FILE")
 if [[ "$HEADLESS" == false ]]; then
   ARGS+=(--headed)
 fi

@@ -75,7 +75,14 @@ function mirrorConsoleToDashboard(bridge) {
   wrap("error", "error");
 }
 
-const envFile = getArgValue("--env-file=") || process.env.NEXIAN_ENV_FILE || ".env";
+// NOTE: this must NOT be named "--env-file" — Node.js itself has a native
+// --env-file=<path> CLI flag (since v20.6) that intercepts and consumes that
+// exact argument before login.js ever runs, and exits hard with
+// "node: <path>: not found" if the target doesn't exist yet — bypassing
+// ensureEnvFile()'s own auto-creation entirely. Using a different flag name
+// avoids the collision. (NEXIAN_ENV_FILE the env var is unaffected either
+// way — Node's native flag only triggers from the CLI argument.)
+const envFile = getArgValue("--nexian-env-file=") || process.env.NEXIAN_ENV_FILE || ".env";
 const resolvedEnvPath = path.resolve(process.cwd(), envFile);
 const resolvedEnvExamplePath = path.resolve(__dirname, ".env.example");
 

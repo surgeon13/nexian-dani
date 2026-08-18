@@ -188,7 +188,7 @@ cat <<EOF
 
    or by hand:
 
-     proot-distro login $DISTRO -- bash -lc "cd $GUEST_PROJECT_DIR && node login.js --env-file=.env.termux"
+     proot-distro login $DISTRO -- bash -lc "cd $GUEST_PROJECT_DIR && node login.js --nexian-env-file=.env.termux"
 
 Known limitations (read before relying on this for real use):
   - Chromium runs through proot's syscall-translation layer — expect it to
