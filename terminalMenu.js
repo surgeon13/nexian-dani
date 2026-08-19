@@ -6253,6 +6253,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         : "resource";
     let roundRobinIndex = 0;
     const realignStreakByKey = new Map();
+    const blockedStreakByKey = new Map();
     let crannyRoundRobinIndex = 0;
     const sessionId = runtimeControls.getSessionId
       ? runtimeControls.getSessionId()
@@ -6784,6 +6785,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const key = getBuilderVillagePlanKey(villageId, planMode);
       const nextValue = (realignStreakByKey.get(key) || 0) + 1;
       realignStreakByKey.set(key, nextValue);
+      return nextValue;
+    };
+
+    // Mirrors the realign-streak tracker above but for blocked_*/idle_saturated
+    // statuses — a step that's cleanly blocked (storage capacity, mismatched
+    // building, disabled upgrade button, ...) retried every cooldown period
+    // never made noise anywhere before this: it just silently kept retrying
+    // forever with no visible signal that the village had stopped actually
+    // progressing while its warehouse/granary filled up. This surfaces it.
+    const resetBlockedStreak = (villageId, planMode) => {
+      blockedStreakByKey.delete(getBuilderVillagePlanKey(villageId, planMode));
+    };
+
+    const incrementBlockedStreak = (villageId, planMode) => {
+      const key = getBuilderVillagePlanKey(villageId, planMode);
+      const nextValue = (blockedStreakByKey.get(key) || 0) + 1;
+      blockedStreakByKey.set(key, nextValue);
       return nextValue;
     };
 
@@ -8328,7 +8346,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   finalResult.status === "already_satisfied" ||
                   finalResult.status === "skipped_wrong_building_type" ||
                   finalResult.status === "template_complete" ||
-                  finalResult.status === "realigned_template"
+                  finalResult.status === "realigned_template" ||
+                  finalResult.status === "storage_relief"
                 )
               ) {
                 break;
@@ -8357,6 +8376,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }
             } else {
               resetRealignStreak(targetVillage.id, loopPlan.key);
+            }
+
+            // Any cleanly-blocked status (storage/queue/mismatch/disabled button/…)
+            // retried tick after tick with nothing ever surfacing it. success and
+            // storage_relief both represent real forward progress (storage_relief
+            // clicked a genuine upgrade, just not the originally-targeted step),
+            // so both reset the streak same as success would.
+            if (
+              String(finalResult.status || "").startsWith("blocked_") ||
+              finalResult.status === "idle_saturated" ||
+              finalResult.status === "click_failed"
+            ) {
+              const streak = incrementBlockedStreak(targetVillage.id, loopPlan.key);
+              if (streak >= 4) {
+                logWarn(
+                  `[Builder Loop] repeated_blocked (${streak}): ${villageDisplayName(targetVillage)} in ${loopPlan.short} plan keeps hitting ` +
+                  `'${finalResult.status}' — no upgrades are landing here while this persists. Latest: ${finalResult.message}`
+                );
+              }
+            } else {
+              resetBlockedStreak(targetVillage.id, loopPlan.key);
             }
 
             if (finalResult.status === "blocked_resources") {
@@ -8403,6 +8443,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 }
               });
             } else if (finalResult.status === "template_complete" || finalResult.status === "all_complete") {
+              logSuccess(`[Builder Loop] ${finalResult.message}`);
+            } else if (finalResult.status === "storage_relief") {
               logSuccess(`[Builder Loop] ${finalResult.message}`);
             } else {
               if (String(finalResult.status || "").startsWith("blocked_") || finalResult.status === "idle_saturated") {
@@ -10999,6 +11041,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           } else if (finalResult.status === "template_complete") {
             logSuccess(finalResult.message);
           } else if (finalResult.status === "all_complete") {
+            logSuccess(finalResult.message);
+          } else if (finalResult.status === "storage_relief") {
             logSuccess(finalResult.message);
           } else if (finalResult.status === "blocked_resources") {
             logInfo(`Builder: ${finalResult.message}`);

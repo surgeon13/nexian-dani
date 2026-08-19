@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.51] — 2026-08-19
+
+### Added
+
+- **Automatic storage-capacity deadlock relief in the builder** — a real gap: a step blocked because its next-level cost exceeds current Warehouse/Granary *capacity* (`blocked_storage`) previously just retried forever on a 10-minute cooldown, silently, with no escalation and no way to reach the Warehouse/Granary upgrade that would actually fix it if that step happened to be scheduled later in the same template's strict sequence — resources capping out at 100% while nothing built. `attemptStorageReliefUpgrade()` (`villageBuilder.js`) now scans the *whole* active template (not just the current position) for a Warehouse/Granary step, and if that slot has real room to grow toward what the template eventually wants and its own next-level upgrade is itself affordable right now, upgrades it out of strict order — without touching progress indices, so the originally-blocked step is simply retried right after, now hopefully unblocked. New `storage_relief` status wired into the same same-tick follow-up retry loop as `already_satisfied`/`realigned_template`, so relief can chain through several levels within one tick instead of waiting a full loop interval per level. Verified the template-wide slot/target-level scan against the real `village_stage_fast_basic_15c` template, and the affordability guards (own-capacity / own-stock checks) against synthetic slot data, in isolation.
+- **`repeated_blocked` warning** — mirrors the existing `repeated_realign` streak warning, but for any `blocked_*`/`idle_saturated`/`click_failed` status: a village that keeps hitting the same blocked status tick after tick (4+ in a row) now logs a warning instead of retrying silently forever with no visible signal anything was stuck. Answers a real question asked about this: no, there was no such validation/escalation before this — now there is.
+
+### Changed
+
+- **Extended `village_stage_fast_basic_15c` with a third pass (stages 22-26)**: one crop field to 10 (safety check), Grain Mill to 5, Bakery to 3, all crop fields to 10 (safety net), Bakery to 5. By the time Bakery is attempted, Grain Mill 5 + Main Building 5+ + a level-10 Cropland are already in place from earlier stages, so its unlock requirements are already satisfied. `end_state` and template `version` (now 3) updated to match.
+
 ## [1.8.50] — 2026-08-19
 
 ### Changed

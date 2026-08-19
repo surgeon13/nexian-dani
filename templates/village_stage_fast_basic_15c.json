@@ -1,8 +1,8 @@
 {
   "key": "village_stage_fast_basic_15c",
   "name": "Fast Basic (15-Crop) - Early Growth Rush",
-  "description": "Experimental fast-start plan for 15-crop (crop-heavy) villages: light civic baseline, then push crop production hard before circling back to Main Building/storage/Grain Mill/Residence, then a second pass pushing crop fields to 10, storage to 10, Main Building to 12, Rally Point, and Marketplace to 10. Standalone template — not part of the default village_stage_00/01/02 chain. Assign it to one village at a time from the terminal menu ([B] Builder Templates) and compare results before rolling it out further.",
-  "version": 2,
+  "description": "Experimental fast-start plan for 15-crop (crop-heavy) villages: light civic baseline, then push crop production hard before circling back to Main Building/storage/Grain Mill/Residence, then a second pass pushing crop fields to 10, storage to 10, Main Building to 12, Rally Point, and Marketplace to 10, then a third pass finishing Grain Mill to 5 and Bakery to 3 then 5 (both unlock/upgrade cleanly by this point since Grain Mill 5 + Main Building 5+ + a level-10 Cropland are all already in place). Standalone template — not part of the default village_stage_00/01/02 chain. Assign it to one village at a time from the terminal menu ([B] Builder Templates) and compare results before rolling it out further.",
+  "version": 3,
   "sequence_mode": "strict",
   "identity_policy": "vid_and_coords",
   "tribes": ["roman", "teuton", "gaul"],
@@ -215,6 +215,57 @@
       "steps": [
         { "slot": 33, "building": "Marketplace", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ]
+    },
+    {
+      "name": "Stage 22 - One crop field to 10",
+      "notes": "A single representative field, in case any earlier crop-push stage was skipped for this village.",
+      "steps": [
+        { "slot": 1, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true }
+      ]
+    },
+    {
+      "name": "Stage 23 - Grain Mill to 5",
+      "notes": "Slot 20 is a default guess; auto-discovered from the live map like the other bonus buildings if wrong.",
+      "steps": [
+        { "slot": 20, "building": "Grain Mill", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 24 - Bakery to 3",
+      "notes": "Slot 21 is a default guess; auto-discovered from the live map like the other bonus buildings if wrong.",
+      "steps": [
+        { "slot": 21, "building": "Bakery", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
+    },
+    {
+      "name": "Stage 25 - All crop fields to 10",
+      "notes": "Safety net in case any field was skipped earlier (e.g. a village map change) — already-at-10 fields advance instantly.",
+      "steps": [
+        { "slot": 1, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 2, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 3, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 4, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 5, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 6, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 7, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 8, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 9, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 10, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 11, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 12, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 13, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 14, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 15, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 16, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 17, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true },
+        { "slot": 18, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true, "skip_if_mismatch": true }
+      ]
+    },
+    {
+      "name": "Stage 26 - Bakery to 5",
+      "steps": [
+        { "slot": 21, "building": "Bakery", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+      ]
     }
   ],
   "end_state": {
@@ -223,9 +274,10 @@
       { "slot": 19, "building": "Warehouse", "min_level": 10 },
       { "slot": 24, "building": "Granary", "min_level": 10 },
       { "slot": 33, "building": "Marketplace", "min_level": 10 },
-      { "slot": 20, "building": "Grain Mill", "min_level": 3 },
+      { "slot": 20, "building": "Grain Mill", "min_level": 5 },
       { "slot": 25, "building": "Residence", "min_level": 10 },
-      { "slot": 39, "building": "Rally Point", "min_level": 1 }
+      { "slot": 39, "building": "Rally Point", "min_level": 1 },
+      { "slot": 21, "building": "Bakery", "min_level": 5 }
     ]
   }
 }

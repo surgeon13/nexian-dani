@@ -856,6 +856,83 @@ function checkResourceSufficiency(slotInfo, costs) {
   return { sufficient, deficit };
 }
 
+/**
+ * When a step is blocked because its cost exceeds current Warehouse/Granary
+ * CAPACITY (not just current stock, which blocked_resources already covers
+ * via resource circulation) — the actual fix, raising that storage building,
+ * may be scheduled LATER in this same template's strict sequence. Without
+ * this, the blocked step just retries forever every cooldown while the
+ * village's storage sits full and nothing ever gets built: the strict
+ * ordering that makes templates predictable also has no way to reach the
+ * one step that would unblock it.
+ *
+ * Scans the WHOLE template (not just from the current position) for a
+ * Warehouse or Granary step, and if that slot is real, has room left to
+ * grow toward what the template eventually wants, and its own next-level
+ * upgrade is affordable right now, clicks it out of strict order. Progress
+ * indices are intentionally left untouched — the originally-blocked step is
+ * retried on the very next call, hopefully unblocked by the higher capacity.
+ * Returns null (no side effects) whenever relief isn't available or isn't
+ * itself affordable, so callers can fall through to the normal blocked_storage
+ * result unchanged.
+ */
+async function attemptStorageReliefUpgrade(page, baseUrl, villageId, template, kind) {
+  const targetBuildingName = kind === "granary" ? "Granary" : "Warehouse";
+
+  let targetLevel = 0;
+  let candidateSlot = null;
+  for (const stage of (template && template.stages) || []) {
+    for (const step of (stage && stage.steps) || []) {
+      if (isSameBuildingName(step.building, targetBuildingName)) {
+        if (candidateSlot === null) {
+          candidateSlot = Number(step.slot);
+        }
+        targetLevel = Math.max(targetLevel, Number(step.target_level) || 0);
+      }
+    }
+  }
+  if (candidateSlot === null || targetLevel <= 0) {
+    return null;
+  }
+
+  const slotInfo = await readSlotPage(page, baseUrl, candidateSlot, villageId);
+  if (slotInfo.isEmptySlot || !isSameBuildingName(slotInfo.buildingName, targetBuildingName)) {
+    return null;
+  }
+  if (slotInfo.currentLevel >= targetLevel) {
+    return null;
+  }
+  if (Number(slotInfo.buildQueueCount) > 0) {
+    return null;
+  }
+  if (!slotInfo.hasUpgradeButton || slotInfo.upgradeDisabled) {
+    return null;
+  }
+
+  const costs = slotInfo.costs || {};
+  if (!Object.keys(costs).length) {
+    return null;
+  }
+  if (checkStorageCapacity(slotInfo, costs).length > 0) {
+    return null;
+  }
+  if (!checkResourceSufficiency(slotInfo, costs).sufficient) {
+    return null;
+  }
+
+  const clicked = await executeUpgradeClick(page, { allowMasterBuilder: false });
+  if (!clicked) {
+    return null;
+  }
+
+  return {
+    slot: candidateSlot,
+    building: targetBuildingName,
+    fromLevel: slotInfo.currentLevel,
+    toLevel: slotInfo.currentLevel + 1
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Step resolver — find first unfinished step in strict order
 // ---------------------------------------------------------------------------
@@ -2217,6 +2294,23 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
   if (Object.keys(slotInfo.costs).length > 0) {
     const storageIssues = checkStorageCapacity(slotInfo, slotInfo.costs);
     if (storageIssues.length > 0) {
+      const blockedByWarehouse = ["wood", "clay", "iron"].some(
+        (res) => slotInfo.costs[res] && slotInfo.costs[res] > slotInfo.warehouseCap
+      );
+      const reliefKind = blockedByWarehouse ? "warehouse" : "granary";
+
+      const relief = await attemptStorageReliefUpgrade(page, baseUrl, village.id, template, reliefKind);
+      if (relief) {
+        return {
+          status: "storage_relief",
+          report,
+          message:
+            `${step.building} slot ${resolvedSlot} is blocked on ${relief.building} capacity ` +
+            `(${storageIssues.join("; ")}). Upgraded ${relief.building} slot ${relief.slot} ${relief.fromLevel} → ${relief.toLevel} ` +
+            "to relieve it — retrying the blocked step next."
+        };
+      }
+
       return {
         status: "blocked_storage",
         report,
@@ -2923,6 +3017,7 @@ module.exports = {
   readSlotPage,
   checkStorageCapacity,
   checkResourceSufficiency,
+  attemptStorageReliefUpgrade,
   resolveNextStep,
   runBuilderStep,
   runCrannyDefenseStep,
