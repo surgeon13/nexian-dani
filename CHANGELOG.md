@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.55] — 2026-08-19
+
+### Changed
+
+- **Builder Loop now waits for the page lock instead of bailing + spamming "Skipped auto-builder: another action is currently running"** — a real user asked why they kept seeing that message (plus a retry every 20s) for the whole duration of a manual Resource Fields Builder session. Previously the tick checked the lock once and gave up immediately if it was held, then retried blind every 20s, producing that same warning on a loop the entire time something else (a manual run, a farmlist send, whatever) held the page. It now calls `waitForActionIdle()` first — the same wait-for-the-lock pattern Troop Auto already uses — so it just resumes quietly the moment the other action releases the lock, instead of repeatedly bailing and re-polling. Only logs anything if the lock is actually held when the tick starts, and only warns if it's still held after 90s (falls back to the same 20s retry in that case). A manual action colliding with the auto loop still gets immediate "Skipped" feedback, unchanged — that's the right UX for a human waiting on a keypress; this fix is specifically for the background loop's side of the same collision.
+
 ## [1.8.54] — 2026-08-19
 
 ### Fixed

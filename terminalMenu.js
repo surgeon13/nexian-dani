@@ -8302,6 +8302,25 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         let executed = false;
         let hadError = false;
         try {
+          // A manual builder run (or any other action) can hold the page
+          // lock for a while. Previously this tick bailed the instant it
+          // saw the lock held — "Skipped auto-builder: another action is
+          // currently running" — then retried again in 20s, producing that
+          // same warning on a loop for the entire duration of, say, a
+          // manual multi-step Resource Fields Builder session. Wait for the
+          // lock instead (same pattern Troop Auto already uses via
+          // waitForActionIdle), so the tick just resumes quietly right
+          // after the other action finishes rather than spamming a skip
+          // warning every 20s. Only actually logs anything if the lock is
+          // held when we get here, and only warns if it's still held after
+          // 90s — a real user asked for exactly this.
+          if (!(await waitForActionIdle("Builder Loop", { maxWaitMs: 90000 }))) {
+            const delayMs = 20000;
+            nextBuilderRunAt = Date.now() + delayMs;
+            builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+            return;
+          }
+
           const startedAt = Date.now();
           executed = await runAction("auto-builder", async () => {
             let loopPlan = getBuilderPlanMeta(
