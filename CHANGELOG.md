@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.56] — 2026-08-19
+
+### Changed
+
+- **`[B]` Builder Templates now clears the OTHER plan mode when assigning a standalone template, instead of leaving two plans "active" at once** — a real user's screenshot showed the assign screen listing both `resource_fields_02 [resource] (active)` and `village_stage_fast_basic_15c [village] (active)` on the same village simultaneously, and asked for exactly one to be active. 1.8.53 already made a standalone template's plan take *priority* at decision time (`resolveBuilderPlanModeForVillage`), but left the other mode's progress record sitting there untouched — still shown as "active" in this same menu, confusing regardless of which one the bot actually acted on. New `villageBuilder.clearVillagePlan()` removes a plan mode's progress entirely (not "reset to the default template" like `resetVillageProgress` — actually gone, so `getVillageProgress()` returns `null` for it). Assigning a standalone template (one not reachable from either default chain) now clears the other mode's progress if it had any, and says so in the confirmation message. Re-assigning `village_stage_fast_basic_15c` (or any other standalone template) to an already-conflicted village fixes it retroactively — no manual progress.json editing needed. Verified in isolation end-to-end against the exact reported state.
+
 ## [1.8.55] — 2026-08-19
 
 ### Changed

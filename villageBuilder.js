@@ -3117,6 +3117,42 @@ function resetVillageProgress(village, templateKey, options = {}) {
   });
 }
 
+/**
+ * Removes tracked progress for one plan mode ("resource" or "village") on a
+ * village entirely, so getVillageProgress(village, {planMode}) returns null
+ * for it afterward instead of resetVillageProgress's "back to the default
+ * template" — used when a standalone template (e.g.
+ * village_stage_fast_basic_15c) is assigned to the OTHER mode, so the
+ * village ends up with only ONE active plan instead of two tracked (and
+ * competing) in parallel. A real user hit exactly this: the terminal's
+ * assign-template screen showed BOTH resource_fields_02 and
+ * village_stage_fast_basic_15c as "(active)" on the same village at once.
+ */
+function clearVillagePlan(village, planMode) {
+  const mode = normalizePlanMode(planMode);
+  const progress = loadProgress();
+  const key = villageProgressKey(village);
+  const record = progress[key];
+  if (!record) {
+    return;
+  }
+  if (record.plans && record.plans[mode]) {
+    delete record.plans[mode];
+  }
+  if (mode === PLAN_MODE_VILLAGE) {
+    delete record.active_template;
+    delete record.stage_index;
+    delete record.step_index;
+    delete record.prereq_validated_template;
+    delete record.completed_template;
+    delete record.realigned_from_template;
+    delete record.reset_at;
+  }
+  record.updated_at = new Date().toISOString();
+  progress[key] = record;
+  saveProgress(progress);
+}
+
 module.exports = {
   loadIndex,
   loadTemplate,
@@ -3137,6 +3173,7 @@ module.exports = {
   runCrannyDefenseStep,
   previewPlan,
   resetVillageProgress,
+  clearVillagePlan,
   syncProgressToWorldState,
   buildSlotUrl,
   discoverInnerBuildingSlotFromMap,

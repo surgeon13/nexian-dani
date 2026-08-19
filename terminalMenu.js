@@ -3221,8 +3221,26 @@ async function runTemplateAssignMenu(rl, hooks) {
       },
       { planMode: mode }
     );
+
+    // A standalone template (not part of the default village_stage_00->01->02
+    // or resource_fields_01->05 chain) is meant to be the village's ENTIRE
+    // plan, not one half of a two-track pipeline — so clear the OTHER
+    // mode's progress rather than leaving it tracked (and shown as
+    // "active") alongside it. A real user hit exactly this: the assign
+    // screen showed both resource_fields_02 and village_stage_fast_basic_15c
+    // as "(active)" on the same village at once.
+    const otherMode = mode === "resource" ? "village" : "resource";
+    let clearedOtherMessage = "";
+    if (!builder.isTemplateInDefaultChain(chosenEntry.key, mode)) {
+      const otherProgress = builder.getVillageProgress(village, { planMode: otherMode });
+      if (otherProgress && otherProgress.active_template) {
+        clearedOtherMessage = ` (cleared ${otherMode} plan "${otherProgress.active_template}" — this village now runs only this template)`;
+        builder.clearVillagePlan(village, otherMode);
+      }
+    }
+
     logSuccess(
-      `${villageDisplayName(village)} → ${mode} template "${chosenEntry.key}" (progress reset to stage 0 / step 0).`
+      `${villageDisplayName(village)} → ${mode} template "${chosenEntry.key}" (progress reset to stage 0 / step 0)${clearedOtherMessage}.`
     );
     if (typeof hooks.onAssignmentChanged === "function") {
       hooks.onAssignmentChanged(village);
