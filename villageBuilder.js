@@ -1318,7 +1318,10 @@ function findFirstStageStepForBuildingTarget(template, buildingName, targetLevel
 
 /**
  * Nexian / Travian-style locks on empty slots: e.g. Academy requires Barracks level 3 before it becomes buildable.
- * When progress points at Academy but the UI leaves it locked for that reason, realign to the template step that satisfies the prereq.
+ * When progress points at a building but the UI leaves it locked for that reason, realign to the template step
+ * that satisfies the prereq (or, if the prerequisite building isn't managed by this template at all — Main
+ * Building lives in the "village" plan, not the "resource" plan that places these bonus buildings — see
+ * attemptPrerequisiteBuildingRelief() below).
  */
 function getNewBuildingGamePrerequisite(buildingName) {
   if (isSameBuildingName(buildingName, "Academy")) {
@@ -1326,6 +1329,24 @@ function getNewBuildingGamePrerequisite(buildingName) {
       requiresBuilding: "Barracks",
       minLevel: 3,
       templateTargetLevel: 3
+    };
+  }
+  // Documented in resource_fields_03.json's own stage notes: "Requires
+  // Woodcutter/Clay Pit/Iron Mine level 10 and Main Building level 5." The
+  // field-level half was already handled (Stage 1 of that template); the
+  // Main Building half was never wired up, so a village whose Main Building
+  // was still below 5 when it reached this stage looped forever — jumping
+  // "back to Stage 1" re-verified fields that were already fine, over and
+  // over, without ever touching the actual blocker.
+  if (
+    isSameBuildingName(buildingName, "Sawmill") ||
+    isSameBuildingName(buildingName, "Brickyard") ||
+    isSameBuildingName(buildingName, "Iron Foundry")
+  ) {
+    return {
+      requiresBuilding: "Main Building",
+      minLevel: 5,
+      templateTargetLevel: 5
     };
   }
   return null;
@@ -1351,6 +1372,60 @@ async function readPrerequisiteBuildingLevel(page, baseUrl, villageId, template,
   return 0;
 }
 
+/**
+ * A locked-building prerequisite (e.g. Sawmill needs Main Building level 5)
+ * can point at a building that isn't managed by the CURRENT template at all
+ * — Main Building lives in the "village" plan, not the "resource" plan that
+ * places Sawmill/Brickyard/Iron Foundry. Jumping to a stage inside the
+ * current template can't help in that case (no such stage exists), so
+ * instead discover the prerequisite building directly from the live village
+ * map and upgrade it out-of-band, if it's real and currently affordable.
+ * Mirrors attemptStorageReliefUpgrade()'s shape/guards for the same reason:
+ * a one-off relief click, no progress-index changes, so the original
+ * blocked step is simply retried right after with the prerequisite one
+ * level closer to satisfied.
+ */
+async function attemptPrerequisiteBuildingRelief(page, baseUrl, villageId, requiresBuilding) {
+  const slot = await discoverInnerBuildingSlotFromMap(page, baseUrl, villageId, requiresBuilding);
+  if (!Number.isFinite(Number(slot))) {
+    return null;
+  }
+
+  const slotInfo = await readSlotPage(page, baseUrl, Number(slot), villageId);
+  if (slotInfo.isEmptySlot || !isSameBuildingName(slotInfo.buildingName, requiresBuilding)) {
+    return null;
+  }
+  if (Number(slotInfo.buildQueueCount) > 0) {
+    return null;
+  }
+  if (!slotInfo.hasUpgradeButton || slotInfo.upgradeDisabled) {
+    return null;
+  }
+
+  const costs = slotInfo.costs || {};
+  if (!Object.keys(costs).length) {
+    return null;
+  }
+  if (checkStorageCapacity(slotInfo, costs).length > 0) {
+    return null;
+  }
+  if (!checkResourceSufficiency(slotInfo, costs).sufficient) {
+    return null;
+  }
+
+  const clicked = await executeUpgradeClick(page, { allowMasterBuilder: false });
+  if (!clicked) {
+    return null;
+  }
+
+  return {
+    slot: Number(slot),
+    building: requiresBuilding,
+    fromLevel: slotInfo.currentLevel,
+    toLevel: slotInfo.currentLevel + 1
+  };
+}
+
 async function tryRealignForLockedNewBuildingPrerequisite(
   page,
   baseUrl,
@@ -1362,9 +1437,6 @@ async function tryRealignForLockedNewBuildingPrerequisite(
   planMode
 ) {
   const mode = normalizePlanMode(planMode);
-  if (mode !== PLAN_MODE_VILLAGE) {
-    return null;
-  }
 
   const prereq = getNewBuildingGamePrerequisite(step.building);
   if (!prereq) {
@@ -1390,7 +1462,26 @@ async function tryRealignForLockedNewBuildingPrerequisite(
   );
 
   if (!jump) {
-    return null;
+    const relief = await attemptPrerequisiteBuildingRelief(page, baseUrl, village.id, prereq.requiresBuilding);
+    if (relief) {
+      return {
+        status: "prerequisite_relief",
+        report,
+        message:
+          `${step.building} is locked until ${prereq.requiresBuilding} reaches level ${prereq.minLevel} ` +
+          `(currently ${currentLevel}), and ${prereq.requiresBuilding} isn't managed by this template. ` +
+          `Upgraded ${relief.building} slot ${relief.slot} ${relief.fromLevel} → ${relief.toLevel} directly to help unblock it.`
+      };
+    }
+
+    return {
+      status: "blocked_prerequisite_building",
+      report,
+      message:
+        `${step.building} is locked until ${prereq.requiresBuilding} reaches level ${prereq.minLevel} ` +
+        `(currently ${currentLevel}). No template step manages ${prereq.requiresBuilding}, and no affordable live ` +
+        "upgrade is available for it right now."
+    };
   }
 
   setVillageProgress(
@@ -3018,6 +3109,8 @@ module.exports = {
   checkStorageCapacity,
   checkResourceSufficiency,
   attemptStorageReliefUpgrade,
+  attemptPrerequisiteBuildingRelief,
+  getNewBuildingGamePrerequisite,
   resolveNextStep,
   runBuilderStep,
   runCrannyDefenseStep,

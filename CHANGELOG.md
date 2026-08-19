@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.52] — 2026-08-19
+
+### Fixed
+
+- **Sawmill/Brickyard/Iron Foundry looped forever ("realigned_template" → walk already-satisfied fields → locked again → repeat) when Main Building was below level 5** — root-caused from a real user's pasted log: `resource_fields_03.json`'s own stage notes say each bonus building "Requires [field] level 10 and Main Building level 5", but the code that checks/fixes locked-building prerequisites (`getNewBuildingGamePrerequisite`) only knew about one case ("Academy requires Barracks 3") and was hard-gated to the "village" plan only — it never ran for these "resource" plan buildings at all. Worse, even when a prerequisite realign attempt run, it can only jump to a stage *inside the current template* — and Main Building isn't managed by any resource_fields_* template, so no such stage exists there. The result: progress kept bouncing back to Stage 1 of resource_fields_03 (whose fields were already at level 10 — real user's log showed exactly this), never touching the actual blocker, forever.
+
+  Fixed two ways: `getNewBuildingGamePrerequisite` now knows Sawmill/Brickyard/Iron Foundry require Main Building level 5 (matching the template's own documented notes), and the plan-mode restriction is gone so it runs for resource-plan buildings too. And for the deeper case — a prerequisite building genuinely not managed by the current template at all — a new `attemptPrerequisiteBuildingRelief()` discovers it directly from the live village map and clicks its next-level upgrade out-of-band if affordable (mirrors `attemptStorageReliefUpgrade` from 1.8.51: no progress-index changes, so the original blocked step is simply retried right after, one Main Building level closer to unlocked). New `prerequisite_relief` status, wired into the same same-tick follow-up retry loop and success logging as `storage_relief`.
+
+- **A quit already in progress could crash a leftover Builder Loop tick against the closed browser, logging a scary "Auto-build failed" as literally the last line after "Session ended."** — root-caused from the same user's pasted log. A tick that was already past its `done` check (mid-flight) when quit was requested hit the closed browser on `page.goto` — already caught and logged as a transient/expected failure — but then fell through to `restoreSelectedVillageContext()`, a *second*, uncaught `page.goto()` against the same closed browser. Now: when quit is already in progress and the error is one of the known transient session-closed patterns, the tick returns immediately after the first (already-handled) error instead of attempting that second navigation, and skips the log/`recordAction` entirely — an orderly shutdown shouldn't leave a misleading failure as its last trace.
+
 ## [1.8.51] — 2026-08-19
 
 ### Added

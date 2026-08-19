@@ -8347,7 +8347,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   finalResult.status === "skipped_wrong_building_type" ||
                   finalResult.status === "template_complete" ||
                   finalResult.status === "realigned_template" ||
-                  finalResult.status === "storage_relief"
+                  finalResult.status === "storage_relief" ||
+                  finalResult.status === "prerequisite_relief"
                 )
               ) {
                 break;
@@ -8379,10 +8380,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             }
 
             // Any cleanly-blocked status (storage/queue/mismatch/disabled button/…)
-            // retried tick after tick with nothing ever surfacing it. success and
-            // storage_relief both represent real forward progress (storage_relief
-            // clicked a genuine upgrade, just not the originally-targeted step),
-            // so both reset the streak same as success would.
+            // retried tick after tick with nothing ever surfacing it. success,
+            // storage_relief, and prerequisite_relief all represent real forward
+            // progress (both *_relief statuses clicked a genuine upgrade, just
+            // not the originally-targeted step), so all three reset the streak
+            // same as success would.
             if (
               String(finalResult.status || "").startsWith("blocked_") ||
               finalResult.status === "idle_saturated" ||
@@ -8444,7 +8446,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               });
             } else if (finalResult.status === "template_complete" || finalResult.status === "all_complete") {
               logSuccess(`[Builder Loop] ${finalResult.message}`);
-            } else if (finalResult.status === "storage_relief") {
+            } else if (finalResult.status === "storage_relief" || finalResult.status === "prerequisite_relief") {
               logSuccess(`[Builder Loop] ${finalResult.message}`);
             } else {
               if (String(finalResult.status || "").startsWith("blocked_") || finalResult.status === "idle_saturated") {
@@ -8457,6 +8459,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         } catch (error) {
           hadError = true;
           const message = error && error.message ? error.message : String(error);
+          const isTransientSessionState =
+            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|ERR_INSUFFICIENT_RESOURCES|interrupted by another navigation|Execution context was destroyed/i.test(
+              message
+            );
+
+          // A quit already in progress can close the browser out from under a
+          // tick that was already mid-flight past the `done` check above (the
+          // window between "user pressed q" and "cleanup actually tears the
+          // browser down"). That's an expected shutdown race, not a real
+          // failure — a real user saw this land after "Session ended." as a
+          // scary-looking "Auto-build failed" line. Skip the log/record
+          // entirely rather than let quitting leave a misleading failure as
+          // its last trace.
+          if (done && isTransientSessionState) {
+            return;
+          }
+
           recordAction({
             actionType: "building.upgrade",
             status: "failed",
@@ -8468,10 +8487,6 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             },
             errorMessage: message
           });
-          const isTransientSessionState =
-            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|ERR_INSUFFICIENT_RESOURCES|interrupted by another navigation|Execution context was destroyed/i.test(
-              message
-            );
           if (isTransientSessionState) {
             logWarn(`[Builder Loop] Auto-build skipped: ${message}`);
           } else {
@@ -11042,7 +11057,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             logSuccess(finalResult.message);
           } else if (finalResult.status === "all_complete") {
             logSuccess(finalResult.message);
-          } else if (finalResult.status === "storage_relief") {
+          } else if (finalResult.status === "storage_relief" || finalResult.status === "prerequisite_relief") {
             logSuccess(finalResult.message);
           } else if (finalResult.status === "blocked_resources") {
             logInfo(`Builder: ${finalResult.message}`);
