@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.44] — 2026-08-18
+
+### Changed
+
+- **Builder RR auto-exclude now triggers on the 18 basic resource fields alone, not the full template chain** — confirmed with the user: "resource fields complete" for `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` purposes now means Woodcutter/Clay Pit/Iron Mine/Cropland (slots 1-18) all at level 10, verified directly against the live village map — **not** also Sawmill/Brickyard/Iron Foundry (level 3), Grain Mill (level 5), and Bakery (level 5), which the full `resource_fields_01`-`05` template chain also required before. A village will now stop being auto-built and get excluded from RR as soon as its 18 fields hit 10, even if those bonus buildings were never placed. This was also the fix for a real bug: template-progress tracking (`previewPlan`/`progress.json`) can lag behind reality for a village whose fields were already high level before this bot took it over (never went through the bot's own sequential template execution) — such a village kept getting worked on indefinitely because the tracker didn't know the fields were already done. The new live-DOM check (`villageBuilder.readResourceFieldLevelsFromMap` + `areAllResourceFieldsAtLevel`, one page load, reusing the exact selector already proven for `surveyInnerSlotsFromVillageMap`) catches this directly instead of trusting the tracker.
+
+Verified: `node -c` on both touched files; `areAllResourceFieldsAtLevel` tested in isolation across 6 scenarios (complete, missing a slot, one slot below target, all above target, empty input, non-array input); the village-center URL construction (the actual bug caught during self-review — the live-check call site initially passed the whole `settings` object where a URL string was expected, silently working for the wrong reason since `readResourceFieldLevelsFromMap`'s signature was changed to accept `settings` directly instead, matching the rest of this file's convention) tested against real `settings`-shaped input, default fallback, and null input.
+
 ## [1.8.43] — 2026-08-18
 
 ### Fixed

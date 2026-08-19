@@ -1015,6 +1015,83 @@ async function surveyInnerSlotsFromVillageMap(page, baseUrl, villageId) {
   });
 }
 
+/**
+ * Reads live levels for resource field slots 1-18 (Woodcutter/Clay
+ * Pit/Iron Mine/Cropland) directly from the village map's area title/alt
+ * text, in one page load. Same selector as surveyInnerSlotsFromVillageMap
+ * (which reads this exact page for slots >=19) — deliberately reused
+ * rather than a new untested selector, just with the "level N" text kept
+ * instead of stripped, and filtered to 1-18 instead of >=19.
+ *
+ * Needed because template-progress tracking (previewPlan / progress.json)
+ * can be out of sync with reality — e.g. a village whose fields were
+ * already high level before this bot took it over never went through the
+ * bot's own sequential template execution, so progress.json can say
+ * "resource_fields_02" while the real fields are already all at 10. This
+ * reads the ACTUAL current level regardless of what progress.json thinks.
+ */
+async function readResourceFieldLevelsFromMap(page, settings, villageId) {
+  if (!villageId) {
+    return [];
+  }
+  const baseUrl = (settings && settings.villageBuilderUrl) || "https://nexian.world/village2.php";
+  const centerUrl = buildVillageCenterUrl(baseUrl, villageId);
+  await safeGotoWithRetry(page, centerUrl, { waitUntil: "domcontentloaded", timeout: 60000 }, 2);
+
+  return page.evaluate(() => {
+    const normalize = (value) =>
+      String(value || "").replace(/ /g, " ").trim();
+    const areas = Array.from(
+      document.querySelectorAll("map#map2 area[href*='build.php?id='], area[href*='build.php?id=']")
+    );
+    const out = [];
+    for (const area of areas) {
+      const href = area.getAttribute("href") || "";
+      const match = href.match(/[?&]id=(\d+)/i);
+      const slotId = match ? Number(match[1]) : null;
+      if (!Number.isFinite(slotId) || slotId < 1 || slotId > 18) {
+        continue;
+      }
+      const title = normalize(area.getAttribute("title") || "");
+      const alt = normalize(area.getAttribute("alt") || "");
+      const combined = `${title} ${alt}`;
+      const levelMatch =
+        combined.match(/\blevel\s+(\d+)\b/i) || combined.match(/\blvl\.?\s*(\d+)\b/i);
+      out.push({ slotId, level: levelMatch ? Number(levelMatch[1]) : 0 });
+    }
+    return out;
+  });
+}
+
+/**
+ * True only if all 18 resource field slots were read AND are all at/above
+ * targetLevel. Returns false (not "unknown") on any incomplete read, so a
+ * navigation hiccup never gets mistaken for "fields complete."
+ */
+function areAllResourceFieldsAtLevel(fieldRows, targetLevel = 10) {
+  if (!Array.isArray(fieldRows)) {
+    return false;
+  }
+  const seenSlots = new Set();
+  for (const row of fieldRows) {
+    const level = Number(row && row.level);
+    const slotId = Number(row && row.slotId);
+    if (!Number.isFinite(level) || !Number.isFinite(slotId)) {
+      continue;
+    }
+    if (level < targetLevel) {
+      return false;
+    }
+    seenSlots.add(slotId);
+  }
+  for (let slot = 1; slot <= 18; slot += 1) {
+    if (!seenSlots.has(slot)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function resolveBonusBuildingSlotFromSurvey(rows, buildingName) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return null;
@@ -2787,5 +2864,7 @@ module.exports = {
   buildSlotUrl,
   discoverInnerBuildingSlotFromMap,
   surveyInnerSlotsFromVillageMap,
+  readResourceFieldLevelsFromMap,
+  areAllResourceFieldsAtLevel,
   readSlotPage
 };

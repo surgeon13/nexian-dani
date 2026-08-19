@@ -6661,6 +6661,24 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    // Adds a village to BUILDER_RR_EXCLUDED_VILLAGE_IDS (persisted) and logs
+    // it, if not already excluded. Shared by the "resource plan just went
+    // all_complete mid-tick" path and the "fields already at 10 per a live
+    // check, template tracking just hasn't caught up" path.
+    const excludeVillageFromBuilderRR = async (village, reason) => {
+      const excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
+      if (excludedSet.has(Number(village.id))) {
+        return false;
+      }
+      excludedSet.add(Number(village.id));
+      settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedSet);
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
+      }
+      logSuccess(`[Builder Loop] ${reason} for ${villageDisplayName(village)} — excluded from Builder RR.`);
+      return true;
+    };
+
     const builderRrUsesResourceThenVillagePipeline = () =>
       Boolean(
         settings.builderRoundRobinEnabled &&
@@ -8111,6 +8129,53 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             let loopPlan = getBuilderPlanMeta(
               resolveBuilderPlanModeForVillage(targetVillage) || activeBuilderPlanMode
             );
+
+            // Template-progress tracking (previewPlan) can lag behind reality
+            // — e.g. a village whose fields were already high level before
+            // this bot took it over never went through the bot's own
+            // sequential template execution, so it can still show as
+            // "resource" work pending here even though the 18 basic fields
+            // (Woodcutter/Clay Pit/Iron Mine/Cropland) are already all at
+            // level 10 in-game. A real user hit this: the bot kept trying to
+            // "upgrade" such a village instead of excluding it and moving on.
+            // Verify directly against the live DOM before doing any real
+            // work, fields-only (not bonus buildings/Grain Mill/Bakery, by
+            // design — those are handled by the separate all_complete path
+            // below when BUILDER_RR_RESOURCE_THEN_VILLAGE / auto-exclude
+            // logic actually reaches full template completion).
+            if (
+              loopPlan.key === "resource" &&
+              settings.builderRrAutoExcludeOnResourceComplete &&
+              builderRrUsesResourceThenVillagePipeline()
+            ) {
+              try {
+                const fieldRows = await builder.readResourceFieldLevelsFromMap(
+                  getPage(),
+                  settings,
+                  targetVillage.id
+                );
+                if (builder.areAllResourceFieldsAtLevel(fieldRows, 10)) {
+                  const excluded = await excludeVillageFromBuilderRR(
+                    targetVillage,
+                    "Resource fields already at level 10 (live check)"
+                  );
+                  if (!excluded) {
+                    logInfo(
+                      `[Builder Loop] ${villageDisplayName(targetVillage)} fields already at level 10 but already excluded — skipping this tick.`
+                    );
+                  }
+                  return;
+                }
+              } catch (error) {
+                if (isResourceExhaustionError(error)) {
+                  throw error;
+                }
+                logWarn(
+                  `[Builder Loop] Live field-level check failed for ${villageDisplayName(targetVillage)}: ${error && error.message ? error.message : error}. Falling back to template-based tracking.`
+                );
+              }
+            }
+
             builderEfficiencyWindow.attempts += 1;
             await ensureVillageBrowserContext(targetVillage, "Builder Loop");
             logInfo(`[Builder Loop] Auto-build (${loopPlan.short}) starting for ${villageDisplayName(targetVillage)}...`);
@@ -8139,17 +8204,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
               if (finalResult && finalResult.status === "all_complete" && loopPlan.key === "resource") {
                 if (settings.builderRrAutoExcludeOnResourceComplete) {
-                  const excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
-                  if (!excludedSet.has(Number(targetVillage.id))) {
-                    excludedSet.add(Number(targetVillage.id));
-                    settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedSet);
-                    if (runtimeControls.persistSettings) {
-                      await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
-                    }
-                    logSuccess(
-                      `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — excluded from Builder RR.`
-                    );
-                  }
+                  await excludeVillageFromBuilderRR(targetVillage, "Resource fields complete");
                   break;
                 }
 
