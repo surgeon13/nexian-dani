@@ -1862,6 +1862,7 @@ function printMainMenu(automationStatus, settings = terminalUiSettings) {
   console.log(`  ${color("4", ANSI.bold, ANSI.cyan)}  Troop Trainer`);
   console.log(`  ${color("C", ANSI.bold, ANSI.cyan)}  Cranny defense (selected village)`);
   console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Plans (timers + per-village)`);
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Builder Templates (assign per-village)`);
   console.log(`  ${color("5", ANSI.bold, ANSI.cyan)}  Expansion / Residence Check`);
   console.log(`  ${color("X", ANSI.bold, ANSI.cyan)}  Stop Builder Process`);
   console.log(`  ${color("r", ANSI.bold, ANSI.cyan)}  Relogin Now`);
@@ -1884,7 +1885,7 @@ function printCompactMenuKeys(settings = terminalUiSettings) {
     `  ${color("0", ANSI.bold, ANSI.cyan)} Status  ${color("1", ANSI.bold, ANSI.cyan)} Farm  ${color("2", ANSI.bold, ANSI.cyan)} V.Bld  ${color("3", ANSI.bold, ANSI.cyan)} R.Bld  ${color("4", ANSI.bold, ANSI.cyan)} Troop  ${color("5", ANSI.bold, ANSI.cyan)} Exp`
   );
   console.log(
-    `  ${color("T", ANSI.bold, ANSI.cyan)} Tpl  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
+    `  ${color("T", ANSI.bold, ANSI.cyan)} Tpl  ${color("B", ANSI.bold, ANSI.cyan)} Bld.Tpl  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
   );
 }
 
@@ -3101,6 +3102,129 @@ async function runTroopPlanAssignMenu(rl, hooks) {
     const chosenPlan = plans[planIndex - 1];
     troopPlans.setAssignment(village, { plan: chosenPlan.name, enabled: true });
     logSuccess(`${villageDisplayName(village)} → plan "${chosenPlan.name}" (auto-train ON).`);
+    if (typeof hooks.onAssignmentChanged === "function") {
+      hooks.onAssignmentChanged(village);
+    }
+  }
+}
+
+function builderTemplatePlanMode(templateKey) {
+  return String(templateKey || "").startsWith("resource_fields_") ? "resource" : "village";
+}
+
+// Terminal-menu front end for scripts/set-village-template.js — same
+// underlying setVillageProgress() write, just picked from a village/template
+// list instead of typing --village-id/--x/--y/--template by hand.
+async function runTemplateAssignMenu(rl, hooks) {
+  const getSnapshot =
+    typeof hooks.getSnapshot === "function"
+      ? hooks.getSnapshot
+      : () => ({ villages: [] });
+
+  if (typeof hooks.refreshVillages === "function") {
+    try {
+      await hooks.refreshVillages();
+    } catch (_error) {
+      logWarn("Could not refresh village list (session busy?).");
+    }
+  }
+
+  let templates;
+  try {
+    templates = builder.loadIndex().templates.filter((t) => t.enabled);
+  } catch (error) {
+    logError(`Could not load templates/index.json: ${error.message || error}`);
+    return;
+  }
+  if (!templates.length) {
+    logWarn("No enabled templates found in templates/index.json.");
+    return;
+  }
+
+  let done = false;
+  while (!done) {
+    if (hooks.menuSession && hooks.menuSession.quitRequested) {
+      done = true;
+      continue;
+    }
+    const snapshot = getSnapshot();
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+
+    printSubDivider("BUILDER TEMPLATES — ASSIGN VILLAGES");
+    if (!villages.length) {
+      console.log(`  ${color("(no villages loaded — open main menu V first)", ANSI.gray)}`);
+    }
+    villages.forEach((village, index) => {
+      const villageProgress = builder.getVillageProgress(village, { planMode: "village" });
+      const resourceProgress = builder.getVillageProgress(village, { planMode: "resource" });
+      const villageLabel = (villageProgress && villageProgress.active_template) || "—";
+      const resourceLabel = (resourceProgress && resourceProgress.active_template) || "—";
+      console.log(
+        `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${villageDisplayName(village)}  ${color(`village: ${villageLabel}`, ANSI.gray)}  ${color(`resource: ${resourceLabel}`, ANSI.gray)}`
+      );
+    });
+    console.log("");
+    console.log(
+      `  ${color("Pick", ANSI.bold, ANSI.cyan)} village number  ${color("B", ANSI.bold, ANSI.cyan)} back`
+    );
+
+    const answer = (await askQuestion(rl, "Village: ")).trim().toUpperCase();
+    if (answer === "B" || answer === "") {
+      done = true;
+      continue;
+    }
+    if (answer === "Q") {
+      if (hooks.menuSession) {
+        hooks.menuSession.quitRequested = true;
+      }
+      done = true;
+      continue;
+    }
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a village number or B.");
+      continue;
+    }
+    const village = villages[index - 1];
+
+    printSubDivider(`ASSIGN TEMPLATE — ${villageDisplayName(village)}`);
+    templates.forEach((entry, i) => {
+      const mode = builderTemplatePlanMode(entry.key);
+      const progress = builder.getVillageProgress(village, { planMode: mode });
+      const isActive = progress && progress.active_template === entry.key;
+      const activeLabel = isActive ? color(" (active)", ANSI.bold, ANSI.green) : "";
+      console.log(
+        `  ${color(String(i + 1), ANSI.bold, ANSI.cyan)} ${entry.key}  ${color(`[${mode}]`, ANSI.gray)}${activeLabel}`
+      );
+    });
+    console.log("");
+    console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
+    const pick = (await askQuestion(rl, "Assign template number: ")).trim().toUpperCase();
+
+    if (pick === "B" || pick === "") {
+      continue;
+    }
+    const templateIndex = Number(pick);
+    if (!Number.isFinite(templateIndex) || templateIndex < 1 || templateIndex > templates.length) {
+      logWarn("Invalid template selection.");
+      continue;
+    }
+    const chosenEntry = templates[templateIndex - 1];
+    const mode = builderTemplatePlanMode(chosenEntry.key);
+    builder.setVillageProgress(
+      village,
+      {
+        active_template: chosenEntry.key,
+        stage_index: 0,
+        step_index: 0,
+        prereq_validated_template: null,
+        realigned_from_template: null
+      },
+      { planMode: mode }
+    );
+    logSuccess(
+      `${villageDisplayName(village)} → ${mode} template "${chosenEntry.key}" (progress reset to stage 0 / step 0).`
+    );
     if (typeof hooks.onAssignmentChanged === "function") {
       hooks.onAssignmentChanged(village);
     }
@@ -8763,6 +8887,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       await runTroopPlansMenu(menuRl, settings, runtimeControls, troopPlanHooks);
     };
 
+    const builderTemplateAssignHooks = {
+      menuSession,
+      requestQuit,
+      getSnapshot: () => ({
+        villages: villageState.villages.slice(),
+        selectedVillageId: villageState.selectedVillageId,
+        activeVillageId: villageState.activeVillageId
+      }),
+      refreshVillages: () =>
+        refreshVillageState({ navigateToStatusPage: true, silent: true }),
+      onAssignmentChanged: () => {
+        if (dashboardBridge) {
+          dashboardBridge.publishSnapshot({ force: true });
+        }
+      }
+    };
+
+    const runBuilderTemplateAssignMenu = async () => {
+      await runTemplateAssignMenu(menuRl, builderTemplateAssignHooks);
+    };
+
     const scheduleTroopTrainingLoop = () => {
       syncAllTroopVillageLoops();
     };
@@ -11050,6 +11195,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       if (input === "T") {
         await runTroopTemplateCategoryMenu();
+        if (menuSession.quitRequested) {
+          done = true;
+        }
+        continue;
+      }
+
+      if (input === "B") {
+        await runBuilderTemplateAssignMenu();
         if (menuSession.quitRequested) {
           done = true;
         }

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.47] — 2026-08-19
+
+### Added
+
+- **Terminal menu `[B]` — Builder Templates (assign per-village)** — an easier way to point a village at a template than typing `--village-id=/--x=/--y=/--template=` on the command line (`scripts/set-village-template.js` still works, and this uses the exact same `setVillageProgress()` write underneath). Pick a village from the list (shows its current `village` and `resource` plan templates), then pick any enabled template from `templates/index.json` — the plan mode (village/resource) is inferred automatically from the template key's prefix, and the currently-active one is marked `(active)`.
+
 ## [1.8.46] — 2026-08-19
 
 ### Added
