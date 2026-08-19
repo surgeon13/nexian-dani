@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.58] — 2026-08-19
+
+### Changed
+
+- **`village_stage_fast_basic_15c` finished: added stages 27-29 (Woodcutter/Clay Pit/Iron Mine to 10)** — the template already pushed all crop fields to 10, Bakery to 5, and Residence to 10; this adds the remaining piece so every one of the 18 resource-field slots ends the template at level 10, not just the ~15 crop ones. Same `strict_match`+`skip_if_mismatch` technique as the crop-field passes: each stage sweeps all 18 slots for one building type and only actually upgrades whichever slots are genuinely that type (a 15-crop village's exact non-crop count/positions vary per village), silently skipping the rest. Template bumped to internal `version: 4` (29 stages, 170 steps total).
+
 ## [1.8.57] — 2026-08-19
 
 ### Changed
