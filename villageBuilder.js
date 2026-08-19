@@ -901,6 +901,75 @@ function resolveNextStep(template, villageProgress) {
   return null; // Template fully completed
 }
 
+/**
+ * Shared advance-past-current-step logic, used both when a step is already
+ * satisfied (building already at/above target level) and when a step is
+ * explicitly marked skip_if_mismatch and the live slot doesn't hold the
+ * expected building type (e.g. a "Cropland only" step landing on a
+ * Woodcutter slot in a mixed-field village). Persists progress and returns
+ * either a template-completion result (template_complete/all_complete, if
+ * this was the last step) or a custom advance result built from `status`/
+ * `message`.
+ */
+function advancePastStep(
+  village,
+  mode,
+  planLabel,
+  template,
+  activeTemplateKey,
+  stageIndex,
+  stepIndex,
+  isLast,
+  report,
+  status,
+  message
+) {
+  if (isLast) {
+    if (template.next_template) {
+      setVillageProgress(village, {
+        active_template: template.next_template,
+        stage_index: 0,
+        step_index: 0,
+        completed_template: activeTemplateKey
+      }, {
+        planMode: mode
+      });
+      return {
+        status: "template_complete",
+        planMode: mode,
+        completedTemplate: activeTemplateKey,
+        nextTemplate: template.next_template,
+        message: `${planLabel} template '${activeTemplateKey}' completed. Advanced to '${template.next_template}'.`
+      };
+    }
+    return {
+      status: "all_complete",
+      planMode: mode,
+      message: `All ${planLabel} templates completed for this village.`
+    };
+  }
+
+  const nextStepIndex = stepIndex + 1;
+  const currentStage = template.stages[stageIndex];
+  let newStageIndex = stageIndex;
+  let newStepIndex = nextStepIndex;
+
+  if (nextStepIndex >= currentStage.steps.length) {
+    newStageIndex = stageIndex + 1;
+    newStepIndex = 0;
+  }
+
+  setVillageProgress(village, {
+    active_template: activeTemplateKey,
+    stage_index: newStageIndex,
+    step_index: newStepIndex
+  }, {
+    planMode: mode
+  });
+
+  return { status, report, message };
+}
+
 function normalizeBuildingName(name) {
   const normalized = String(name || "")
     .toLowerCase()
@@ -940,6 +1009,14 @@ function isSameBuildingName(actual, expected) {
     return true;
   }
 
+  // Palace and Residence are mutually exclusive alternates of the same
+  // slot (settlement-capital choice) — a template step asking for either
+  // one should match whichever the village actually has.
+  const capitalBuilding = new Set(["palace", "residence"]);
+  if (capitalBuilding.has(compactA) && capitalBuilding.has(compactE)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -973,7 +1050,11 @@ function isFlexibleMapBonusBuilding(name) {
     c === "brickyard" ||
     c === "ironfoundry" ||
     c === "grainmill" ||
-    c === "bakery"
+    c === "bakery" ||
+    // Not a resource bonus, but its inner-slot position isn't fixed across
+    // templates either (varies by tribe/village) — reuse the same live-map
+    // discovery instead of trusting a guessed slot number in the template.
+    c === "residence"
   );
 }
 
@@ -1833,7 +1914,13 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
   let resolvedSlot = Number(step.slot);
   let slotInfo = await readSlotPage(page, baseUrl, resolvedSlot, village.id);
 
+  // strict_match: true opts a step out of "any resource field type
+  // satisfies this step" — used for building-specific stages (e.g.
+  // "Cropland only" on a mixed-field 15-crop village) that must not
+  // upgrade a Woodcutter/Clay Pit/Iron Mine just because it happens to
+  // sit in a slot the template listed as Cropland.
   const allowGenericResourceFieldStep =
+    !step.strict_match &&
     mode === PLAN_MODE_RESOURCE &&
     isResourceFieldSlot(step.slot) &&
     isResourceFieldBuildingName(step.building) &&
@@ -1906,6 +1993,23 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
     !isSameBuildingName(slotInfo.buildingName, step.building) &&
     !allowGenericResourceFieldStep
   ) {
+    if (step.skip_if_mismatch) {
+      return advancePastStep(
+        village,
+        mode,
+        planLabel,
+        template,
+        activeTemplateKey,
+        stageIndex,
+        stepIndex,
+        isLast,
+        report,
+        "skipped_wrong_building_type",
+        `Slot ${resolvedSlot} contains '${slotInfo.buildingName || "unknown"}', not '${step.building}'. ` +
+          "Step marked skip_if_mismatch — skipping without building."
+      );
+    }
+
     const tribeLayoutHint =
       isFlexibleMapBonusBuilding(step.building)
         ? ` No matching '${step.building}' on inner village map; build it on the correct site for your tribe or adjust the template.`
@@ -2094,55 +2198,19 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
       allowGenericResourceFieldStep
     )
   ) {
-    if (isLast) {
-      if (template.next_template) {
-        setVillageProgress(village, {
-          active_template: template.next_template,
-          stage_index: 0,
-          step_index: 0,
-          completed_template: activeTemplateKey
-        }, {
-          planMode: mode
-        });
-        return {
-          status: "template_complete",
-          planMode: mode,
-          completedTemplate: activeTemplateKey,
-          nextTemplate: template.next_template,
-          message: `${planLabel} template '${activeTemplateKey}' completed. Advanced to '${template.next_template}'.`
-        };
-      }
-      return {
-        status: "all_complete",
-        planMode: mode,
-        message: `All ${planLabel} templates completed for this village.`
-      };
-    }
-
-    // Step already done — advance progress
-    const nextStepIndex = stepIndex + 1;
-    const currentStage = template.stages[stageIndex];
-    let newStageIndex = stageIndex;
-    let newStepIndex = nextStepIndex;
-
-    if (nextStepIndex >= currentStage.steps.length) {
-      newStageIndex = stageIndex + 1;
-      newStepIndex = 0;
-    }
-
-    setVillageProgress(village, {
-      active_template: activeTemplateKey,
-      stage_index: newStageIndex,
-      step_index: newStepIndex
-    }, {
-      planMode: mode
-    });
-
-    return {
-      status: "already_satisfied",
+    return advancePastStep(
+      village,
+      mode,
+      planLabel,
+      template,
+      activeTemplateKey,
+      stageIndex,
+      stepIndex,
+      isLast,
       report,
-      message: `${step.building} slot ${resolvedSlot} already at level ${slotInfo.currentLevel} (target: ${step.target_level}). Advancing.`
-    };
+      "already_satisfied",
+      `${step.building} slot ${resolvedSlot} already at level ${slotInfo.currentLevel} (target: ${step.target_level}). Advancing.`
+    );
   }
 
   // Guard 2: Storage capacity

@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.44** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.46** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -14,7 +14,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker, **proxy menu (`y`)**. |
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
-| **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
+| **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. Experimental/standalone templates (e.g. `village_stage_fast_basic_15c` for crop-heavy villages) aren't in the default chain — assign one to a village with `npm run template:assign -- --village-id=ID --x=X --y=Y --template=KEY`. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert, celebrations RR. |
 | **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |

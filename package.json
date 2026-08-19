@@ -1,6 +1,6 @@
 {
   "name": "nexian",
-  "version": "1.8.45",
+  "version": "1.8.46",
   "description": "Menu-driven Playwright automation helper for Nexian",
   "main": "login.js",
   "scripts": {
@@ -26,6 +26,7 @@
     "cursor:ensure": "bash ./scripts/cursor-cloud-ensure.sh",
     "termux:setup": "bash ./scripts/termux-proot-setup.sh",
     "termux:run": "bash ./scripts/termux-proot-run.sh",
+    "template:assign": "node ./scripts/set-village-template.js",
     "setup:pc": "npm install --no-audit --no-fund && npx playwright install chromium",
     "export": "node export.js",
     "playwright:install": "npx playwright install chromium",

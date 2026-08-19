@@ -8186,6 +8186,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 !finalResult ||
                 !(
                   finalResult.status === "already_satisfied" ||
+                  finalResult.status === "skipped_wrong_building_type" ||
                   finalResult.status === "template_complete" ||
                   finalResult.status === "realigned_template"
                 )

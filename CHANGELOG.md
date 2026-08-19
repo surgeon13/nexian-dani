@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.46] — 2026-08-19
+
+### Added
+
+- **New experimental template: `village_stage_fast_basic_15c`** — a fast early-growth build order for 15-crop (crop-heavy) villages, as specified: Main Building 3 → Warehouse/Granary 2 → Marketplace 1 → all crop fields 3 → Main Building 5 → Warehouse/Granary 4 → crop fields 5 → Main Building 6 → Warehouse/Granary 6 → Grain Mill 3 → Main Building 8 → Residence 10, all on their real in-game slots. Standalone (`next_template: null`, not part of the default `village_stage_00` chain) — it only applies to a village you explicitly assign it to, via the new `scripts/set-village-template.js` (also `npm run template:assign`).
+- **`strict_match` + `skip_if_mismatch` step flags** (`villageBuilder.js`) — a 15-crop village's field layout (usually 15 Cropland + 3 Woodcutter/Clay Pit/Iron Mine, at slot positions that vary per village) can't be hardcoded, so the "all crop fields" stages list all 18 resource-field slots as Cropland with these flags set. `strict_match` opts a step out of the existing "any resource-field type satisfies this step" fallback (which exists for a different purpose — tolerating template/reality naming drift — and would otherwise silently let the bot upgrade a Woodcutter/Clay Pit/Iron Mine slot it should have left alone). `skip_if_mismatch` then makes a genuine mismatch (the slot isn't actually Cropland) auto-advance to the next step instead of hard-stopping the whole builder tick with `blocked_mismatch`, mirroring the existing `already_satisfied` advance-and-continue behavior (factored both into a shared `advancePastStep()` helper). Net effect: the bot upgrades whichever ~15 of the 18 slots are genuinely Cropland and silently skips the other ~3, without needing to know in advance which is which.
+- **Residence/Palace now auto-discovered from the live village map, like the other bonus buildings** — added to `isFlexibleMapBonusBuilding()` (previously only Sawmill/Brickyard/Iron Foundry/Grain Mill/Bakery), and `isSameBuildingName()` now treats "Palace" and "Residence" as equivalent (they're mutually exclusive alternates of the same slot, picked at settlement). A guessed slot number (25 in the new template) that turns out wrong, or shows a Palace instead of a Residence, no longer hard-stops the template — same live-map fallback `villageExpansion.js`'s dedicated Residence/Palace handling already relies on for the same reason (see its 1.8.29 note: "Gaul (and some layouts) place Residence off the classic Roman slot 25.").
+- **`scripts/set-village-template.js`** — assigns a template (experimental or otherwise) to one specific village's `templates/progress.json` record by village id + coordinates, resetting its stage/step to 0/0. Validates the template key exists and its prefix matches `--plan=` before writing, so a typo fails immediately instead of surfacing later inside the builder loop. `--reset` re-zeroes progress for a village's current template without switching it. Exposed as `npm run template:assign`.
+
 ## [1.8.45] — 2026-08-19
 
 ### Changed
