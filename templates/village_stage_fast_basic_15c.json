@@ -1,7 +1,7 @@
 {
   "key": "village_stage_fast_basic_15c",
   "name": "Fast Basic (15-Crop) - Early Growth Rush",
-  "description": "Experimental fast-start plan for 15-crop (crop-heavy) villages: light civic baseline, then push crop production hard before circling back to Main Building/storage/Grain Mill/Residence. Standalone template — not part of the default village_stage_00/01/02 chain. Assign it to one village at a time via scripts/set-village-template.js and compare results before rolling it out further.",
+  "description": "Experimental fast-start plan for 15-crop (crop-heavy) villages: light civic baseline, then push crop production hard before circling back to Main Building/storage/Grain Mill/Residence. Standalone template — not part of the default village_stage_00/01/02 chain. Assign it to one village at a time from the terminal menu ([B] Builder Templates) and compare results before rolling it out further.",
   "version": 1,
   "sequence_mode": "strict",
   "identity_policy": "vid_and_coords",

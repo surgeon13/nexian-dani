@@ -3112,9 +3112,8 @@ function builderTemplatePlanMode(templateKey) {
   return String(templateKey || "").startsWith("resource_fields_") ? "resource" : "village";
 }
 
-// Terminal-menu front end for scripts/set-village-template.js — same
-// underlying setVillageProgress() write, just picked from a village/template
-// list instead of typing --village-id/--x/--y/--template by hand.
+// Assigns a builder template to one village's templates/progress.json record,
+// picked from a village list and a template list rather than editing progress.json by hand.
 async function runTemplateAssignMenu(rl, hooks) {
   const getSnapshot =
     typeof hooks.getSnapshot === "function"

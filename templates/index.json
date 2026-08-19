@@ -57,7 +57,7 @@
       "file": "village_stage_fast_basic_15c.json",
       "next_template": null,
       "enabled": true,
-      "notes": "Experimental — not part of the default village_stage_00 chain. Assign to one village at a time with scripts/set-village-template.js."
+      "notes": "Experimental — not part of the default village_stage_00 chain. Assign to one village at a time from the terminal menu ([B] Builder Templates)."
     }
   ]
 }

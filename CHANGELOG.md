@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.48] — 2026-08-19
+
+### Removed
+
+- **`scripts/set-village-template.js` and its `npm run template:assign` entry** — the terminal menu's `[B]` Builder Templates (added in 1.8.47) covers the same job interactively, so the CLI script was redundant. Assigning a template to a village is now only available via `[B]` in the terminal menu.
+
 ## [1.8.47] — 2026-08-19
 
 ### Added
