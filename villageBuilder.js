@@ -1023,12 +1023,12 @@ async function surveyInnerSlotsFromVillageMap(page, baseUrl, villageId) {
  * rather than a new untested selector, just with the "level N" text kept
  * instead of stripped, and filtered to 1-18 instead of >=19.
  *
- * Needed because template-progress tracking (previewPlan / progress.json)
- * can be out of sync with reality — e.g. a village whose fields were
- * already high level before this bot took it over never went through the
- * bot's own sequential template execution, so progress.json can say
- * "resource_fields_02" while the real fields are already all at 10. This
- * reads the ACTUAL current level regardless of what progress.json thinks.
+ * General-purpose live-DOM diagnostic: reads the ACTUAL current field
+ * levels regardless of what progress.json thinks. NOT used to short-circuit
+ * Builder RR auto-exclude — exclusion still requires the full resource
+ * template chain (18 basic fields AND bonus buildings) to report complete
+ * via previewPlan, so bonus buildings are never skipped. This stays
+ * available for future verification/diagnostics use.
  */
 async function readResourceFieldLevelsFromMap(page, settings, villageId) {
   if (!villageId) {

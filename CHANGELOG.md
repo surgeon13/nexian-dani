@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.45] — 2026-08-19
+
+### Changed
+
+- **Reverted 1.8.44's "fields only" Builder RR auto-exclude shortcut** — the user confirmed bonus buildings (Sawmill/Brickyard/Iron Foundry/Grain Mill/Bakery) must still be built, not skipped. The live-DOM pre-check that excluded a village from Builder RR as soon as its 18 basic resource fields (Woodcutter/Clay Pit/Iron Mine/Cropland) hit level 10 has been removed from the builder-loop tick. Turns out that shortcut wasn't even semantically clean: inspecting the templates showed `resource_fields_02`'s own end-state already requires Grain Mill level 3 at fields level 8 (before all fields reach 10), and "all 18 fields at 10" itself lands mid-way through `resource_fields_03`'s stages, not on a template boundary — so a level-based shortcut could never map cleanly onto "which templates are actually done" anyway. Auto-exclude (`BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE`) once again only fires once the **entire** resource template chain (`resource_fields_01` → `05`, fields AND bonus buildings) reports `all_complete` via `previewPlan` — exactly like before 1.8.44.
+- The original problem 1.8.44 was trying to solve — a village whose fields were already high level before the bot took it over, so `progress.json` never recorded those steps — is still handled correctly by the pre-existing `already_satisfied` step-advance path in `runBuilderStep()`: each already-done step gets detected against the live slot read and the tracker advances past it (up to 20 steps per tick, within a 120s budget) without ever attempting to build something that's already finished. No new work was needed there.
+- `villageBuilder.readResourceFieldLevelsFromMap()` / `areAllResourceFieldsAtLevel()` are kept (unused for now) as a general live-DOM diagnostic utility rather than removed outright, since verifying against the live game state directly is still a good building block for future template/verification enhancements — it's just not the right tool for deciding RR exclusion.
+- Updated `.env.example` / `.env.termux.example` comments for `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` to describe the (correct, restored) full-chain semantics.
+
 ## [1.8.44] — 2026-08-18
 
 ### Changed
