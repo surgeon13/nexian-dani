@@ -6848,6 +6848,26 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (!village) {
         return normalizeBuilderPlanMode(activeBuilderPlanMode);
       }
+
+      // A village manually pointed at a standalone/experimental "village"
+      // template (e.g. via [B] Builder Templates) — one that isn't part of
+      // the default village_stage_00->01->02 chain — is meant to run on
+      // its own, not gated behind the separate "resource" plan finishing
+      // first. Without this check, the resource-then-village pipeline below
+      // silently kept running the default resource_fields chain instead of
+      // the template the user explicitly assigned, ignoring it entirely
+      // until resource "completed" — which for a village whose field
+      // layout doesn't match the default chain's slot assumptions can mean
+      // never. A real user hit exactly this: assigned
+      // village_stage_fast_basic_15c, but the bot kept working
+      // resource_fields_02 (wrong field-slot assumptions for that village's
+      // layout) tick after tick, with both plans' actions interleaving.
+      const villageModeProgress = builder.getVillageProgress(village, { planMode: "village" });
+      const pinnedTemplate = villageModeProgress && villageModeProgress.active_template;
+      if (pinnedTemplate && !builder.isTemplateInDefaultChain(pinnedTemplate, "village")) {
+        return isBuilderPlanFullyComplete(village, "village") ? null : "village";
+      }
+
       if (builderRrUsesResourceThenVillagePipeline()) {
         if (!isBuilderPlanFullyComplete(village, "resource")) {
           return "resource";

@@ -146,6 +146,26 @@ function getDefaultTemplateChain(index) {
   return getTemplateChain(index, index.default_template);
 }
 
+/**
+ * True if templateKey is reachable from the default chain for planMode
+ * (village_stage_00 -> 01 -> 02, or resource_fields_01 -> ... -> 05) by
+ * following next_template pointers. False for a standalone/experimental
+ * template (e.g. village_stage_fast_basic_15c) that isn't linked into
+ * either default chain — such a template is meant to run BY ITSELF for
+ * whatever village it's assigned to, not alongside the other plan mode's
+ * default pipeline. Used to stop the resource-then-village auto-pipeline
+ * from silently overriding a manually-assigned standalone template.
+ */
+function isTemplateInDefaultChain(templateKey, planMode) {
+  const mode = normalizePlanMode(planMode);
+  const index = loadIndex();
+  const defaultKey = resolveDefaultTemplateForPlan(index, mode);
+  if (!defaultKey) {
+    return false;
+  }
+  return getTemplateChain(index, defaultKey).includes(templateKey);
+}
+
 function listEnabledTemplates() {
   const index = loadIndex();
   return index.templates.filter((t) => t.enabled);
@@ -3101,6 +3121,7 @@ module.exports = {
   loadIndex,
   loadTemplate,
   listEnabledTemplates,
+  isTemplateInDefaultChain,
   loadProgress,
   villageProgressKey,
   getVillageProgress,

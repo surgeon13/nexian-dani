@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.53] — 2026-08-19
+
+### Fixed
+
+- **A manually-assigned standalone template (e.g. `village_stage_fast_basic_15c` via `[B]`) was silently ignored while the default `resource_fields` chain kept running instead** — root-caused from a real user's pasted log/screenshot: a village had `resource_fields_02` active on the "resource" track (not yet complete) *and* `village_stage_fast_basic_15c` active on the "village" track (assigned via `[B]`) — both marked `(active)`. Because `BUILDER_RR_RESOURCE_THEN_VILLAGE` always makes the resource plan run first until it reports complete, the bot kept working `resource_fields_02` — whose fixed slot→building assumptions (e.g. "slot 10 is Iron Mine") didn't match this village's actual field layout — and never touched the template the user had explicitly assigned. Symptom: `BUILD STEP RESULT` showing `Building: Cropland (target: Iron Mine)` on slot 10 — the generic-resource-field fallback let it try to upgrade Cropland toward an Iron Mine step rather than skip it, exactly the kind of thing `village_stage_fast_basic_15c`'s `strict_match`/`skip_if_mismatch` steps exist to prevent, except that template was never actually running. Reported as "plans should exclude each other."
+
+  Fixed: `resolveBuilderPlanModeForVillage()` now checks whether the village's "village"-plan `active_template` is reachable from the default `village_stage_00→01→02` chain (new `villageBuilder.isTemplateInDefaultChain()`). If it isn't — i.e. it's a standalone/experimental template someone explicitly assigned — that plan now runs on its own, bypassing the resource-then-village pipeline entirely for that village, instead of being silently overridden. Villages using the normal default chains are completely unaffected (verified in isolation: a fresh village, a village pinned to `village_stage_01`, and a village pinned to `village_stage_fast_basic_15c` all resolve exactly as expected).
+
 ## [1.8.52] — 2026-08-19
 
 ### Fixed
