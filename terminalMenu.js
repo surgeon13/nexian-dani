@@ -3197,6 +3197,9 @@ async function runTemplateAssignMenu(rl, hooks) {
       );
     });
     console.log("");
+    console.log(
+      `  ${color("Picking any of these clears whatever's active on the OTHER plan — one active template per village.", ANSI.gray)}`
+    );
     console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
     const pick = (await askQuestion(rl, "Assign template number: ")).trim().toUpperCase();
 
@@ -3222,21 +3225,23 @@ async function runTemplateAssignMenu(rl, hooks) {
       { planMode: mode }
     );
 
-    // A standalone template (not part of the default village_stage_00->01->02
-    // or resource_fields_01->05 chain) is meant to be the village's ENTIRE
-    // plan, not one half of a two-track pipeline — so clear the OTHER
-    // mode's progress rather than leaving it tracked (and shown as
-    // "active") alongside it. A real user hit exactly this: the assign
-    // screen showed both resource_fields_02 and village_stage_fast_basic_15c
-    // as "(active)" on the same village at once.
+    // Whatever gets picked here becomes this village's ONLY active plan —
+    // clear the other mode's progress unconditionally, rather than leaving
+    // it tracked (and shown as "active") alongside the new pick. 1.8.56
+    // only did this when the newly-picked template was standalone, which
+    // meant picking a default-chain template (e.g. resource_fields_02) for
+    // one mode while a standalone template (e.g.
+    // village_stage_fast_basic_15c) was still active on the other mode
+    // silently recreated the exact "two plans active at once" conflict —
+    // a real user hit exactly that, right after fixing it the first time.
+    // [B] is a deliberate, one-at-a-time assignment tool; every pick here
+    // now means "this village runs only this template."
     const otherMode = mode === "resource" ? "village" : "resource";
     let clearedOtherMessage = "";
-    if (!builder.isTemplateInDefaultChain(chosenEntry.key, mode)) {
-      const otherProgress = builder.getVillageProgress(village, { planMode: otherMode });
-      if (otherProgress && otherProgress.active_template) {
-        clearedOtherMessage = ` (cleared ${otherMode} plan "${otherProgress.active_template}" — this village now runs only this template)`;
-        builder.clearVillagePlan(village, otherMode);
-      }
+    const otherProgress = builder.getVillageProgress(village, { planMode: otherMode });
+    if (otherProgress && otherProgress.active_template) {
+      clearedOtherMessage = ` (cleared ${otherMode} plan "${otherProgress.active_template}" — this village now runs only this template)`;
+      builder.clearVillagePlan(village, otherMode);
     }
 
     logSuccess(

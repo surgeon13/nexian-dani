@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.57] — 2026-08-19
+
+### Changed
+
+- **`[B]` Builder Templates now clears the other plan mode on EVERY assignment, not just when the newly-picked template is standalone** — a real user hit the two-plans-active conflict again right after fixing it with 1.8.56: they'd assigned `village_stage_fast_basic_15c` (clearing `resource_fields_02` correctly), then separately picked `resource_fields_02` again from the same menu — since 1.8.56 only cleared the *other* mode when the newly-chosen template was standalone, picking a default-chain template while a standalone one was active on the other mode silently recreated the exact conflict it had just been fixed from. `[B]` is a deliberate, one-at-a-time assignment tool, so every pick now means "this village runs only this template," full stop — whichever mode/template was previously active on the other track gets cleared regardless of what's being assigned. The assign screen also now says this outright before you pick, not just in the confirmation message after. Verified both directions in isolation: standalone→default-chain and default-chain→standalone each correctly clear the other side.
+
 ## [1.8.56] — 2026-08-19
 
 ### Changed

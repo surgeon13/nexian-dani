@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.56** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.57** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -14,7 +14,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker, **proxy menu (`y`)**. |
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
-| **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. Experimental/standalone templates (e.g. `village_stage_fast_basic_15c` for crop-heavy villages) aren't in the default chain — assign one to a village from the terminal menu (**B → pick village → pick template**). Assigning a standalone template clears the *other* plan mode's progress for that village, so only one plan shows/runs as active instead of two competing in parallel; once assigned, it runs on its own instead of being silently overridden by the default `resource_fields` chain running first. A step blocked purely on Warehouse/Granary *capacity*, or on a locked bonus building (Sawmill/Brickyard/Iron Foundry need Main Building level 5, which the resource-fields templates can't self-manage), auto-relieves itself by upgrading the real blocker out of order instead of retrying forever; any village stuck on the same blocked status 4+ times in a row logs a `repeated_blocked` warning. |
+| **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. Experimental/standalone templates (e.g. `village_stage_fast_basic_15c` for crop-heavy villages) aren't in the default chain — assign one to a village from the terminal menu (**B → pick village → pick template**). Every assignment through this menu clears the *other* plan mode's progress for that village — one active template per village, always — so a village never ends up with two plans competing in parallel. A step blocked purely on Warehouse/Granary *capacity*, or on a locked bonus building (Sawmill/Brickyard/Iron Foundry need Main Building level 5, which the resource-fields templates can't self-manage), auto-relieves itself by upgrading the real blocker out of order instead of retrying forever; any village stuck on the same blocked status 4+ times in a row logs a `repeated_blocked` warning. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert, celebrations RR. |
 | **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
