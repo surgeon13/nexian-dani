@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.50] — 2026-08-19
+
+### Changed
+
+- **Extended `village_stage_fast_basic_15c` with a second growth pass (stages 13-21)** — after the original Residence-to-10 stage, the template now continues: crop fields to 7 (strict/skip-if-mismatch, same as before), Warehouse/Granary to 8, Main Building to 10, Rally Point to 1 (new — civic baseline gap for troop movement/scouting), Marketplace to 5, crop fields to 10 (the level the main `resource_fields_01-05` chain also targets), Warehouse/Granary to 10, Main Building to 12, Marketplace to 10. `end_state` updated to match the new final levels plus the new Rally Point requirement. Template bumped to internal `version: 2`. Still standalone (`next_template: null`) — assign via **[B]** in the terminal menu.
+
 ## [1.8.49] — 2026-08-19
 
 ### Added
