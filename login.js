@@ -2503,7 +2503,21 @@ async function run() {
   }
 }
 
-run().catch((err) => {
-  console.error("Playwright login run failed:", err);
-  process.exit(1);
-});
+run()
+  .then(() => {
+    // run()'s clean-quit path (finally block above: browser + dashboard
+    // server closed, presence recorded offline) never forced the process to
+    // exit — it just let run() resolve and relied on Node's event loop
+    // draining naturally. Anything still holding a handle open (a readline
+    // interface on stdin, a stray timer, a Playwright subprocess handle not
+    // fully released) then kept the process alive indefinitely after
+    // "Session ended.", forcing a manual kill — most visibly reported on
+    // Android/Termux, where that's a dead terminal with no obvious way to
+    // force it closed. All cleanup has already awaited by this point, so a
+    // hard exit here is safe.
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error("Playwright login run failed:", err);
+    process.exit(1);
+  });

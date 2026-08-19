@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.54] — 2026-08-19
+
+### Fixed
+
+- **Process hung after "Session ended." instead of actually exiting, requiring a manual force-kill — most visible on Android/Termux, where that means a dead terminal with no obvious way out.** Root cause: `run()`'s clean-quit path (`login.js`) awaited every bit of cleanup — browser closed, dashboard server closed, presence recorded offline — but the code that invokes `run()` only ever attached `.catch()`, never a success handler, so nothing forced the process to actually exit afterward. It just relied on Node's event loop draining naturally, and anything still holding a handle open (a readline interface on stdin, a stray timer, a Playwright subprocess handle not fully released) kept the process alive indefinitely. Now `run().then(() => process.exit(0))` forces a clean, immediate exit once all the (already-awaited) cleanup is done — the shutdown path finishes exactly like a crash-path failure already did with `process.exit(1)`.
+
 ## [1.8.53] — 2026-08-19
 
 ### Fixed
