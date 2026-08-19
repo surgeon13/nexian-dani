@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.59] — 2026-08-19
+
+### Fixed
+
+- **Troop Plans menu header omitted Workshop**, still reading "Barracks, Great Barracks, Stable, Great Stable per plan" after Workshop support was added in 1.8.49 — reasonably leading a user to conclude siege training wasn't supported at all. Now lists Workshop too.
+
+### Added
+
+- **Unconfigured troop-plan branches are now shown explicitly in the plan list** (`not set (won't train): …`, in yellow) — a real user reported Workshop/siege units never training with *nothing at all* appearing in the logs. Root-caused and reproduced: a branch with no unit name configured is silently dropped by `planBranches()`, so it never trains, never logs, and never errors — completely invisible. Any plan created before 1.8.49 has no `workshopUnit` at all and behaves exactly this way, looking perfectly normal in the menu while quietly never training siege. New `troopPlans.describeUnsetBranches()` surfaces this so an unset branch is obvious at a glance instead of being indistinguishable from a broken one. Verified by round-tripping a simulated pre-1.8.49 plan through the real module: it produces zero Workshop branches, and editing in a `workshopUnit` correctly persists and starts producing one.
+
+### Notes
+
+- Confirmed against a live in-game screenshot that this game names the building **"Siege Workshop"** (not plain "Workshop") and its units are **Ram** and **Trebuchet** (not Catapult). The existing building matcher already handles the "Siege Workshop" heading correctly (verified against the exact live strings — `\bworkshop\b` matches after level-suffix stripping), so no matcher change was needed; but a plan configured with "Catapult" will never match a unit on that page.
+
 ## [1.8.58] — 2026-08-19
 
 ### Changed

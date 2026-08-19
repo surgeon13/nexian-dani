@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.58** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.59** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -23,7 +23,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 - **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`R`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
 - **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Checks every non-pivot village each tick by default (`RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`), not just one per round-robin turn. Far overflows never send — logged in **red** in the terminal so a stuck village is easy to spot. Settings **OG** / `RESOURCE_OVERFLOW_*`.
-- **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable, Workshop — e.g. Ram/Catapult). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Workshop trains last in the cycle so siege never eats into cavalry/infantry's resources that tick. Stored in `templates/troop_plans.json`.
+- **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable, Workshop). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Workshop trains last in the cycle so siege never eats into cavalry/infantry's resources that tick. Unit names must match the game exactly — use **T → [U]** to list a village's real trainable unit names (this server's siege building is *Siege Workshop*, training **Ram** and **Trebuchet**). A branch with no unit set is skipped silently, so the plan list flags it as `not set (won't train)`. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
 - **NPC crop convert** — When granary fills to the threshold (default 95%), NPC-trade so crop becomes **0%** and wood/clay/iron share the rest. Round-robin one village per poll (`NPC_CROP_CONVERT_*`, Settings **N**). Costs gold in-game; off by default. **Capital granary watcher** (`CAPITAL_GRANARY_WATCHER_*`, on by default) checks the capital every tick instead of waiting for its round-robin turn.
@@ -45,7 +45,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **1.8.9:** Top 10 dashboard + Δ/`/h` from all polls; 24/7 keep-alive; session wake recovery; proxy rotate-on-rest visibility; farmlist village pin; Palace expansion on realm host.
 - **Top 10 statistics tracking** — seven ranking categories logged to `top10.log` (JSONL lines with `ts` + `epochMs`).
 - **Farmlist auto-send pre-empts** builder, troop, cranny, and activity auto loops when due.
-- **Troop plans** replace the old per-village troop-template toggles (four building branches, per-plan timers).
+- **Troop plans** replace the old per-village troop-template toggles (five building branches, per-plan timers).
 - **Proxy pool** with dashboard + terminal management; rotate proxy after session-loop rest.
 - **Reliability:** farmlist send uses `#btn_send_all` (not troop `#btn_train`), troop auto queue (10s max idle wait), Stable map discovery, `GAME_HOST`, `FARMLIST_VILLAGE_ID`.
 

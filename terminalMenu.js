@@ -2911,7 +2911,7 @@ async function runCelebrationsVillageFilterMenu(rl, settings, runtimeControls) {
 
 function printTroopPlansMenu(settings, plans) {
   printSubDivider("TROOP PLANS");
-  console.log(`  ${color(`Engine v${APP_VERSION}`, ANSI.gray)} — Barracks, Great Barracks, Stable, Great Stable per plan`);
+  console.log(`  ${color(`Engine v${APP_VERSION}`, ANSI.gray)} — Barracks, Great Barracks, Stable, Great Stable, Workshop per plan`);
   const rrLabel = settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF";
   console.log(
     `  ${color("Auto-train loop:", ANSI.gray)} ${color(rrLabel, ANSI.bold, settings.troopTrainingRoundRobinEnabled ? ANSI.green : ANSI.yellow)} ${color(`(default ${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes} min)`, ANSI.gray)}`
@@ -2924,6 +2924,15 @@ function printTroopPlansMenu(settings, plans) {
       console.log(
         `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(plan.name, ANSI.bold)}  ${color(troopPlans.describePlan(plan), ANSI.gray)}`
       );
+      // An unconfigured branch is otherwise completely invisible: it's just
+      // absent from the plan, so it never trains, never logs, never errors.
+      // Show it explicitly — a plan created before a branch existed (e.g.
+      // any plan predating Workshop support) looks perfectly normal here
+      // while quietly never training that branch at all.
+      const unset = troopPlans.describeUnsetBranches(plan);
+      if (unset.length) {
+        console.log(`      ${color(`not set (won't train): ${unset.join(", ")}`, ANSI.yellow)}`);
+      }
     });
   }
   console.log("");

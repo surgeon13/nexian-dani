@@ -259,6 +259,22 @@ function describePlan(plan) {
   return parts.join(" · ");
 }
 
+/**
+ * Labels of branches this plan has NO unit configured for, so they will be
+ * silently absent from planBranches() (and therefore never trained, never
+ * logged, never errored). Without surfacing this, a plan created before a
+ * branch existed — e.g. any plan predating Workshop support — looks
+ * completely normal while quietly never training that branch at all. A real
+ * user hit exactly that with Workshop/siege: "nothing shown, nothing is
+ * trained."
+ */
+function describeUnsetBranches(plan) {
+  if (!plan) {
+    return [];
+  }
+  return PLAN_BRANCHES.filter((b) => !String(plan[b.unitField] || "").trim()).map((b) => b.label);
+}
+
 module.exports = {
   PLANS_FILE,
   DEFAULT_MIN_MINUTES,
@@ -279,6 +295,7 @@ module.exports = {
   listEnabledVillages,
   resolveInterval,
   describePlan,
+  describeUnsetBranches,
   planBranches,
   PLAN_BRANCHES
 };
