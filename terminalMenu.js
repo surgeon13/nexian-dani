@@ -4628,14 +4628,21 @@ const TRAINER_BUILDING_GID = {
   barracks: 19,
   great_barracks: 29,
   stable: 20,
-  great_stable: 30
+  great_stable: 30,
+  // Best-guess gid, following this same numbering (19 Barracks, 20 Stable,
+  // 21 Workshop next) that already matched exactly for the other four. Not
+  // load-bearing either way — mapLabelMatchesTrainerKind's text match below
+  // is the primary/fallback lookup, so a wrong guess here just means every
+  // row gets checked by label instead of a same-tick gid hit.
+  workshop: 21
 };
 
 const TRAINER_BUILDING_LABELS = {
   barracks: "Barracks",
   great_barracks: "Great Barracks",
   stable: "Stable",
-  great_stable: "Great Stable"
+  great_stable: "Great Stable",
+  workshop: "Workshop"
 };
 
 function normalizeMapBuildingLabel(value) {
@@ -4664,6 +4671,8 @@ function mapLabelMatchesTrainerKind(label, kind) {
       return c.includes("greatstable") || /\bgreat stable\b/.test(n);
     case "stable":
       return (c === "stable" || c === "stables" || /\bstable\b/.test(n) || /\bstables\b/.test(n)) && !/great/.test(n);
+    case "workshop":
+      return c === "workshop" || c === "workshops" || /\bworkshop\b/.test(n);
     default:
       return false;
   }
@@ -4763,13 +4772,18 @@ async function resolveGreatStableUrlFromVillageMap(getPage, settings, selectedVi
   return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "great_stable");
 }
 
+async function resolveWorkshopUrlFromVillageMap(getPage, settings, selectedVillageId) {
+  return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "workshop");
+}
+
 const TROOP_ROW_SELECTOR = "form[name='snd'] table.build_details tbody tr";
 
 const TRAINER_BUILDING_RESOLVERS = {
   barracks: resolveBarracksUrlFromVillageMap,
   great_barracks: resolveGreatBarracksUrlFromVillageMap,
   stable: resolveStableUrlFromVillageMap,
-  great_stable: resolveGreatStableUrlFromVillageMap
+  great_stable: resolveGreatStableUrlFromVillageMap,
+  workshop: resolveWorkshopUrlFromVillageMap
 };
 
 function normalizeTrainerBuilding(building) {
@@ -4802,6 +4816,9 @@ async function trainerPageMatchesBuilding(page, kind) {
   }
   if (kind === "great_barracks") {
     return /great\s+barracks/i.test(h1);
+  }
+  if (kind === "workshop") {
+    return /\bworkshop\b/i.test(h1);
   }
 
   try {
@@ -8572,7 +8589,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
-    /** Train a village's assigned plan across Barracks, Great Barracks, Stable, and/or Great Stable. */
+    /** Train a village's assigned plan across Barracks, Great Barracks, Stable, Great Stable, and/or Workshop. */
     const runTroopTrainingForVillage = async (targetVillage) => {
       const plan = troopPlans.resolvePlanForVillage(targetVillage);
       if (!plan) {

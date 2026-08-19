@@ -69,6 +69,8 @@ function planKeyFromName(name) {
 
 // building -> { unitField, qtyField, label } used by plans and the trainer.
 // Cavalry first so raid mounts (TT/Haeduan) are not starved by infantry batches.
+// Workshop (Rams/Catapults) last — siege is the least time-sensitive branch and
+// should never eat into resources cavalry/infantry need this same tick.
 const PLAN_BRANCHES = [
   { building: "stable", unitField: "cavalryUnit", qtyField: "cavalryQty", label: "Stable" },
   {
@@ -83,7 +85,8 @@ const PLAN_BRANCHES = [
     unitField: "greatBarracksUnit",
     qtyField: "greatBarracksQty",
     label: "Great Barracks"
-  }
+  },
+  { building: "workshop", unitField: "workshopUnit", qtyField: "workshopQty", label: "Workshop" }
 ];
 
 function resolveUnitField(patch, current, field) {
@@ -237,7 +240,8 @@ const BRANCH_SHORT_LABEL = {
   barracks: "inf",
   great_barracks: "g.inf",
   stable: "cav",
-  great_stable: "g.cav"
+  great_stable: "g.cav",
+  workshop: "siege"
 };
 
 function describePlan(plan) {

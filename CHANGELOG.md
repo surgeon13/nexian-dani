@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.49] — 2026-08-19
+
+### Added
+
+- **Workshop (Ram/Catapult) support in Troop Plans** — plans can now train a Workshop unit + qty alongside Barracks/Great Barracks/Stable/Great Stable, in the terminal plan editor (**T**), the trainable-units preview, and the auto-train loop. Workshop trains last in a plan's cycle so siege never competes with cavalry/infantry for the same tick's resources. Fully wired through the existing generic building lookup tables in `terminalMenu.js` (`TRAINER_BUILDING_GID`/`TRAINER_BUILDING_LABELS`/`mapLabelMatchesTrainerKind`/`TRAINER_BUILDING_RESOLVERS`/`trainerPageMatchesBuilding`) and `troopPlans.js` (`PLAN_BRANCHES`/`BRANCH_SHORT_LABEL`) — no changes needed to the actual training/row-reading logic, which was already building-agnostic.
+
 ## [1.8.48] — 2026-08-19
 
 ### Removed
