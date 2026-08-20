@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.60] — 2026-08-20
+
+### Fixed
+
+- **Permanent `blocked_target_unavailable` deadlock on Residence (and any one-per-village flexible building) when the template's guessed slot happened to be empty** — reported with the new `repeated_blocked` warning showing **73 consecutive** blocked ticks: `Target building 'Residence' is not listed for empty slot 25`, with the options list containing no Residence at all. Root cause: the live-map slot discovery for flexible buildings (Sawmill/Brickyard/Iron Foundry/Grain Mill/Bakery/Residence) was gated behind `!slotInfo.isEmptySlot`, so it ran **only** when the guessed slot was *occupied by something else* — never when it was *empty*. Residence/Palace are one-per-village, so once one exists anywhere the game stops offering it on every other empty slot; the bot read the guessed-but-empty slot 25, didn't find Residence among the build options, and blocked forever without ever looking for where the Residence actually was. (The template's own note claimed the slot was auto-discovered "if wrong or occupied by something else" — the *occupied* half worked, the *empty* half never did.)
+
+  Discovery now also runs for an empty slot, but only when the target isn't among that slot's offered new-building options — so the common first-time-placement case still builds directly with no extra page load. Verified across all six branches of the new condition (bug case, first placement, occupied-by-wrong-building, already-correct, Palace-satisfies-Residence, and non-flexible buildings) to confirm the fix triggers exactly where intended and leaves existing behavior untouched.
+- `isFlexibleMapBonusBuilding()` now lists **Palace** alongside Residence, so a template step naming either one gets map discovery — they're already treated as the same slot's mutually exclusive alternates everywhere else.
+
 ## [1.8.59] — 2026-08-19
 
 ### Fixed

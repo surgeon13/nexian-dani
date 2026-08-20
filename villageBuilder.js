@@ -1148,10 +1148,14 @@ function isFlexibleMapBonusBuilding(name) {
     c === "ironfoundry" ||
     c === "grainmill" ||
     c === "bakery" ||
-    // Not a resource bonus, but its inner-slot position isn't fixed across
+    // Not resource bonuses, but their inner-slot position isn't fixed across
     // templates either (varies by tribe/village) — reuse the same live-map
     // discovery instead of trusting a guessed slot number in the template.
-    c === "residence"
+    // Both listed so a template step naming either one gets discovery;
+    // isSameBuildingName already treats them as the same slot's mutually
+    // exclusive alternates, so searching for one matches the other.
+    c === "residence" ||
+    c === "palace"
   );
 }
 
@@ -2120,13 +2124,33 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
       )
     );
 
+  // Is the target actually offered as a new build here? Only meaningful for an
+  // empty slot, and it's the cheap way to tell "not placed yet, build it here"
+  // apart from "already exists somewhere else in this village."
+  const targetOfferedOnEmptySlot =
+    slotInfo.isEmptySlot &&
+    Array.isArray(slotInfo.newBuildingLinks) &&
+    slotInfo.newBuildingLinks.some((opt) => isSameBuildingName(opt && opt.name, step.building));
+
   let bonusBuildingRemappedFromTemplateSlot = null;
   if (
-    !slotInfo.isEmptySlot &&
-    !isSameBuildingName(slotInfo.buildingName, step.building) &&
+    isFlexibleMapBonusBuilding(step.building) &&
     !allowGenericResourceFieldStep &&
-    isFlexibleMapBonusBuilding(step.building)
+    // Nothing to discover when the slot already holds the right building.
+    !isSameBuildingName(slotInfo.buildingName, step.building) &&
+    // ...or when it's empty and the game is offering to build it right here.
+    !targetOfferedOnEmptySlot
   ) {
+    // This used to require !slotInfo.isEmptySlot, so live-map discovery ran
+    // only when the template's guessed slot was OCCUPIED by something else —
+    // never when it was empty. That left a permanent deadlock: buildings like
+    // Residence/Palace are one-per-village, so once one exists anywhere, the
+    // game stops offering it on any other empty slot. The bot would read the
+    // guessed-but-empty slot, not find the target among the build options, and
+    // block forever without ever looking for where the building actually is.
+    // A real user hit exactly this — 73 consecutive blocked_target_unavailable
+    // ticks on 'Residence' at empty slot 25 while the village's Residence sat
+    // on a different slot the whole time.
     const mapSlot = await discoverBonusBuildingSlotFromMap(page, baseUrl, village.id, step.building);
     if (mapSlot != null && Number(mapSlot) !== Number(resolvedSlot)) {
       bonusBuildingRemappedFromTemplateSlot = resolvedSlot;
