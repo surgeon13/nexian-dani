@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.62] — 2026-08-20
+
+### Fixed
+
+- **Siege Workshop units never trained — Workshop had no fallback when the village-map survey missed the building.** `openTrainerAndReadRows()` discovered trainer buildings only from the village-center map, and its one fallback (a configured trainer URL) was hard-limited to `barracks` and `stable`. So `workshop`, `great_barracks`, and `great_stable` depended *entirely* on that map survey; if it didn't surface them — map titles vary by tribe, UI, and server — the branch was reported `missing_building` and then **silently muted for ~12 hours**, which is exactly the reported "nothing trains, nothing shown".
+
+  Added a probe fallback that tries inner slots directly (classic sites for each building first, then the rest of slots 19-40), reusing `loadTrainerPageWithRows()` as the predicate since it already verifies both "this page has troop rows" *and* "this page is the right building" — so a hit is confirmed, not guessed. Because probing costs one page load per slot tried, a confirmed slot is cached per village+building for the session. This is the same layered map → probe strategy `villageExpansion.resolveResidenceSlot()` has used for Residence/Palace since 1.8.29, for the same reason: village-map labels alone aren't reliable.
+
+- **The "building not found" path was logged at info level**, burying a decision that silences a branch for ~12h. It's now a warning, and — since it follows a full slot probe — states plainly that the building wasn't found on the map *or* in any inner slot, and that finding it there anyway would indicate a detection bug.
+
+### Notes
+
+- If siege still doesn't train after this, the remaining failure modes are both loud: `unit "X" not in Siege Workshop. Available: …` (wrong unit name — this server uses **Ram** and **Trebuchet**, not Catapult) and `not set (won't train)` in the plan list from 1.8.59 (branch never configured).
+
 ## [1.8.61] — 2026-08-20
 
 ### Fixed
