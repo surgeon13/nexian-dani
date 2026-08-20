@@ -75,9 +75,32 @@ function mirrorConsoleToDashboard(bridge) {
   wrap("error", "error");
 }
 
-const envFile = getArgValue("--env-file=") || process.env.NEXIAN_ENV_FILE || ".env";
+// NOTE: this must NOT be named "--env-file" — Node.js itself has a native
+// --env-file=<path> CLI flag (since v20.6) that intercepts and consumes that
+// exact argument before login.js ever runs, and exits hard with
+// "node: <path>: not found" if the target doesn't exist yet — bypassing
+// ensureEnvFile()'s own auto-creation entirely. Using a different flag name
+// avoids the collision. (NEXIAN_ENV_FILE the env var is unaffected either
+// way — Node's native flag only triggers from the CLI argument.)
+const envFile = getArgValue("--nexian-env-file=") || process.env.NEXIAN_ENV_FILE || ".env";
 const resolvedEnvPath = path.resolve(process.cwd(), envFile);
 const resolvedEnvExamplePath = path.resolve(__dirname, ".env.example");
+
+// Flavor-aware template resolution: an env file like ".env.termux" prefers a
+// matching ".env.termux.example" (e.g. phone-tuned defaults) over the
+// generic .env.example, when one exists next to it. Falls back to
+// .env.example unchanged otherwise (e.g. ".env.nexian" has no dedicated
+// template today, and that's fine — same behavior as before this existed).
+function resolveEnvExampleSource(envPath) {
+  const base = path.basename(envPath);
+  if (base !== ".env" && base.startsWith(".env")) {
+    const flavorExample = path.join(path.dirname(envPath), `${base}.example`);
+    if (fs.existsSync(flavorExample)) {
+      return flavorExample;
+    }
+  }
+  return resolvedEnvExamplePath;
+}
 
 function upsertEnvKeys(envPath, defaults) {
   const exists = fs.existsSync(envPath);
@@ -102,9 +125,10 @@ function upsertEnvKeys(envPath, defaults) {
 
 function ensureEnvFile(envPath) {
   if (!fs.existsSync(envPath)) {
-    if (fs.existsSync(resolvedEnvExamplePath)) {
-      fs.copyFileSync(resolvedEnvExamplePath, envPath);
-      console.log(`Created ${path.basename(envPath)} from .env.example`);
+    const source = resolveEnvExampleSource(envPath);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, envPath);
+      console.log(`Created ${path.basename(envPath)} from ${path.basename(source)}`);
     } else {
       const minimal = [
         "NEXIAN_URL=https://nexian.world/",
@@ -284,8 +308,8 @@ const settings = {
   statusAfterFarmlistsCooldownMinutes: numberEnv("STATUS_AFTER_FARMLISTS_COOLDOWN_MINUTES", 15),
   builderLoopEnabled:
     String(process.env.BUILDER_LOOP_ENABLED || "false").toLowerCase() === "true",
-  builderLoopMinMinutes: numberEnv("BUILDER_LOOP_MIN_MINUTES", 5),
-  builderLoopMaxMinutes: numberEnv("BUILDER_LOOP_MAX_MINUTES", 10),
+  builderLoopMinMinutes: numberEnv("BUILDER_LOOP_MIN_MINUTES", 0.5),
+  builderLoopMaxMinutes: numberEnv("BUILDER_LOOP_MAX_MINUTES", 1),
   builderRoundRobinEnabled:
     String(process.env.BUILDER_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   builderRoundRobinExcludedVillageIds:
@@ -306,6 +330,13 @@ const settings = {
       .toLowerCase();
     return defaultPlan !== "village";
   })(),
+  // Once a village's resource-fields plan is fully complete (all fields at
+  // their template's max level, e.g. 10), automatically add it to
+  // BUILDER_RR_EXCLUDED_VILLAGE_IDS and stop building it — instead of
+  // (or in addition to) falling through to the village-stage plan.
+  builderRrAutoExcludeOnResourceComplete:
+    String(process.env.BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE || "true").toLowerCase() ===
+    "true",
   troopTrainingRoundRobinEnabled:
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   troopTrainingLoopMinMinutes: numberEnv("TROOP_TRAINING_LOOP_MIN_MINUTES", 5),
@@ -364,6 +395,14 @@ const settings = {
   resourceOverflowMaxDistance: numberEnv("RESOURCE_OVERFLOW_MAX_DISTANCE", 10),
   resourceOverflowLoopMinMinutes: numberEnv("RESOURCE_OVERFLOW_LOOP_MIN_MINUTES", 8),
   resourceOverflowLoopMaxMinutes: numberEnv("RESOURCE_OVERFLOW_LOOP_MAX_MINUTES", 15),
+  // Check every non-pivot village on each tick instead of one per
+  // round-robin turn. With more than a couple of villages, one-per-tick
+  // meant most villages only got checked once every (villageCount *
+  // loopInterval) — far too infrequent to actually prevent a warehouse or
+  // granary from filling up between checks. Set false to restore the old
+  // one-village-per-tick behavior.
+  resourceOverflowCheckAllEachTick:
+    String(process.env.RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK || "true").toLowerCase() === "true",
   resourceOverflowPivotVillageIds: String(
     process.env.RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS || ""
   ).trim(),
@@ -385,10 +424,27 @@ const settings = {
     process.env.NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS || ""
   ).trim(),
   npcCropConvertMarketplaceBuildingId: numberEnv("NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID", 33),
+  // Capital granary watcher: checked every NPC Crop Convert tick (regardless
+  // of round-robin turn), independent of the other villages' rotation.
+  // Requires NPC_CROP_CONVERT_ENABLED=true — it shares that loop's timer.
+  capitalGranaryWatcherEnabled:
+    String(process.env.CAPITAL_GRANARY_WATCHER_ENABLED || "true").toLowerCase() === "true",
+  // Optional threshold override for the capital; falls back to
+  // NPC_CROP_CONVERT_GRANARY_RATIO when unset.
+  capitalGranaryWatcherRatio: (() => {
+    const raw = Number(process.env.CAPITAL_GRANARY_WATCHER_RATIO);
+    if (Number.isFinite(raw) && raw > 0 && raw < 1) {
+      return raw;
+    }
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) {
+      return raw / 100;
+    }
+    return null;
+  })(),
   celebrationsRoundRobinEnabled:
     String(process.env.CELEBRATIONS_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
-  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 60),
-  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 120),
+  celebrationsLoopMinMinutes: numberEnv("CELEBRATIONS_LOOP_MIN_MINUTES", 30),
+  celebrationsLoopMaxMinutes: numberEnv("CELEBRATIONS_LOOP_MAX_MINUTES", 60),
   celebrationsType: String(process.env.CELEBRATIONS_TYPE || "auto").trim().toLowerCase() || "auto",
   celebrationsQueueDepth: (() => {
     const n = Math.floor(Number(process.env.CELEBRATIONS_QUEUE_DEPTH || 1));
@@ -406,11 +462,16 @@ const settings = {
 
 syncSettingsFromProxyStore(settings);
 
+// Lowest allowed loop interval (minutes). Loops accept fractional minutes
+// (e.g. 0.5 = 30s); this floor just guards against 0/negative misconfig
+// causing a runaway tight loop.
+const MIN_LOOP_MINUTES = 0.1;
+
 function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
   let min = Number.isFinite(minValue) ? minValue : fallbackMin;
   let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
-  min = Math.max(1, Math.floor(min));
-  max = Math.max(1, Math.floor(max));
+  min = Math.max(MIN_LOOP_MINUTES, min);
+  max = Math.max(MIN_LOOP_MINUTES, max);
   if (min > max) {
     const t = min;
     min = max;
@@ -420,7 +481,15 @@ function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
 }
 
 function randomIntBetween(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  if (max <= min) {
+    return min;
+  }
+  if (Number.isInteger(min) && Number.isInteger(max)) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+  // Fractional bounds (e.g. 0.5-1 minute): sample continuously instead of
+  // treating min/max as an inclusive integer range.
+  return Math.random() * (max - min) + min;
 }
 
 function waitMs(ms) {
@@ -505,6 +574,9 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_RR_EXCLUDED_VILLAGE_IDS: String(settings.builderRoundRobinExcludedVillageIds || ""),
     BUILDER_DEFAULT_PLAN_MODE: settings.builderDefaultPlanMode === "village" ? "village" : "resource",
     BUILDER_RR_RESOURCE_THEN_VILLAGE: settings.builderRrResourceThenVillage ? "true" : "false",
+    BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE: settings.builderRrAutoExcludeOnResourceComplete
+      ? "true"
+      : "false",
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),
@@ -540,12 +612,16 @@ function persistRuntimeSettings(selectedKeys) {
     RESOURCE_OVERFLOW_MAX_DISTANCE: String(settings.resourceOverflowMaxDistance),
     RESOURCE_OVERFLOW_LOOP_MIN_MINUTES: String(settings.resourceOverflowLoopMinMinutes),
     RESOURCE_OVERFLOW_LOOP_MAX_MINUTES: String(settings.resourceOverflowLoopMaxMinutes),
+    RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK: settings.resourceOverflowCheckAllEachTick ? "true" : "false",
     RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS: String(settings.resourceOverflowPivotVillageIds || ""),
     NPC_CROP_CONVERT_ENABLED: settings.npcCropConvertEnabled ? "true" : "false",
     NPC_CROP_CONVERT_MIN_MINUTES: String(settings.npcCropConvertMinMinutes),
     NPC_CROP_CONVERT_MAX_MINUTES: String(settings.npcCropConvertMaxMinutes),
     NPC_CROP_CONVERT_GRANARY_RATIO: String(settings.npcCropConvertGranaryRatio),
     NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS: String(settings.npcCropConvertExcludedVillageIds || ""),
+    CAPITAL_GRANARY_WATCHER_ENABLED: settings.capitalGranaryWatcherEnabled ? "true" : "false",
+    CAPITAL_GRANARY_WATCHER_RATIO:
+      settings.capitalGranaryWatcherRatio == null ? "" : String(settings.capitalGranaryWatcherRatio),
     NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID: String(
       settings.npcCropConvertMarketplaceBuildingId || 33
     ),
@@ -589,8 +665,8 @@ function applySessionLoopDefaults() {
   const builderLoop = normalizeRange(
     settings.builderLoopMinMinutes,
     settings.builderLoopMaxMinutes,
-    5,
-    10
+    0.5,
+    1
   );
   settings.builderLoopMinMinutes = builderLoop.min;
   settings.builderLoopMaxMinutes = builderLoop.max;
@@ -701,8 +777,8 @@ function applySessionLoopDefaults() {
   const celebrationsLoop = normalizeRange(
     settings.celebrationsLoopMinMinutes,
     settings.celebrationsLoopMaxMinutes,
-    60,
-    120
+    30,
+    60
   );
   settings.celebrationsLoopMinMinutes = celebrationsLoop.min;
   settings.celebrationsLoopMaxMinutes = celebrationsLoop.max;
@@ -2427,7 +2503,21 @@ async function run() {
   }
 }
 
-run().catch((err) => {
-  console.error("Playwright login run failed:", err);
-  process.exit(1);
-});
+run()
+  .then(() => {
+    // run()'s clean-quit path (finally block above: browser + dashboard
+    // server closed, presence recorded offline) never forced the process to
+    // exit — it just let run() resolve and relied on Node's event loop
+    // draining naturally. Anything still holding a handle open (a readline
+    // interface on stdin, a stray timer, a Playwright subprocess handle not
+    // fully released) then kept the process alive indefinitely after
+    // "Session ended.", forcing a manual kill — most visibly reported on
+    // Android/Termux, where that's a dead terminal with no obvious way to
+    // force it closed. All cleanup has already awaited by this point, so a
+    // hard exit here is safe.
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error("Playwright login run failed:", err);
+    process.exit(1);
+  });

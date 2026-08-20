@@ -2,6 +2,243 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.59] — 2026-08-19
+
+### Fixed
+
+- **Troop Plans menu header omitted Workshop**, still reading "Barracks, Great Barracks, Stable, Great Stable per plan" after Workshop support was added in 1.8.49 — reasonably leading a user to conclude siege training wasn't supported at all. Now lists Workshop too.
+
+### Added
+
+- **Unconfigured troop-plan branches are now shown explicitly in the plan list** (`not set (won't train): …`, in yellow) — a real user reported Workshop/siege units never training with *nothing at all* appearing in the logs. Root-caused and reproduced: a branch with no unit name configured is silently dropped by `planBranches()`, so it never trains, never logs, and never errors — completely invisible. Any plan created before 1.8.49 has no `workshopUnit` at all and behaves exactly this way, looking perfectly normal in the menu while quietly never training siege. New `troopPlans.describeUnsetBranches()` surfaces this so an unset branch is obvious at a glance instead of being indistinguishable from a broken one. Verified by round-tripping a simulated pre-1.8.49 plan through the real module: it produces zero Workshop branches, and editing in a `workshopUnit` correctly persists and starts producing one.
+
+### Notes
+
+- Confirmed against a live in-game screenshot that this game names the building **"Siege Workshop"** (not plain "Workshop") and its units are **Ram** and **Trebuchet** (not Catapult). The existing building matcher already handles the "Siege Workshop" heading correctly (verified against the exact live strings — `\bworkshop\b` matches after level-suffix stripping), so no matcher change was needed; but a plan configured with "Catapult" will never match a unit on that page.
+
+## [1.8.58] — 2026-08-19
+
+### Changed
+
+- **`village_stage_fast_basic_15c` finished: added stages 27-29 (Woodcutter/Clay Pit/Iron Mine to 10)** — the template already pushed all crop fields to 10, Bakery to 5, and Residence to 10; this adds the remaining piece so every one of the 18 resource-field slots ends the template at level 10, not just the ~15 crop ones. Same `strict_match`+`skip_if_mismatch` technique as the crop-field passes: each stage sweeps all 18 slots for one building type and only actually upgrades whichever slots are genuinely that type (a 15-crop village's exact non-crop count/positions vary per village), silently skipping the rest. Template bumped to internal `version: 4` (29 stages, 170 steps total).
+
+## [1.8.57] — 2026-08-19
+
+### Changed
+
+- **`[B]` Builder Templates now clears the other plan mode on EVERY assignment, not just when the newly-picked template is standalone** — a real user hit the two-plans-active conflict again right after fixing it with 1.8.56: they'd assigned `village_stage_fast_basic_15c` (clearing `resource_fields_02` correctly), then separately picked `resource_fields_02` again from the same menu — since 1.8.56 only cleared the *other* mode when the newly-chosen template was standalone, picking a default-chain template while a standalone one was active on the other mode silently recreated the exact conflict it had just been fixed from. `[B]` is a deliberate, one-at-a-time assignment tool, so every pick now means "this village runs only this template," full stop — whichever mode/template was previously active on the other track gets cleared regardless of what's being assigned. The assign screen also now says this outright before you pick, not just in the confirmation message after. Verified both directions in isolation: standalone→default-chain and default-chain→standalone each correctly clear the other side.
+
+## [1.8.56] — 2026-08-19
+
+### Changed
+
+- **`[B]` Builder Templates now clears the OTHER plan mode when assigning a standalone template, instead of leaving two plans "active" at once** — a real user's screenshot showed the assign screen listing both `resource_fields_02 [resource] (active)` and `village_stage_fast_basic_15c [village] (active)` on the same village simultaneously, and asked for exactly one to be active. 1.8.53 already made a standalone template's plan take *priority* at decision time (`resolveBuilderPlanModeForVillage`), but left the other mode's progress record sitting there untouched — still shown as "active" in this same menu, confusing regardless of which one the bot actually acted on. New `villageBuilder.clearVillagePlan()` removes a plan mode's progress entirely (not "reset to the default template" like `resetVillageProgress` — actually gone, so `getVillageProgress()` returns `null` for it). Assigning a standalone template (one not reachable from either default chain) now clears the other mode's progress if it had any, and says so in the confirmation message. Re-assigning `village_stage_fast_basic_15c` (or any other standalone template) to an already-conflicted village fixes it retroactively — no manual progress.json editing needed. Verified in isolation end-to-end against the exact reported state.
+
+## [1.8.55] — 2026-08-19
+
+### Changed
+
+- **Builder Loop now waits for the page lock instead of bailing + spamming "Skipped auto-builder: another action is currently running"** — a real user asked why they kept seeing that message (plus a retry every 20s) for the whole duration of a manual Resource Fields Builder session. Previously the tick checked the lock once and gave up immediately if it was held, then retried blind every 20s, producing that same warning on a loop the entire time something else (a manual run, a farmlist send, whatever) held the page. It now calls `waitForActionIdle()` first — the same wait-for-the-lock pattern Troop Auto already uses — so it just resumes quietly the moment the other action releases the lock, instead of repeatedly bailing and re-polling. Only logs anything if the lock is actually held when the tick starts, and only warns if it's still held after 90s (falls back to the same 20s retry in that case). A manual action colliding with the auto loop still gets immediate "Skipped" feedback, unchanged — that's the right UX for a human waiting on a keypress; this fix is specifically for the background loop's side of the same collision.
+
+## [1.8.54] — 2026-08-19
+
+### Fixed
+
+- **Process hung after "Session ended." instead of actually exiting, requiring a manual force-kill — most visible on Android/Termux, where that means a dead terminal with no obvious way out.** Root cause: `run()`'s clean-quit path (`login.js`) awaited every bit of cleanup — browser closed, dashboard server closed, presence recorded offline — but the code that invokes `run()` only ever attached `.catch()`, never a success handler, so nothing forced the process to actually exit afterward. It just relied on Node's event loop draining naturally, and anything still holding a handle open (a readline interface on stdin, a stray timer, a Playwright subprocess handle not fully released) kept the process alive indefinitely. Now `run().then(() => process.exit(0))` forces a clean, immediate exit once all the (already-awaited) cleanup is done — the shutdown path finishes exactly like a crash-path failure already did with `process.exit(1)`.
+
+## [1.8.53] — 2026-08-19
+
+### Fixed
+
+- **A manually-assigned standalone template (e.g. `village_stage_fast_basic_15c` via `[B]`) was silently ignored while the default `resource_fields` chain kept running instead** — root-caused from a real user's pasted log/screenshot: a village had `resource_fields_02` active on the "resource" track (not yet complete) *and* `village_stage_fast_basic_15c` active on the "village" track (assigned via `[B]`) — both marked `(active)`. Because `BUILDER_RR_RESOURCE_THEN_VILLAGE` always makes the resource plan run first until it reports complete, the bot kept working `resource_fields_02` — whose fixed slot→building assumptions (e.g. "slot 10 is Iron Mine") didn't match this village's actual field layout — and never touched the template the user had explicitly assigned. Symptom: `BUILD STEP RESULT` showing `Building: Cropland (target: Iron Mine)` on slot 10 — the generic-resource-field fallback let it try to upgrade Cropland toward an Iron Mine step rather than skip it, exactly the kind of thing `village_stage_fast_basic_15c`'s `strict_match`/`skip_if_mismatch` steps exist to prevent, except that template was never actually running. Reported as "plans should exclude each other."
+
+  Fixed: `resolveBuilderPlanModeForVillage()` now checks whether the village's "village"-plan `active_template` is reachable from the default `village_stage_00→01→02` chain (new `villageBuilder.isTemplateInDefaultChain()`). If it isn't — i.e. it's a standalone/experimental template someone explicitly assigned — that plan now runs on its own, bypassing the resource-then-village pipeline entirely for that village, instead of being silently overridden. Villages using the normal default chains are completely unaffected (verified in isolation: a fresh village, a village pinned to `village_stage_01`, and a village pinned to `village_stage_fast_basic_15c` all resolve exactly as expected).
+
+## [1.8.52] — 2026-08-19
+
+### Fixed
+
+- **Sawmill/Brickyard/Iron Foundry looped forever ("realigned_template" → walk already-satisfied fields → locked again → repeat) when Main Building was below level 5** — root-caused from a real user's pasted log: `resource_fields_03.json`'s own stage notes say each bonus building "Requires [field] level 10 and Main Building level 5", but the code that checks/fixes locked-building prerequisites (`getNewBuildingGamePrerequisite`) only knew about one case ("Academy requires Barracks 3") and was hard-gated to the "village" plan only — it never ran for these "resource" plan buildings at all. Worse, even when a prerequisite realign attempt run, it can only jump to a stage *inside the current template* — and Main Building isn't managed by any resource_fields_* template, so no such stage exists there. The result: progress kept bouncing back to Stage 1 of resource_fields_03 (whose fields were already at level 10 — real user's log showed exactly this), never touching the actual blocker, forever.
+
+  Fixed two ways: `getNewBuildingGamePrerequisite` now knows Sawmill/Brickyard/Iron Foundry require Main Building level 5 (matching the template's own documented notes), and the plan-mode restriction is gone so it runs for resource-plan buildings too. And for the deeper case — a prerequisite building genuinely not managed by the current template at all — a new `attemptPrerequisiteBuildingRelief()` discovers it directly from the live village map and clicks its next-level upgrade out-of-band if affordable (mirrors `attemptStorageReliefUpgrade` from 1.8.51: no progress-index changes, so the original blocked step is simply retried right after, one Main Building level closer to unlocked). New `prerequisite_relief` status, wired into the same same-tick follow-up retry loop and success logging as `storage_relief`.
+
+- **A quit already in progress could crash a leftover Builder Loop tick against the closed browser, logging a scary "Auto-build failed" as literally the last line after "Session ended."** — root-caused from the same user's pasted log. A tick that was already past its `done` check (mid-flight) when quit was requested hit the closed browser on `page.goto` — already caught and logged as a transient/expected failure — but then fell through to `restoreSelectedVillageContext()`, a *second*, uncaught `page.goto()` against the same closed browser. Now: when quit is already in progress and the error is one of the known transient session-closed patterns, the tick returns immediately after the first (already-handled) error instead of attempting that second navigation, and skips the log/`recordAction` entirely — an orderly shutdown shouldn't leave a misleading failure as its last trace.
+
+## [1.8.51] — 2026-08-19
+
+### Added
+
+- **Automatic storage-capacity deadlock relief in the builder** — a real gap: a step blocked because its next-level cost exceeds current Warehouse/Granary *capacity* (`blocked_storage`) previously just retried forever on a 10-minute cooldown, silently, with no escalation and no way to reach the Warehouse/Granary upgrade that would actually fix it if that step happened to be scheduled later in the same template's strict sequence — resources capping out at 100% while nothing built. `attemptStorageReliefUpgrade()` (`villageBuilder.js`) now scans the *whole* active template (not just the current position) for a Warehouse/Granary step, and if that slot has real room to grow toward what the template eventually wants and its own next-level upgrade is itself affordable right now, upgrades it out of strict order — without touching progress indices, so the originally-blocked step is simply retried right after, now hopefully unblocked. New `storage_relief` status wired into the same same-tick follow-up retry loop as `already_satisfied`/`realigned_template`, so relief can chain through several levels within one tick instead of waiting a full loop interval per level. Verified the template-wide slot/target-level scan against the real `village_stage_fast_basic_15c` template, and the affordability guards (own-capacity / own-stock checks) against synthetic slot data, in isolation.
+- **`repeated_blocked` warning** — mirrors the existing `repeated_realign` streak warning, but for any `blocked_*`/`idle_saturated`/`click_failed` status: a village that keeps hitting the same blocked status tick after tick (4+ in a row) now logs a warning instead of retrying silently forever with no visible signal anything was stuck. Answers a real question asked about this: no, there was no such validation/escalation before this — now there is.
+
+### Changed
+
+- **Extended `village_stage_fast_basic_15c` with a third pass (stages 22-26)**: one crop field to 10 (safety check), Grain Mill to 5, Bakery to 3, all crop fields to 10 (safety net), Bakery to 5. By the time Bakery is attempted, Grain Mill 5 + Main Building 5+ + a level-10 Cropland are already in place from earlier stages, so its unlock requirements are already satisfied. `end_state` and template `version` (now 3) updated to match.
+
+## [1.8.50] — 2026-08-19
+
+### Changed
+
+- **Extended `village_stage_fast_basic_15c` with a second growth pass (stages 13-21)** — after the original Residence-to-10 stage, the template now continues: crop fields to 7 (strict/skip-if-mismatch, same as before), Warehouse/Granary to 8, Main Building to 10, Rally Point to 1 (new — civic baseline gap for troop movement/scouting), Marketplace to 5, crop fields to 10 (the level the main `resource_fields_01-05` chain also targets), Warehouse/Granary to 10, Main Building to 12, Marketplace to 10. `end_state` updated to match the new final levels plus the new Rally Point requirement. Template bumped to internal `version: 2`. Still standalone (`next_template: null`) — assign via **[B]** in the terminal menu.
+
+## [1.8.49] — 2026-08-19
+
+### Added
+
+- **Workshop (Ram/Catapult) support in Troop Plans** — plans can now train a Workshop unit + qty alongside Barracks/Great Barracks/Stable/Great Stable, in the terminal plan editor (**T**), the trainable-units preview, and the auto-train loop. Workshop trains last in a plan's cycle so siege never competes with cavalry/infantry for the same tick's resources. Fully wired through the existing generic building lookup tables in `terminalMenu.js` (`TRAINER_BUILDING_GID`/`TRAINER_BUILDING_LABELS`/`mapLabelMatchesTrainerKind`/`TRAINER_BUILDING_RESOLVERS`/`trainerPageMatchesBuilding`) and `troopPlans.js` (`PLAN_BRANCHES`/`BRANCH_SHORT_LABEL`) — no changes needed to the actual training/row-reading logic, which was already building-agnostic.
+
+## [1.8.48] — 2026-08-19
+
+### Removed
+
+- **`scripts/set-village-template.js` and its `npm run template:assign` entry** — the terminal menu's `[B]` Builder Templates (added in 1.8.47) covers the same job interactively, so the CLI script was redundant. Assigning a template to a village is now only available via `[B]` in the terminal menu.
+
+## [1.8.47] — 2026-08-19
+
+### Added
+
+- **Terminal menu `[B]` — Builder Templates (assign per-village)** — an easier way to point a village at a template than typing `--village-id=/--x=/--y=/--template=` on the command line (`scripts/set-village-template.js` still works, and this uses the exact same `setVillageProgress()` write underneath). Pick a village from the list (shows its current `village` and `resource` plan templates), then pick any enabled template from `templates/index.json` — the plan mode (village/resource) is inferred automatically from the template key's prefix, and the currently-active one is marked `(active)`.
+
+## [1.8.46] — 2026-08-19
+
+### Added
+
+- **New experimental template: `village_stage_fast_basic_15c`** — a fast early-growth build order for 15-crop (crop-heavy) villages, as specified: Main Building 3 → Warehouse/Granary 2 → Marketplace 1 → all crop fields 3 → Main Building 5 → Warehouse/Granary 4 → crop fields 5 → Main Building 6 → Warehouse/Granary 6 → Grain Mill 3 → Main Building 8 → Residence 10, all on their real in-game slots. Standalone (`next_template: null`, not part of the default `village_stage_00` chain) — it only applies to a village you explicitly assign it to, via the new `scripts/set-village-template.js` (also `npm run template:assign`).
+- **`strict_match` + `skip_if_mismatch` step flags** (`villageBuilder.js`) — a 15-crop village's field layout (usually 15 Cropland + 3 Woodcutter/Clay Pit/Iron Mine, at slot positions that vary per village) can't be hardcoded, so the "all crop fields" stages list all 18 resource-field slots as Cropland with these flags set. `strict_match` opts a step out of the existing "any resource-field type satisfies this step" fallback (which exists for a different purpose — tolerating template/reality naming drift — and would otherwise silently let the bot upgrade a Woodcutter/Clay Pit/Iron Mine slot it should have left alone). `skip_if_mismatch` then makes a genuine mismatch (the slot isn't actually Cropland) auto-advance to the next step instead of hard-stopping the whole builder tick with `blocked_mismatch`, mirroring the existing `already_satisfied` advance-and-continue behavior (factored both into a shared `advancePastStep()` helper). Net effect: the bot upgrades whichever ~15 of the 18 slots are genuinely Cropland and silently skips the other ~3, without needing to know in advance which is which.
+- **Residence/Palace now auto-discovered from the live village map, like the other bonus buildings** — added to `isFlexibleMapBonusBuilding()` (previously only Sawmill/Brickyard/Iron Foundry/Grain Mill/Bakery), and `isSameBuildingName()` now treats "Palace" and "Residence" as equivalent (they're mutually exclusive alternates of the same slot, picked at settlement). A guessed slot number (25 in the new template) that turns out wrong, or shows a Palace instead of a Residence, no longer hard-stops the template — same live-map fallback `villageExpansion.js`'s dedicated Residence/Palace handling already relies on for the same reason (see its 1.8.29 note: "Gaul (and some layouts) place Residence off the classic Roman slot 25.").
+- **`scripts/set-village-template.js`** — assigns a template (experimental or otherwise) to one specific village's `templates/progress.json` record by village id + coordinates, resetting its stage/step to 0/0. Validates the template key exists and its prefix matches `--plan=` before writing, so a typo fails immediately instead of surfacing later inside the builder loop. `--reset` re-zeroes progress for a village's current template without switching it. Exposed as `npm run template:assign`.
+
+## [1.8.45] — 2026-08-19
+
+### Changed
+
+- **Reverted 1.8.44's "fields only" Builder RR auto-exclude shortcut** — the user confirmed bonus buildings (Sawmill/Brickyard/Iron Foundry/Grain Mill/Bakery) must still be built, not skipped. The live-DOM pre-check that excluded a village from Builder RR as soon as its 18 basic resource fields (Woodcutter/Clay Pit/Iron Mine/Cropland) hit level 10 has been removed from the builder-loop tick. Turns out that shortcut wasn't even semantically clean: inspecting the templates showed `resource_fields_02`'s own end-state already requires Grain Mill level 3 at fields level 8 (before all fields reach 10), and "all 18 fields at 10" itself lands mid-way through `resource_fields_03`'s stages, not on a template boundary — so a level-based shortcut could never map cleanly onto "which templates are actually done" anyway. Auto-exclude (`BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE`) once again only fires once the **entire** resource template chain (`resource_fields_01` → `05`, fields AND bonus buildings) reports `all_complete` via `previewPlan` — exactly like before 1.8.44.
+- The original problem 1.8.44 was trying to solve — a village whose fields were already high level before the bot took it over, so `progress.json` never recorded those steps — is still handled correctly by the pre-existing `already_satisfied` step-advance path in `runBuilderStep()`: each already-done step gets detected against the live slot read and the tracker advances past it (up to 20 steps per tick, within a 120s budget) without ever attempting to build something that's already finished. No new work was needed there.
+- `villageBuilder.readResourceFieldLevelsFromMap()` / `areAllResourceFieldsAtLevel()` are kept (unused for now) as a general live-DOM diagnostic utility rather than removed outright, since verifying against the live game state directly is still a good building block for future template/verification enhancements — it's just not the right tool for deciding RR exclusion.
+- Updated `.env.example` / `.env.termux.example` comments for `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` to describe the (correct, restored) full-chain semantics.
+
+## [1.8.44] — 2026-08-18
+
+### Changed
+
+- **Builder RR auto-exclude now triggers on the 18 basic resource fields alone, not the full template chain** — confirmed with the user: "resource fields complete" for `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` purposes now means Woodcutter/Clay Pit/Iron Mine/Cropland (slots 1-18) all at level 10, verified directly against the live village map — **not** also Sawmill/Brickyard/Iron Foundry (level 3), Grain Mill (level 5), and Bakery (level 5), which the full `resource_fields_01`-`05` template chain also required before. A village will now stop being auto-built and get excluded from RR as soon as its 18 fields hit 10, even if those bonus buildings were never placed. This was also the fix for a real bug: template-progress tracking (`previewPlan`/`progress.json`) can lag behind reality for a village whose fields were already high level before this bot took it over (never went through the bot's own sequential template execution) — such a village kept getting worked on indefinitely because the tracker didn't know the fields were already done. The new live-DOM check (`villageBuilder.readResourceFieldLevelsFromMap` + `areAllResourceFieldsAtLevel`, one page load, reusing the exact selector already proven for `surveyInnerSlotsFromVillageMap`) catches this directly instead of trusting the tracker.
+
+Verified: `node -c` on both touched files; `areAllResourceFieldsAtLevel` tested in isolation across 6 scenarios (complete, missing a slot, one slot below target, all above target, empty input, non-array input); the village-center URL construction (the actual bug caught during self-review — the live-check call site initially passed the whole `settings` object where a URL string was expected, silently working for the wrong reason since `readResourceFieldLevelsFromMap`'s signature was changed to accept `settings` directly instead, matching the rest of this file's convention) tested against real `settings`-shaped input, default fallback, and null input.
+
+## [1.8.43] — 2026-08-18
+
+### Fixed
+
+- **Builder Loop's skipped-tick cleanup destroyed a concurrently-running manual builder run** — when the auto builder loop's tick was cleanly skipped because another action (e.g. a manual "2"/"3" template run from the terminal menu) already held the page, the tick still unconditionally advanced the round-robin index and called `restoreSelectedVillageContext()` — which does a real `page.goto()` — afterward. That navigation happened while the concurrent manual run's `page.evaluate()` was still in flight, destroying its execution context (`Execution context was destroyed, most likely because of a navigation`) and failing the manual run outright. A real user hit this: a manual resource-builder run on an already-complete village (burning through many `already_satisfied` steps to re-sync stale progress tracking) got killed mid-run by the auto loop's own cleanup.
+
+  Fixed precisely: a genuinely skipped tick (no page navigation, no RR-index advance) now just retries in 20s without touching the page. A real error from the build step itself still behaves exactly as before (RR advances, context restore still runs, normal reschedule) — only the clean-skip path changed. Verified via an isolated simulation of all three code paths (success / skip / error) confirming each does exactly what it should.
+
+## [1.8.42] — 2026-08-18
+
+### Fixed
+
+- **Overflow Guard's round-robin was too slow to actually prevent overflow on accounts with several villages** — one village was checked per tick, so with N non-pivot villages, any single village was only actually checked once every `N × loop interval` — easily an hour or more, plenty of time for a warehouse/granary to fill to 100% between checks. Reported by a real user: surpluses filling "to the end" despite Overflow Guard being on. New `runOverflowGuardAllVillages()` checks every non-pivot village every tick by default (`RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`, default `true`) — sequential (shares one browser page), with one village's transient failure no longer aborting the rest of the batch. Set `false` to restore the old one-per-tick behavior.
+- **"Blocked by distance" was logged as routine info, easy to miss** — the exact situation causing unrelieved overflow (a village too far from its pivot — "Far sends are never allowed") was logged via `logInfo` (plain cyan), indistinguishable from routine "nothing to do" messages. Now logged via a new `logDanger()` (red+bold body), same for any other overflow failure — worth noticing, not scrolling past.
+
+### Added
+
+- **Yellow `[Tag]` / red-body log distinction extended** — `logDanger()` joins the existing `logInfo`/`logSuccess`/`logWarn`/`logError` set: same yellow `[Bracketed Tag]` prefix convention, red+bold message body, for urgent-but-not-crashed situations (currently: Overflow Guard blocked/failed). Goes to stdout like `logInfo`/`logSuccess`/`logWarn` (not stderr like `logError`), since it's a status to notice, not a hard failure.
+
+## [1.8.41] — 2026-08-18
+
+### Fixed
+
+- **Builder RR auto-exclude never caught villages that finished resource fields before the setting took effect** — `resolveBuilderPlanModeForVillage()` (used for RR candidate selection) only checked whether the resource plan was complete, then fell through to the village-stage plan — it had no awareness of `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` at all. The actual exclusion logic only ran mid-tick, at the exact moment a village's resource plan transitioned from incomplete to complete; a village that was *already* resource-complete going into a tick (e.g. it finished before this setting was enabled) would skip straight to "village" mode and keep building village-stage templates indefinitely, never triggering the exclude. A real user hit exactly this: "counts through all templates instead of finishing and excluding." `resolveBuilderPlanModeForVillage()` now returns no pending work as soon as resource is complete when auto-exclude is on, regardless of village-stage status.
+- Added a catch-up step at the start of each builder-loop tick: any non-excluded village whose resource plan is *already* complete now gets properly added to `BUILDER_RR_EXCLUDED_VILLAGE_IDS` (persisted, logged) immediately — previously such a village would just be silently skipped by the candidate filter without ever actually being recorded as excluded.
+
+### Added
+
+- **Yellow `[Tag]` prefixes in terminal log output** — `logInfo`/`logSuccess`/`logWarn`/`logError` now color a leading `[Bracketed Tag]` (e.g. `[Builder Loop]`, `[Capital Granary]`, `[NPC Crop]`) yellow, distinct from the rest of the line's normal log-level color, so the source tag is easy to spot when scanning a busy terminal. Applies uniformly across all logged tags, not just Builder Loop. Messages without a leading bracket tag are unaffected.
+
+## [1.8.40] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: git sync silently failed whenever `package-lock.json` had local changes** — both `termux-proot-setup.sh`'s branch checkout and the auto-sync added to `termux-proot-run.sh` in 1.8.39 used plain `git checkout`/`git pull`, which abort with "local changes would be overwritten" the moment `npm install` (which runs during setup, and can leave `package-lock.json` modified) has touched a tracked file — exactly the conflict a real user hit manually days earlier, now happening silently inside the *automatic* sync instead, defeating its whole purpose. Both now `git reset --hard` (discarding tracked-file changes — safe, this chroot copy is a deployment target, not a workspace with precious local edits; `.env`/`.env.termux` are gitignored and untouched) before `git checkout -B <branch> origin/<branch>`, which cannot be blocked by local modifications.
+
+  Verified by reproducing the exact failure first (dirty `package-lock.json` + stale commit, real local git repos — old command: aborts, exit 1, confirmed identical to the reported symptom) and then confirming the hardened command succeeds against the identical dirty state (exit 0, correctly resets and fast-forwards to the latest remote commit).
+
+## [1.8.39] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: the chroot's checkout silently drifted from the Termux-side one, again** — `termux-proot-run.sh` runs from Termux, but the actual `login.js` it launches lives in a completely separate git checkout inside the chroot (`/root/nexian-dani`). Pulling updates on the Termux side (to pick up this very script's fixes) did nothing to the chroot's copy, so a real user's chroot kept running a stale pre-`--nexian-env-file=` `login.js` — reproducing the "Missing credentials... in .env" symptom a third time even after both the underlying flag-collision bug and the branch-detection fix (1.8.36/1.8.38) had already landed, purely because the chroot itself was never told to update.
+
+  `termux-proot-run.sh` now syncs the chroot's checkout to the same branch as the Termux-side one (fetch/checkout/pull, same branch-detection as `termux-proot-setup.sh`) before every launch, by default. Sync failure (offline, no matching remote) is non-fatal — logs a warning and continues with whatever's checked out, same as `termux-proot-setup.sh`'s existing behavior. Pass `--no-sync` to skip it (faster restarts once both sides are known to match).
+
+  Verified via real execution (PATH-mocked `proot-distro`, not sourced) confirming the generated inner script for both the default and `--no-sync` paths, plus standalone functional tests of the actual git fetch/checkout/pull chain against real local repos — both the success path (branch switch across a working remote) and the failure path (no matching remote — falls through to the non-fatal warning, does not crash).
+
+## [1.8.38] — 2026-08-18
+
+### Fixed
+
+- **`--env-file=` collided with Node's own native flag, silently bypassing auto-creation** — Node.js (≥20.6) has a built-in native `--env-file=<path>` CLI flag that intercepts that exact argument *before* `login.js` ever runs, and exits immediately with `node: <path>: not found` if the target doesn't exist yet — completely bypassing `ensureEnvFile()`'s auto-creation from the 1.8.37 fix. This is a pre-existing latent bug across the whole project (`login:nexian`/`dashboard:nexian*` npm scripts, `dashboard-dev.sh`/`.ps1`/`.cmd`, the Termux scripts), not something introduced by the Termux work — it just never surfaced before because nobody had pointed `--env-file=` at a file that didn't already exist. A real user hit it running the Termux path for the first time.
+
+  Renamed this project's own flag to **`--nexian-env-file=`** everywhere (`login.js`, all `package.json` scripts, `dashboard-dev.*` launchers, `scripts/termux-proot-*.sh`, `.env.termux.example`, README) to avoid the collision entirely. Launcher scripts that exposed their own `--env-file`/`-EnvFile` option for user convenience (`dashboard-dev.sh`, `dashboard-dev.ps1`) keep that external name — only what they forward to `node` changed.
+
+  Verified against real Node.js: `node script.js --env-file=missing.env` (flag *after* the script name, matching this project's actual invocation pattern) reproduces the exact reported error and the script never runs; `node script.js --nexian-env-file=missing.env` runs normally with the argument available in `process.argv`. Full end-to-end confirmation with the real `login.js`: a missing `.env.termux` is now correctly created from `.env.termux.example` and the placeholder-credential guard fires cleanly, no crash.
+
+## [1.8.37] — 2026-08-18
+
+### Added
+
+- **Flavor-aware `--env-file=` auto-creation** — `login.js`'s existing "auto-create a missing env file" behavior (previously always sourced from the generic `.env.example`) now prefers a same-named template when one exists: a missing `--env-file=.env.termux` is created from `.env.termux.example` (phone-tuned defaults) instead of the generic template, falling back unchanged when no flavor-specific template exists (e.g. `.env.nexian`, which has none today). Combined with `login.js`'s existing placeholder-credential guard (refuses to run and tells you which file to edit), this means: on any fresh machine, running the bot once creates a fully working config with sensible defaults, and the user only ever needs to edit real credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) to get going — no dependency on a setup script separately pre-copying the right template.
+- `scripts/termux-proot-run.sh` simplified accordingly: always passes `--env-file=.env.termux` (unless the caller passed their own `--env-file=`) and relies on `login.js` to create it correctly, instead of the script's own file-existence-check-and-placeholder-resolution logic from 1.8.33.
+
+## [1.8.36] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: chroot's git clone silently diverged from the Termux-side branch** — `termux-proot-setup.sh` cloned the repo inside the chroot with no branch specified, so it always got GitHub's default branch regardless of what branch the user actually had checked out in Termux. In practice this meant `.env.termux` was never created (the chroot's `main` checkout doesn't have `.env.termux.example`, which only exists on an unmerged feature branch), with no error — the script just silently skipped that step. Now: the script detects the current branch of the Termux-side checkout it's running from (`git rev-parse --abbrev-ref HEAD`, override with `NEXIAN_REPO_BRANCH=`) and clones/checks out the same branch inside the chroot, keeping both copies in sync. Falls back to GitHub's default branch, unchanged, if detection isn't possible (detached HEAD, not a git repo).
+
+## [1.8.35] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: re-running setup on an existing Ubuntu install failed hard** — `termux-proot-setup.sh` checked `proot-distro list --installed` to decide whether to install, but that output format isn't reliable across `proot-distro` versions (confirmed in practice: it didn't detect an existing install), so the script tried to install again and hit `Error: container 'ubuntu' already exists.` and aborted. Now the script just runs `proot-distro install` unconditionally and treats an "already exists" failure as the expected, non-fatal outcome of a second run — any other failure still aborts with the real error shown.
+
+## [1.8.34] — 2026-08-18
+
+### Fixed
+
+- **Termux/proot-distro: leaked Android node silently skipped the real Node install** — `termux-proot-setup.sh`'s "is Node already present?" check only compared version numbers, so when Termux's own Bionic/Android node was reachable on `$PATH` inside the `proot-distro login` shell (proot does not always fully reset `PATH`), a high version number (e.g. v26) satisfied `>= 20` and the script skipped installing a real glibc Node — silently running `npm install` / `npx playwright install chromium` against the wrong Node and reproducing the exact `Unsupported platform: android` error the chroot exists to avoid. Now: `PATH` is forced to a chroot-only value at the top of the provisioning and run scripts, the presence check verifies `process.platform === 'linux'` (not just version), a failed post-install check hard-fails with the resolved node path/version/platform printed instead of continuing, and `node_modules`/`package-lock.json` are wiped before `npm install` to clear any previously-poisoned install. `termux-proot-run.sh` got the same `PATH`-forcing and a pre-flight platform check before launching `node login.js`.
+
+## [1.8.33] — 2026-08-18
+
+### Added
+
+- **`.env.termux.example`** — phone-friendly config profile for the Android (Termux) path: same as `.env.example` but with several loop intervals relaxed 2-4x (builder loop, celebrations, NPC crop convert, overflow guard, Top 10 tracking, session rest) to reduce how often Chromium does real work through `proot`'s syscall-translation overhead, plus `DASHBOARD_OPEN_BROWSER=false` (nothing to auto-open in a headless chroot).
+- `scripts/termux-proot-setup.sh` now creates `.env.termux` from that template automatically and prints a copy-paste command to merge real credentials in from the Termux-side `.env` without overwriting the relaxed intervals.
+- `scripts/termux-proot-run.sh` now uses `.env.termux` automatically when present in the chroot (falls back to plain `.env`; an explicit `--env-file=` argument still wins).
+
+## [1.8.32] — 2026-08-18
+
+### Added
+
+- **Android (Termux) support, experimental** — `scripts/termux-proot-setup.sh` (`npm run termux:setup`) provisions a real glibc Linux userland on-device via `proot-distro` (Ubuntu chroot inside Termux, no root), since Termux's own Bionic-libc environment cannot run Playwright at all (`Unsupported platform: android`, and even bypassing that check, a glibc Chromium binary won't load under Bionic). Installs Node.js + the repo + Playwright/Chromium inside the chroot. `scripts/termux-proot-run.sh` (`npm run termux:run`) launches it with a `termux-wake-lock` to reduce (not eliminate) Android backgrounding kills. Documented in README with explicit limitations — this is not a substitute for running on a PC/VPS, which remains the recommended 24/7 path.
+
+## [1.8.31] — 2026-08-17
+
+### Added
+
+- **Capital granary watcher** — new `CAPITAL_GRANARY_WATCHER_ENABLED` (default `true`) checks the capital village's granary on every NPC Crop Convert tick, independent of the other villages' round-robin turn, and NPC-trades crop → wood/clay/iron once it crosses the threshold. Optional `CAPITAL_GRANARY_WATCHER_RATIO` overrides the trigger threshold for the capital only (falls back to `NPC_CROP_CONVERT_GRANARY_RATIO`). Capital is excluded from the shared round-robin while the watcher is on, to avoid double-checking it. Still requires `NPC_CROP_CONVERT_ENABLED=true` — it shares that loop's schedule rather than running on its own timer.
+
+## [1.8.30] — 2026-08-17
+
+### Added
+
+- **Builder RR auto-exclude on resource-fields completion** — new `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` (default `true`). Once a village's resource-fields plan is fully complete (all fields at their template's max level, e.g. 10), the builder loop stops upgrading that village's fields and auto-adds it to `BUILDER_RR_EXCLUDED_VILLAGE_IDS` (persisted to `.env`) instead of falling through to the village-stage plan. Set to `false` to keep the previous resource→village continuation behavior (`BUILDER_RR_RESOURCE_THEN_VILLAGE`).
+
+### Changed
+
+- **Builder loop interval** — default `BUILDER_LOOP_MIN_MINUTES`/`BUILDER_LOOP_MAX_MINUTES` lowered from `5`–`10` to `0.5`–`1`. Loop-interval settings now accept fractional minutes (e.g. `0.5` = 30s); a 0.1-minute floor guards against a runaway tight loop from misconfiguration.
+- **Celebrations RR interval** — default `CELEBRATIONS_LOOP_MIN_MINUTES`/`CELEBRATIONS_LOOP_MAX_MINUTES` lowered from `60`–`120` to `30`–`60`.
+
 ## [1.8.29] — 2026-08-15
 
 ### Fixed

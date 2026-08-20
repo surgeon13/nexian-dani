@@ -1,8 +1,8 @@
 # Nexian Automation Helper
 
-Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
+Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.29** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.59** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -14,7 +14,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 | **Main menu** | Village status, farmlists, village-stage builder, resource-fields builder, troop trainer, expansion check, logs, settings, village picker, **proxy menu (`y`)**. |
 | **Web dashboard** | Local browser UI at `http://127.0.0.1:3847` — status, actions, live console, loop settings, **proxy pool**, **session presence** (online windows + egress IP), **Top 10** standings/Δ/`/h`, activity simulation. **Compact view** for small screens (e.g. Raspberry Pi 3.5″ TFT). |
 | **Compact UI** | One setting (`DASHBOARD_COMPACT_VIEW` or terminal **S → D**) toggles compact **web layout** and shorter **terminal menus**. |
-| **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. |
+| **Village templates** | JSON templates under `templates/`; progress in `templates/progress.json`. Experimental/standalone templates (e.g. `village_stage_fast_basic_15c` for crop-heavy villages) aren't in the default chain — assign one to a village from the terminal menu (**B → pick village → pick template**). Every assignment through this menu clears the *other* plan mode's progress for that village — one active template per village, always — so a village never ends up with two plans competing in parallel. A step blocked purely on Warehouse/Granary *capacity*, or on a locked bonus building (Sawmill/Brickyard/Iron Foundry need Main Building level 5, which the resource-fields templates can't self-manage), auto-relieves itself by upgrading the real blocker out of order instead of retrying forever; any village stuck on the same blocked status 4+ times in a row logs a `repeated_blocked` warning. |
 | **Loops** | Optional timers for farmlists, builders, troop training, Top 10 statistics, session play/rest windows, raid-guard heartbeat, NPC crop convert, celebrations RR. |
 | **24/7 keep-alive** | PC: `npm run start:24-7:pc` / `start-24-7.cmd`; Cursor/tmux: `npm run start:24-7`. Heartbeats in `keep-alive.log`. |
 | **Ctrl+C** | Soft-cancel running action and return to the menu (does not tear down the browser session alone). |
@@ -22,11 +22,11 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 ### Automation modules
 
 - **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`R`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
-- **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Far overflows never send. Settings **OG** / `RESOURCE_OVERFLOW_*`.
-- **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Stored in `templates/troop_plans.json`.
+- **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Checks every non-pivot village each tick by default (`RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`), not just one per round-robin turn. Far overflows never send — logged in **red** in the terminal so a stuck village is easy to spot. Settings **OG** / `RESOURCE_OVERFLOW_*`.
+- **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable, Workshop). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Workshop trains last in the cycle so siege never eats into cavalry/infantry's resources that tick. Unit names must match the game exactly — use **T → [U]** to list a village's real trainable unit names (this server's siege building is *Siege Workshop*, training **Ram** and **Trebuchet**). A branch with no unit set is skipped silently, so the plan list flags it as `not set (won't train)`. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
 - **Raid evacuation** — When enabled (`RAID_EVACUATION_*`, Settings → Raid), send surplus resources toward a **pivot** village when an incoming attack is within the configured ETA window.
-- **NPC crop convert** — When granary fills to the threshold (default 95%), NPC-trade so crop becomes **0%** and wood/clay/iron share the rest. Round-robin one village per poll (`NPC_CROP_CONVERT_*`, Settings **N**). Costs gold in-game; off by default.
+- **NPC crop convert** — When granary fills to the threshold (default 95%), NPC-trade so crop becomes **0%** and wood/clay/iron share the rest. Round-robin one village per poll (`NPC_CROP_CONVERT_*`, Settings **N**). Costs gold in-game; off by default. **Capital granary watcher** (`CAPITAL_GRANARY_WATCHER_*`, on by default) checks the capital every tick instead of waiting for its round-robin turn.
 - **Top 10 tracking** — Scheduled or manual Robbers-focused snapshots (plus other rankings) in `top10.log`. Dashboard **Top 10** tab highlights **your raid income /h** (active vs wall-clock), with farmlist/Top10 settings context. Settings **[O]** or **Snapshot now**.
 - **24/7 keep-alive** — `scripts/keep-alive.sh` polls every **15s** and restarts the bot if the process dies, the dashboard stops answering, or action logs go stale while loops should be running. On Cursor Cloud, `.cursor/environment.json` auto-starts the stack; elsewhere use `npm run start:24-7`.
 
@@ -45,7 +45,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 - **1.8.9:** Top 10 dashboard + Δ/`/h` from all polls; 24/7 keep-alive; session wake recovery; proxy rotate-on-rest visibility; farmlist village pin; Palace expansion on realm host.
 - **Top 10 statistics tracking** — seven ranking categories logged to `top10.log` (JSONL lines with `ts` + `epochMs`).
 - **Farmlist auto-send pre-empts** builder, troop, cranny, and activity auto loops when due.
-- **Troop plans** replace the old per-village troop-template toggles (four building branches, per-plan timers).
+- **Troop plans** replace the old per-village troop-template toggles (five building branches, per-plan timers).
 - **Proxy pool** with dashboard + terminal management; rotate proxy after session-loop rest.
 - **Reliability:** farmlist send uses `#btn_send_all` (not troop `#btn_train`), troop auto queue (10s max idle wait), Stable map discovery, `GAME_HOST`, `FARMLIST_VILLAGE_ID`.
 
@@ -55,6 +55,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 
 - **Node.js 18+**
 - **Windows**, **macOS**, or **Linux** (launch scripts differ; see Troubleshooting.)
+- **Android**, experimental, via Termux + `proot-distro` only — see [Android (Termux)](#android-termux--experimental).
 
 ---
 
@@ -79,6 +80,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `setup-pc.cmd` | Windows: npm install + Playwright Chromium. |
 | `.cursor/environment.json` | Cursor Cloud: install deps + auto-start 24/7 stack on agent boot. |
 | `scripts/cursor-cloud-*.sh` | Cloud install / start / ensure helpers (`npm run cursor:*`). |
+| `scripts/termux-proot-*.sh` | Android (Termux) experimental setup / run helpers via `proot-distro` (`npm run termux:*`). |
 | `AGENTS.md` | Cloud Agent keep-alive + PC host + Automation instructions. |
 | `villageBuilder.js` | Template loading, DOM guards, upgrade / Master Builder steps. |
 | `villageExpansion.js` | Expansion / settlers / settlement resource checks (no auto-transfers); Palace on realm host. |
@@ -121,7 +123,9 @@ node login.js --headed --keep-open
 
 (or `npm run login:headed`, or `start-headed.cmd` on Windows.)
 
-If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only.
+If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only. This applies to any `--nexian-env-file=` target, not just plain `.env`: a missing `--nexian-env-file=.env.termux` gets created from `.env.termux.example` if one exists next to it (falling back to the generic `.env.example` otherwise), so a fresh machine only ever needs its credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) edited in before the first real run — `login.js` refuses to proceed with placeholder credentials and tells you exactly which file to edit.
+
+**Use `--nexian-env-file=`, not `--env-file=`.** Node.js itself (≥20.6) has a native `--env-file=<path>` CLI flag that intercepts that exact argument before `login.js` ever runs, and exits hard with `node: <path>: not found` if the target doesn't exist yet — bypassing the auto-creation above entirely. This project's alt-profile flag is deliberately named differently to avoid that collision.
 
 ---
 
@@ -144,6 +148,8 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run setup:pc` / `setup-pc.cmd` | Install deps + Playwright Chromium on a PC |
 | `npm run cursor:ensure` | Cursor Cloud health check / restart (`cursor-cloud-ensure.sh`) |
 | `npm run cursor:start` | Materialize secrets + start 24/7 stack |
+| `npm run termux:setup` | **Android (Termux), experimental:** one-time `proot-distro` Ubuntu + Node + Playwright setup |
+| `npm run termux:run` | **Android (Termux), experimental:** launch inside the `proot-distro` chroot |
 | `npm run playwright:install` | Install Playwright Chromium only |
 | `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `session-presence.json`, `templates/progress.json` |
 
@@ -394,6 +400,38 @@ After `git pull`, restart the dashboard. Log rotation (v1.5.7+) keeps `log.jsonl
 
 ---
 
+## Android (Termux) — experimental
+
+**Termux by itself cannot run this.** Playwright's browser downloader explicitly refuses Android (`Unsupported platform: android` from `playwright-core`), and even bypassing that, Termux's Bionic libc cannot execute Playwright's glibc-built Chromium binary. This is not a bug in this repo — it's Playwright and Termux never having been designed to work together for a real browser instance.
+
+The only working path is a real glibc Linux userland on-device via [`proot-distro`](https://github.com/termux/proot-distro) (installs an Ubuntu rootfs inside Termux, no root required). Node/Playwright/Chromium run *inside that chroot*, not in Termux directly.
+
+```bash
+pkg install git -y   # if you haven't already cloned this repo under Termux
+bash scripts/termux-proot-setup.sh   # one-time: installs proot-distro + Ubuntu,
+                                      # Node.js, clones/updates the repo inside
+                                      # the chroot, npm install, Playwright + deps
+```
+
+Setup also creates `.env.termux` from **`.env.termux.example`** — same as `.env.example` but with several loop intervals relaxed (mostly 2-4x longer: builder loop, celebrations, NPC crop convert, overflow guard, Top 10 tracking, session rest) to cut how often Chromium wakes up and does real work through `proot`'s overhead. Fill in real credentials there (the setup script prints a copy-paste command that merges them in from your Termux-side `.env` without clobbering the relaxed intervals — the chroot copy of the repo is a separate filesystem), then run it:
+
+```bash
+bash scripts/termux-proot-run.sh             # node login.js — uses .env.termux automatically when present
+bash scripts/termux-proot-run.sh --dashboard # node login.js --dashboard --keep-open
+```
+
+The chroot at `/root/nexian-dani` is a **separate git checkout** from the Termux-side one — pulling updates in Termux (e.g. to get a newer `termux-proot-run.sh`) does not update the chroot's copy of `login.js` on its own. To avoid the two silently drifting apart, `termux-proot-run.sh` fetches/checks-out/pulls the same branch as the Termux-side checkout inside the chroot before every launch. Pass `--no-sync` to skip that (faster restarts once you know both sides match, or if you're offline).
+
+(`npm run termux:setup` / `npm run termux:run` are the same two scripts.)
+
+**Read this before relying on it:**
+- Chromium runs through `proot`'s syscall-translation layer — slower and occasionally flakier than a native Linux host.
+- Android will still try to kill backgrounded apps to reclaim memory. `termux-wake-lock` (used automatically by `termux-proot-run.sh`) plus setting Termux's battery mode to **Unrestricted** (Settings → Apps → Termux → Battery) reduces but does not eliminate this.
+- `--headed` has nowhere to render unless you separately set up [termux-x11](https://github.com/termux/termux-x11).
+- This whole combination is unofficial — neither Playwright nor `proot-distro` claims to support it. Treat it as experimental, not a replacement for the PC/VPS path above, which remains the recommended way to run this 24/7.
+
+---
+
 ## Builder and resources
 
 The builder evaluates costs against current warehouse/granary stock. If Nexian hides the normal upgrade button and only offers Master Builder (`regular: none | MB`), automation can **queue MB** builds when Master Builder usage is enabled in settings.
@@ -420,8 +458,8 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
 - **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
-- **Overflow guard:** `RESOURCE_OVERFLOW_GUARD_ENABLED`, `RESOURCE_OVERFLOW_TRIGGER_RATIO`, `RESOURCE_OVERFLOW_TARGET_RATIO`, `RESOURCE_OVERFLOW_MAX_DISTANCE`, `RESOURCE_OVERFLOW_LOOP_MIN_MINUTES`, `RESOURCE_OVERFLOW_LOOP_MAX_MINUTES`, `RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS`
-- **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`
+- **Overflow guard:** `RESOURCE_OVERFLOW_GUARD_ENABLED`, `RESOURCE_OVERFLOW_TRIGGER_RATIO`, `RESOURCE_OVERFLOW_TARGET_RATIO`, `RESOURCE_OVERFLOW_MAX_DISTANCE`, `RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`, `RESOURCE_OVERFLOW_LOOP_MIN_MINUTES`, `RESOURCE_OVERFLOW_LOOP_MAX_MINUTES`, `RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS`
+- **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`, `CAPITAL_GRANARY_WATCHER_ENABLED`, `CAPITAL_GRANARY_WATCHER_RATIO`
 - **Celebrations RR:** `CELEBRATIONS_ROUND_ROBIN_ENABLED`, `CELEBRATIONS_LOOP_MIN_MINUTES`, `CELEBRATIONS_LOOP_MAX_MINUTES`, `CELEBRATIONS_TYPE`, `CELEBRATIONS_QUEUE_DEPTH` (1 or 2, default 1), `CELEBRATIONS_INCLUDED_VILLAGE_IDS`, `CELEBRATIONS_EXCLUDED_VILLAGE_IDS`
 - **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
 

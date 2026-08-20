@@ -7,7 +7,7 @@ if not defined NODE_OPTIONS set NODE_OPTIONS=--max-old-space-size=512
 echo.
 echo Nexian dashboard (dev) — headed browser + web UI
 echo   Dashboard: http://127.0.0.1:3847
-echo   Env: .env (pass --env-file=... to override)
+echo   Env: .env (pass --nexian-env-file=... to override)
 echo.
 
 node login.js --dashboard --headed --keep-open %*

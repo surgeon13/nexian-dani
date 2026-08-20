@@ -146,6 +146,26 @@ function getDefaultTemplateChain(index) {
   return getTemplateChain(index, index.default_template);
 }
 
+/**
+ * True if templateKey is reachable from the default chain for planMode
+ * (village_stage_00 -> 01 -> 02, or resource_fields_01 -> ... -> 05) by
+ * following next_template pointers. False for a standalone/experimental
+ * template (e.g. village_stage_fast_basic_15c) that isn't linked into
+ * either default chain — such a template is meant to run BY ITSELF for
+ * whatever village it's assigned to, not alongside the other plan mode's
+ * default pipeline. Used to stop the resource-then-village auto-pipeline
+ * from silently overriding a manually-assigned standalone template.
+ */
+function isTemplateInDefaultChain(templateKey, planMode) {
+  const mode = normalizePlanMode(planMode);
+  const index = loadIndex();
+  const defaultKey = resolveDefaultTemplateForPlan(index, mode);
+  if (!defaultKey) {
+    return false;
+  }
+  return getTemplateChain(index, defaultKey).includes(templateKey);
+}
+
 function listEnabledTemplates() {
   const index = loadIndex();
   return index.templates.filter((t) => t.enabled);
@@ -856,6 +876,83 @@ function checkResourceSufficiency(slotInfo, costs) {
   return { sufficient, deficit };
 }
 
+/**
+ * When a step is blocked because its cost exceeds current Warehouse/Granary
+ * CAPACITY (not just current stock, which blocked_resources already covers
+ * via resource circulation) — the actual fix, raising that storage building,
+ * may be scheduled LATER in this same template's strict sequence. Without
+ * this, the blocked step just retries forever every cooldown while the
+ * village's storage sits full and nothing ever gets built: the strict
+ * ordering that makes templates predictable also has no way to reach the
+ * one step that would unblock it.
+ *
+ * Scans the WHOLE template (not just from the current position) for a
+ * Warehouse or Granary step, and if that slot is real, has room left to
+ * grow toward what the template eventually wants, and its own next-level
+ * upgrade is affordable right now, clicks it out of strict order. Progress
+ * indices are intentionally left untouched — the originally-blocked step is
+ * retried on the very next call, hopefully unblocked by the higher capacity.
+ * Returns null (no side effects) whenever relief isn't available or isn't
+ * itself affordable, so callers can fall through to the normal blocked_storage
+ * result unchanged.
+ */
+async function attemptStorageReliefUpgrade(page, baseUrl, villageId, template, kind) {
+  const targetBuildingName = kind === "granary" ? "Granary" : "Warehouse";
+
+  let targetLevel = 0;
+  let candidateSlot = null;
+  for (const stage of (template && template.stages) || []) {
+    for (const step of (stage && stage.steps) || []) {
+      if (isSameBuildingName(step.building, targetBuildingName)) {
+        if (candidateSlot === null) {
+          candidateSlot = Number(step.slot);
+        }
+        targetLevel = Math.max(targetLevel, Number(step.target_level) || 0);
+      }
+    }
+  }
+  if (candidateSlot === null || targetLevel <= 0) {
+    return null;
+  }
+
+  const slotInfo = await readSlotPage(page, baseUrl, candidateSlot, villageId);
+  if (slotInfo.isEmptySlot || !isSameBuildingName(slotInfo.buildingName, targetBuildingName)) {
+    return null;
+  }
+  if (slotInfo.currentLevel >= targetLevel) {
+    return null;
+  }
+  if (Number(slotInfo.buildQueueCount) > 0) {
+    return null;
+  }
+  if (!slotInfo.hasUpgradeButton || slotInfo.upgradeDisabled) {
+    return null;
+  }
+
+  const costs = slotInfo.costs || {};
+  if (!Object.keys(costs).length) {
+    return null;
+  }
+  if (checkStorageCapacity(slotInfo, costs).length > 0) {
+    return null;
+  }
+  if (!checkResourceSufficiency(slotInfo, costs).sufficient) {
+    return null;
+  }
+
+  const clicked = await executeUpgradeClick(page, { allowMasterBuilder: false });
+  if (!clicked) {
+    return null;
+  }
+
+  return {
+    slot: candidateSlot,
+    building: targetBuildingName,
+    fromLevel: slotInfo.currentLevel,
+    toLevel: slotInfo.currentLevel + 1
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Step resolver — find first unfinished step in strict order
 // ---------------------------------------------------------------------------
@@ -901,6 +998,75 @@ function resolveNextStep(template, villageProgress) {
   return null; // Template fully completed
 }
 
+/**
+ * Shared advance-past-current-step logic, used both when a step is already
+ * satisfied (building already at/above target level) and when a step is
+ * explicitly marked skip_if_mismatch and the live slot doesn't hold the
+ * expected building type (e.g. a "Cropland only" step landing on a
+ * Woodcutter slot in a mixed-field village). Persists progress and returns
+ * either a template-completion result (template_complete/all_complete, if
+ * this was the last step) or a custom advance result built from `status`/
+ * `message`.
+ */
+function advancePastStep(
+  village,
+  mode,
+  planLabel,
+  template,
+  activeTemplateKey,
+  stageIndex,
+  stepIndex,
+  isLast,
+  report,
+  status,
+  message
+) {
+  if (isLast) {
+    if (template.next_template) {
+      setVillageProgress(village, {
+        active_template: template.next_template,
+        stage_index: 0,
+        step_index: 0,
+        completed_template: activeTemplateKey
+      }, {
+        planMode: mode
+      });
+      return {
+        status: "template_complete",
+        planMode: mode,
+        completedTemplate: activeTemplateKey,
+        nextTemplate: template.next_template,
+        message: `${planLabel} template '${activeTemplateKey}' completed. Advanced to '${template.next_template}'.`
+      };
+    }
+    return {
+      status: "all_complete",
+      planMode: mode,
+      message: `All ${planLabel} templates completed for this village.`
+    };
+  }
+
+  const nextStepIndex = stepIndex + 1;
+  const currentStage = template.stages[stageIndex];
+  let newStageIndex = stageIndex;
+  let newStepIndex = nextStepIndex;
+
+  if (nextStepIndex >= currentStage.steps.length) {
+    newStageIndex = stageIndex + 1;
+    newStepIndex = 0;
+  }
+
+  setVillageProgress(village, {
+    active_template: activeTemplateKey,
+    stage_index: newStageIndex,
+    step_index: newStepIndex
+  }, {
+    planMode: mode
+  });
+
+  return { status, report, message };
+}
+
 function normalizeBuildingName(name) {
   const normalized = String(name || "")
     .toLowerCase()
@@ -940,6 +1106,14 @@ function isSameBuildingName(actual, expected) {
     return true;
   }
 
+  // Palace and Residence are mutually exclusive alternates of the same
+  // slot (settlement-capital choice) — a template step asking for either
+  // one should match whichever the village actually has.
+  const capitalBuilding = new Set(["palace", "residence"]);
+  if (capitalBuilding.has(compactA) && capitalBuilding.has(compactE)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -973,7 +1147,11 @@ function isFlexibleMapBonusBuilding(name) {
     c === "brickyard" ||
     c === "ironfoundry" ||
     c === "grainmill" ||
-    c === "bakery"
+    c === "bakery" ||
+    // Not a resource bonus, but its inner-slot position isn't fixed across
+    // templates either (varies by tribe/village) — reuse the same live-map
+    // discovery instead of trusting a guessed slot number in the template.
+    c === "residence"
   );
 }
 
@@ -1013,6 +1191,83 @@ async function surveyInnerSlotsFromVillageMap(page, baseUrl, villageId) {
     }
     return out;
   });
+}
+
+/**
+ * Reads live levels for resource field slots 1-18 (Woodcutter/Clay
+ * Pit/Iron Mine/Cropland) directly from the village map's area title/alt
+ * text, in one page load. Same selector as surveyInnerSlotsFromVillageMap
+ * (which reads this exact page for slots >=19) — deliberately reused
+ * rather than a new untested selector, just with the "level N" text kept
+ * instead of stripped, and filtered to 1-18 instead of >=19.
+ *
+ * General-purpose live-DOM diagnostic: reads the ACTUAL current field
+ * levels regardless of what progress.json thinks. NOT used to short-circuit
+ * Builder RR auto-exclude — exclusion still requires the full resource
+ * template chain (18 basic fields AND bonus buildings) to report complete
+ * via previewPlan, so bonus buildings are never skipped. This stays
+ * available for future verification/diagnostics use.
+ */
+async function readResourceFieldLevelsFromMap(page, settings, villageId) {
+  if (!villageId) {
+    return [];
+  }
+  const baseUrl = (settings && settings.villageBuilderUrl) || "https://nexian.world/village2.php";
+  const centerUrl = buildVillageCenterUrl(baseUrl, villageId);
+  await safeGotoWithRetry(page, centerUrl, { waitUntil: "domcontentloaded", timeout: 60000 }, 2);
+
+  return page.evaluate(() => {
+    const normalize = (value) =>
+      String(value || "").replace(/ /g, " ").trim();
+    const areas = Array.from(
+      document.querySelectorAll("map#map2 area[href*='build.php?id='], area[href*='build.php?id=']")
+    );
+    const out = [];
+    for (const area of areas) {
+      const href = area.getAttribute("href") || "";
+      const match = href.match(/[?&]id=(\d+)/i);
+      const slotId = match ? Number(match[1]) : null;
+      if (!Number.isFinite(slotId) || slotId < 1 || slotId > 18) {
+        continue;
+      }
+      const title = normalize(area.getAttribute("title") || "");
+      const alt = normalize(area.getAttribute("alt") || "");
+      const combined = `${title} ${alt}`;
+      const levelMatch =
+        combined.match(/\blevel\s+(\d+)\b/i) || combined.match(/\blvl\.?\s*(\d+)\b/i);
+      out.push({ slotId, level: levelMatch ? Number(levelMatch[1]) : 0 });
+    }
+    return out;
+  });
+}
+
+/**
+ * True only if all 18 resource field slots were read AND are all at/above
+ * targetLevel. Returns false (not "unknown") on any incomplete read, so a
+ * navigation hiccup never gets mistaken for "fields complete."
+ */
+function areAllResourceFieldsAtLevel(fieldRows, targetLevel = 10) {
+  if (!Array.isArray(fieldRows)) {
+    return false;
+  }
+  const seenSlots = new Set();
+  for (const row of fieldRows) {
+    const level = Number(row && row.level);
+    const slotId = Number(row && row.slotId);
+    if (!Number.isFinite(level) || !Number.isFinite(slotId)) {
+      continue;
+    }
+    if (level < targetLevel) {
+      return false;
+    }
+    seenSlots.add(slotId);
+  }
+  for (let slot = 1; slot <= 18; slot += 1) {
+    if (!seenSlots.has(slot)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function resolveBonusBuildingSlotFromSurvey(rows, buildingName) {
@@ -1083,7 +1338,10 @@ function findFirstStageStepForBuildingTarget(template, buildingName, targetLevel
 
 /**
  * Nexian / Travian-style locks on empty slots: e.g. Academy requires Barracks level 3 before it becomes buildable.
- * When progress points at Academy but the UI leaves it locked for that reason, realign to the template step that satisfies the prereq.
+ * When progress points at a building but the UI leaves it locked for that reason, realign to the template step
+ * that satisfies the prereq (or, if the prerequisite building isn't managed by this template at all — Main
+ * Building lives in the "village" plan, not the "resource" plan that places these bonus buildings — see
+ * attemptPrerequisiteBuildingRelief() below).
  */
 function getNewBuildingGamePrerequisite(buildingName) {
   if (isSameBuildingName(buildingName, "Academy")) {
@@ -1091,6 +1349,24 @@ function getNewBuildingGamePrerequisite(buildingName) {
       requiresBuilding: "Barracks",
       minLevel: 3,
       templateTargetLevel: 3
+    };
+  }
+  // Documented in resource_fields_03.json's own stage notes: "Requires
+  // Woodcutter/Clay Pit/Iron Mine level 10 and Main Building level 5." The
+  // field-level half was already handled (Stage 1 of that template); the
+  // Main Building half was never wired up, so a village whose Main Building
+  // was still below 5 when it reached this stage looped forever — jumping
+  // "back to Stage 1" re-verified fields that were already fine, over and
+  // over, without ever touching the actual blocker.
+  if (
+    isSameBuildingName(buildingName, "Sawmill") ||
+    isSameBuildingName(buildingName, "Brickyard") ||
+    isSameBuildingName(buildingName, "Iron Foundry")
+  ) {
+    return {
+      requiresBuilding: "Main Building",
+      minLevel: 5,
+      templateTargetLevel: 5
     };
   }
   return null;
@@ -1116,6 +1392,60 @@ async function readPrerequisiteBuildingLevel(page, baseUrl, villageId, template,
   return 0;
 }
 
+/**
+ * A locked-building prerequisite (e.g. Sawmill needs Main Building level 5)
+ * can point at a building that isn't managed by the CURRENT template at all
+ * — Main Building lives in the "village" plan, not the "resource" plan that
+ * places Sawmill/Brickyard/Iron Foundry. Jumping to a stage inside the
+ * current template can't help in that case (no such stage exists), so
+ * instead discover the prerequisite building directly from the live village
+ * map and upgrade it out-of-band, if it's real and currently affordable.
+ * Mirrors attemptStorageReliefUpgrade()'s shape/guards for the same reason:
+ * a one-off relief click, no progress-index changes, so the original
+ * blocked step is simply retried right after with the prerequisite one
+ * level closer to satisfied.
+ */
+async function attemptPrerequisiteBuildingRelief(page, baseUrl, villageId, requiresBuilding) {
+  const slot = await discoverInnerBuildingSlotFromMap(page, baseUrl, villageId, requiresBuilding);
+  if (!Number.isFinite(Number(slot))) {
+    return null;
+  }
+
+  const slotInfo = await readSlotPage(page, baseUrl, Number(slot), villageId);
+  if (slotInfo.isEmptySlot || !isSameBuildingName(slotInfo.buildingName, requiresBuilding)) {
+    return null;
+  }
+  if (Number(slotInfo.buildQueueCount) > 0) {
+    return null;
+  }
+  if (!slotInfo.hasUpgradeButton || slotInfo.upgradeDisabled) {
+    return null;
+  }
+
+  const costs = slotInfo.costs || {};
+  if (!Object.keys(costs).length) {
+    return null;
+  }
+  if (checkStorageCapacity(slotInfo, costs).length > 0) {
+    return null;
+  }
+  if (!checkResourceSufficiency(slotInfo, costs).sufficient) {
+    return null;
+  }
+
+  const clicked = await executeUpgradeClick(page, { allowMasterBuilder: false });
+  if (!clicked) {
+    return null;
+  }
+
+  return {
+    slot: Number(slot),
+    building: requiresBuilding,
+    fromLevel: slotInfo.currentLevel,
+    toLevel: slotInfo.currentLevel + 1
+  };
+}
+
 async function tryRealignForLockedNewBuildingPrerequisite(
   page,
   baseUrl,
@@ -1127,9 +1457,6 @@ async function tryRealignForLockedNewBuildingPrerequisite(
   planMode
 ) {
   const mode = normalizePlanMode(planMode);
-  if (mode !== PLAN_MODE_VILLAGE) {
-    return null;
-  }
 
   const prereq = getNewBuildingGamePrerequisite(step.building);
   if (!prereq) {
@@ -1155,7 +1482,26 @@ async function tryRealignForLockedNewBuildingPrerequisite(
   );
 
   if (!jump) {
-    return null;
+    const relief = await attemptPrerequisiteBuildingRelief(page, baseUrl, village.id, prereq.requiresBuilding);
+    if (relief) {
+      return {
+        status: "prerequisite_relief",
+        report,
+        message:
+          `${step.building} is locked until ${prereq.requiresBuilding} reaches level ${prereq.minLevel} ` +
+          `(currently ${currentLevel}), and ${prereq.requiresBuilding} isn't managed by this template. ` +
+          `Upgraded ${relief.building} slot ${relief.slot} ${relief.fromLevel} → ${relief.toLevel} directly to help unblock it.`
+      };
+    }
+
+    return {
+      status: "blocked_prerequisite_building",
+      report,
+      message:
+        `${step.building} is locked until ${prereq.requiresBuilding} reaches level ${prereq.minLevel} ` +
+        `(currently ${currentLevel}). No template step manages ${prereq.requiresBuilding}, and no affordable live ` +
+        "upgrade is available for it right now."
+    };
   }
 
   setVillageProgress(
@@ -1756,7 +2102,13 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
   let resolvedSlot = Number(step.slot);
   let slotInfo = await readSlotPage(page, baseUrl, resolvedSlot, village.id);
 
+  // strict_match: true opts a step out of "any resource field type
+  // satisfies this step" — used for building-specific stages (e.g.
+  // "Cropland only" on a mixed-field 15-crop village) that must not
+  // upgrade a Woodcutter/Clay Pit/Iron Mine just because it happens to
+  // sit in a slot the template listed as Cropland.
   const allowGenericResourceFieldStep =
+    !step.strict_match &&
     mode === PLAN_MODE_RESOURCE &&
     isResourceFieldSlot(step.slot) &&
     isResourceFieldBuildingName(step.building) &&
@@ -1829,6 +2181,23 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
     !isSameBuildingName(slotInfo.buildingName, step.building) &&
     !allowGenericResourceFieldStep
   ) {
+    if (step.skip_if_mismatch) {
+      return advancePastStep(
+        village,
+        mode,
+        planLabel,
+        template,
+        activeTemplateKey,
+        stageIndex,
+        stepIndex,
+        isLast,
+        report,
+        "skipped_wrong_building_type",
+        `Slot ${resolvedSlot} contains '${slotInfo.buildingName || "unknown"}', not '${step.building}'. ` +
+          "Step marked skip_if_mismatch — skipping without building."
+      );
+    }
+
     const tribeLayoutHint =
       isFlexibleMapBonusBuilding(step.building)
         ? ` No matching '${step.building}' on inner village map; build it on the correct site for your tribe or adjust the template.`
@@ -2017,61 +2386,42 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
       allowGenericResourceFieldStep
     )
   ) {
-    if (isLast) {
-      if (template.next_template) {
-        setVillageProgress(village, {
-          active_template: template.next_template,
-          stage_index: 0,
-          step_index: 0,
-          completed_template: activeTemplateKey
-        }, {
-          planMode: mode
-        });
-        return {
-          status: "template_complete",
-          planMode: mode,
-          completedTemplate: activeTemplateKey,
-          nextTemplate: template.next_template,
-          message: `${planLabel} template '${activeTemplateKey}' completed. Advanced to '${template.next_template}'.`
-        };
-      }
-      return {
-        status: "all_complete",
-        planMode: mode,
-        message: `All ${planLabel} templates completed for this village.`
-      };
-    }
-
-    // Step already done — advance progress
-    const nextStepIndex = stepIndex + 1;
-    const currentStage = template.stages[stageIndex];
-    let newStageIndex = stageIndex;
-    let newStepIndex = nextStepIndex;
-
-    if (nextStepIndex >= currentStage.steps.length) {
-      newStageIndex = stageIndex + 1;
-      newStepIndex = 0;
-    }
-
-    setVillageProgress(village, {
-      active_template: activeTemplateKey,
-      stage_index: newStageIndex,
-      step_index: newStepIndex
-    }, {
-      planMode: mode
-    });
-
-    return {
-      status: "already_satisfied",
+    return advancePastStep(
+      village,
+      mode,
+      planLabel,
+      template,
+      activeTemplateKey,
+      stageIndex,
+      stepIndex,
+      isLast,
       report,
-      message: `${step.building} slot ${resolvedSlot} already at level ${slotInfo.currentLevel} (target: ${step.target_level}). Advancing.`
-    };
+      "already_satisfied",
+      `${step.building} slot ${resolvedSlot} already at level ${slotInfo.currentLevel} (target: ${step.target_level}). Advancing.`
+    );
   }
 
   // Guard 2: Storage capacity
   if (Object.keys(slotInfo.costs).length > 0) {
     const storageIssues = checkStorageCapacity(slotInfo, slotInfo.costs);
     if (storageIssues.length > 0) {
+      const blockedByWarehouse = ["wood", "clay", "iron"].some(
+        (res) => slotInfo.costs[res] && slotInfo.costs[res] > slotInfo.warehouseCap
+      );
+      const reliefKind = blockedByWarehouse ? "warehouse" : "granary";
+
+      const relief = await attemptStorageReliefUpgrade(page, baseUrl, village.id, template, reliefKind);
+      if (relief) {
+        return {
+          status: "storage_relief",
+          report,
+          message:
+            `${step.building} slot ${resolvedSlot} is blocked on ${relief.building} capacity ` +
+            `(${storageIssues.join("; ")}). Upgraded ${relief.building} slot ${relief.slot} ${relief.fromLevel} → ${relief.toLevel} ` +
+            "to relieve it — retrying the blocked step next."
+        };
+      }
+
       return {
         status: "blocked_storage",
         report,
@@ -2767,10 +3117,47 @@ function resetVillageProgress(village, templateKey, options = {}) {
   });
 }
 
+/**
+ * Removes tracked progress for one plan mode ("resource" or "village") on a
+ * village entirely, so getVillageProgress(village, {planMode}) returns null
+ * for it afterward instead of resetVillageProgress's "back to the default
+ * template" — used when a standalone template (e.g.
+ * village_stage_fast_basic_15c) is assigned to the OTHER mode, so the
+ * village ends up with only ONE active plan instead of two tracked (and
+ * competing) in parallel. A real user hit exactly this: the terminal's
+ * assign-template screen showed BOTH resource_fields_02 and
+ * village_stage_fast_basic_15c as "(active)" on the same village at once.
+ */
+function clearVillagePlan(village, planMode) {
+  const mode = normalizePlanMode(planMode);
+  const progress = loadProgress();
+  const key = villageProgressKey(village);
+  const record = progress[key];
+  if (!record) {
+    return;
+  }
+  if (record.plans && record.plans[mode]) {
+    delete record.plans[mode];
+  }
+  if (mode === PLAN_MODE_VILLAGE) {
+    delete record.active_template;
+    delete record.stage_index;
+    delete record.step_index;
+    delete record.prereq_validated_template;
+    delete record.completed_template;
+    delete record.realigned_from_template;
+    delete record.reset_at;
+  }
+  record.updated_at = new Date().toISOString();
+  progress[key] = record;
+  saveProgress(progress);
+}
+
 module.exports = {
   loadIndex,
   loadTemplate,
   listEnabledTemplates,
+  isTemplateInDefaultChain,
   loadProgress,
   villageProgressKey,
   getVillageProgress,
@@ -2778,14 +3165,20 @@ module.exports = {
   readSlotPage,
   checkStorageCapacity,
   checkResourceSufficiency,
+  attemptStorageReliefUpgrade,
+  attemptPrerequisiteBuildingRelief,
+  getNewBuildingGamePrerequisite,
   resolveNextStep,
   runBuilderStep,
   runCrannyDefenseStep,
   previewPlan,
   resetVillageProgress,
+  clearVillagePlan,
   syncProgressToWorldState,
   buildSlotUrl,
   discoverInnerBuildingSlotFromMap,
   surveyInnerSlotsFromVillageMap,
+  readResourceFieldLevelsFromMap,
+  areAllResourceFieldsAtLevel,
   readSlotPage
 };

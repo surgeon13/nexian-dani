@@ -69,6 +69,8 @@ function planKeyFromName(name) {
 
 // building -> { unitField, qtyField, label } used by plans and the trainer.
 // Cavalry first so raid mounts (TT/Haeduan) are not starved by infantry batches.
+// Workshop (Rams/Catapults) last — siege is the least time-sensitive branch and
+// should never eat into resources cavalry/infantry need this same tick.
 const PLAN_BRANCHES = [
   { building: "stable", unitField: "cavalryUnit", qtyField: "cavalryQty", label: "Stable" },
   {
@@ -83,7 +85,8 @@ const PLAN_BRANCHES = [
     unitField: "greatBarracksUnit",
     qtyField: "greatBarracksQty",
     label: "Great Barracks"
-  }
+  },
+  { building: "workshop", unitField: "workshopUnit", qtyField: "workshopQty", label: "Workshop" }
 ];
 
 function resolveUnitField(patch, current, field) {
@@ -237,7 +240,8 @@ const BRANCH_SHORT_LABEL = {
   barracks: "inf",
   great_barracks: "g.inf",
   stable: "cav",
-  great_stable: "g.cav"
+  great_stable: "g.cav",
+  workshop: "siege"
 };
 
 function describePlan(plan) {
@@ -253,6 +257,22 @@ function describePlan(plan) {
   }
   parts.push(`every ${plan.minMinutes}-${plan.maxMinutes}m`);
   return parts.join(" · ");
+}
+
+/**
+ * Labels of branches this plan has NO unit configured for, so they will be
+ * silently absent from planBranches() (and therefore never trained, never
+ * logged, never errored). Without surfacing this, a plan created before a
+ * branch existed — e.g. any plan predating Workshop support — looks
+ * completely normal while quietly never training that branch at all. A real
+ * user hit exactly that with Workshop/siege: "nothing shown, nothing is
+ * trained."
+ */
+function describeUnsetBranches(plan) {
+  if (!plan) {
+    return [];
+  }
+  return PLAN_BRANCHES.filter((b) => !String(plan[b.unitField] || "").trim()).map((b) => b.label);
 }
 
 module.exports = {
@@ -275,6 +295,7 @@ module.exports = {
   listEnabledVillages,
   resolveInterval,
   describePlan,
+  describeUnsetBranches,
   planBranches,
   PLAN_BRANCHES
 };

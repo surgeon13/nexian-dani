@@ -44,20 +44,44 @@ function color(text, ...codes) {
   return `${codes.join("")}${text}${ANSI.reset}`;
 }
 
+// Colors a leading "[Tag]" prefix (e.g. "[Builder Loop]") yellow, distinct
+// from the rest of the line's normal log-level color, so the source tag is
+// easy to visually scan for in a busy terminal. Falls back to plain
+// log-level coloring for messages with no such prefix.
+function colorTaggedMessage(message, ...bodyCodes) {
+  const str = String(message);
+  if (!USE_COLORS) {
+    return str;
+  }
+  const match = str.match(/^(\[[^\]]+\])([\s\S]*)$/);
+  if (!match) {
+    return color(str, ...bodyCodes);
+  }
+  const [, tag, rest] = match;
+  return `${ANSI.yellow}${tag}${ANSI.reset}${bodyCodes.join("")}${rest}${ANSI.reset}`;
+}
+
 function logInfo(message) {
-  console.log(color(message, ANSI.cyan));
+  console.log(colorTaggedMessage(message, ANSI.cyan));
 }
 
 function logSuccess(message) {
-  console.log(color(message, ANSI.green, ANSI.bold));
+  console.log(colorTaggedMessage(message, ANSI.green, ANSI.bold));
 }
 
 function logWarn(message) {
-  console.log(color(message, ANSI.yellow));
+  console.log(colorTaggedMessage(message, ANSI.yellow));
 }
 
 function logError(message) {
-  console.error(color(message, ANSI.red, ANSI.bold));
+  console.error(colorTaggedMessage(message, ANSI.red, ANSI.bold));
+}
+
+// For urgent-but-not-crashed situations worth calling out in red (e.g. a
+// resource overflow guard being blocked, so surplus keeps accumulating) —
+// distinct from logError, which is for actual failures and goes to stderr.
+function logDanger(message) {
+  console.log(colorTaggedMessage(message, ANSI.red, ANSI.bold));
 }
 
 class MenuInterruptError extends Error {
@@ -1838,6 +1862,7 @@ function printMainMenu(automationStatus, settings = terminalUiSettings) {
   console.log(`  ${color("4", ANSI.bold, ANSI.cyan)}  Troop Trainer`);
   console.log(`  ${color("C", ANSI.bold, ANSI.cyan)}  Cranny defense (selected village)`);
   console.log(`  ${color("T", ANSI.bold, ANSI.cyan)}  Troop Plans (timers + per-village)`);
+  console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Builder Templates (assign per-village)`);
   console.log(`  ${color("5", ANSI.bold, ANSI.cyan)}  Expansion / Residence Check`);
   console.log(`  ${color("X", ANSI.bold, ANSI.cyan)}  Stop Builder Process`);
   console.log(`  ${color("r", ANSI.bold, ANSI.cyan)}  Relogin Now`);
@@ -1860,7 +1885,7 @@ function printCompactMenuKeys(settings = terminalUiSettings) {
     `  ${color("0", ANSI.bold, ANSI.cyan)} Status  ${color("1", ANSI.bold, ANSI.cyan)} Farm  ${color("2", ANSI.bold, ANSI.cyan)} V.Bld  ${color("3", ANSI.bold, ANSI.cyan)} R.Bld  ${color("4", ANSI.bold, ANSI.cyan)} Troop  ${color("5", ANSI.bold, ANSI.cyan)} Exp`
   );
   console.log(
-    `  ${color("T", ANSI.bold, ANSI.cyan)} Tpl  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
+    `  ${color("T", ANSI.bold, ANSI.cyan)} Tpl  ${color("B", ANSI.bold, ANSI.cyan)} Bld.Tpl  ${color("C", ANSI.bold, ANSI.cyan)} Cranny  ${color("V", ANSI.bold, ANSI.cyan)} Village  ${color("L", ANSI.bold, ANSI.cyan)} Log  ${color("P", ANSI.bold, ANSI.cyan)} Pause  ${color("S", ANSI.bold, ANSI.cyan)} Set  ${color("Q", ANSI.bold, ANSI.cyan)} Quit`
   );
 }
 
@@ -2071,8 +2096,11 @@ function printSessionLoopStatus(settings, runtimeStatus, builderPlanMode = "vill
 
   const npcModeLabel = settings.npcCropConvertEnabled ? "ON" : "OFF";
   const npcModeColor = settings.npcCropConvertEnabled ? ANSI.green : ANSI.yellow;
+  const capitalWatcherRatioPct = Math.round(
+    (settings.capitalGranaryWatcherRatio ?? settings.npcCropConvertGranaryRatio ?? 0.95) * 100
+  );
   console.log(
-    `  ${color("NPC Crop Convert:", ANSI.gray)} ${color(npcModeLabel, ANSI.bold, npcModeColor)} ${color(`(${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes} min, ≥${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`, ANSI.bold)}`
+    `  ${color("NPC Crop Convert:", ANSI.gray)} ${color(npcModeLabel, ANSI.bold, npcModeColor)} ${color(`(${settings.npcCropConvertMinMinutes}-${settings.npcCropConvertMaxMinutes} min, ≥${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`, ANSI.bold)} ${color(`[capital watcher: ${settings.capitalGranaryWatcherEnabled ? `ON ≥${capitalWatcherRatioPct}%` : "OFF"}]`, ANSI.gray)}`
   );
   if (settings.npcCropConvertEnabled) {
     const nextNpcText = Number.isFinite(npcCropStatus.nextInMinutes)
@@ -2883,7 +2911,7 @@ async function runCelebrationsVillageFilterMenu(rl, settings, runtimeControls) {
 
 function printTroopPlansMenu(settings, plans) {
   printSubDivider("TROOP PLANS");
-  console.log(`  ${color(`Engine v${APP_VERSION}`, ANSI.gray)} — Barracks, Great Barracks, Stable, Great Stable per plan`);
+  console.log(`  ${color(`Engine v${APP_VERSION}`, ANSI.gray)} — Barracks, Great Barracks, Stable, Great Stable, Workshop per plan`);
   const rrLabel = settings.troopTrainingRoundRobinEnabled ? "ON" : "OFF";
   console.log(
     `  ${color("Auto-train loop:", ANSI.gray)} ${color(rrLabel, ANSI.bold, settings.troopTrainingRoundRobinEnabled ? ANSI.green : ANSI.yellow)} ${color(`(default ${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes} min)`, ANSI.gray)}`
@@ -2896,6 +2924,15 @@ function printTroopPlansMenu(settings, plans) {
       console.log(
         `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${color(plan.name, ANSI.bold)}  ${color(troopPlans.describePlan(plan), ANSI.gray)}`
       );
+      // An unconfigured branch is otherwise completely invisible: it's just
+      // absent from the plan, so it never trains, never logs, never errors.
+      // Show it explicitly — a plan created before a branch existed (e.g.
+      // any plan predating Workshop support) looks perfectly normal here
+      // while quietly never training that branch at all.
+      const unset = troopPlans.describeUnsetBranches(plan);
+      if (unset.length) {
+        console.log(`      ${color(`not set (won't train): ${unset.join(", ")}`, ANSI.yellow)}`);
+      }
     });
   }
   console.log("");
@@ -3074,6 +3111,151 @@ async function runTroopPlanAssignMenu(rl, hooks) {
     const chosenPlan = plans[planIndex - 1];
     troopPlans.setAssignment(village, { plan: chosenPlan.name, enabled: true });
     logSuccess(`${villageDisplayName(village)} → plan "${chosenPlan.name}" (auto-train ON).`);
+    if (typeof hooks.onAssignmentChanged === "function") {
+      hooks.onAssignmentChanged(village);
+    }
+  }
+}
+
+function builderTemplatePlanMode(templateKey) {
+  return String(templateKey || "").startsWith("resource_fields_") ? "resource" : "village";
+}
+
+// Assigns a builder template to one village's templates/progress.json record,
+// picked from a village list and a template list rather than editing progress.json by hand.
+async function runTemplateAssignMenu(rl, hooks) {
+  const getSnapshot =
+    typeof hooks.getSnapshot === "function"
+      ? hooks.getSnapshot
+      : () => ({ villages: [] });
+
+  if (typeof hooks.refreshVillages === "function") {
+    try {
+      await hooks.refreshVillages();
+    } catch (_error) {
+      logWarn("Could not refresh village list (session busy?).");
+    }
+  }
+
+  let templates;
+  try {
+    templates = builder.loadIndex().templates.filter((t) => t.enabled);
+  } catch (error) {
+    logError(`Could not load templates/index.json: ${error.message || error}`);
+    return;
+  }
+  if (!templates.length) {
+    logWarn("No enabled templates found in templates/index.json.");
+    return;
+  }
+
+  let done = false;
+  while (!done) {
+    if (hooks.menuSession && hooks.menuSession.quitRequested) {
+      done = true;
+      continue;
+    }
+    const snapshot = getSnapshot();
+    const villages = Array.isArray(snapshot.villages) ? snapshot.villages : [];
+
+    printSubDivider("BUILDER TEMPLATES — ASSIGN VILLAGES");
+    if (!villages.length) {
+      console.log(`  ${color("(no villages loaded — open main menu V first)", ANSI.gray)}`);
+    }
+    villages.forEach((village, index) => {
+      const villageProgress = builder.getVillageProgress(village, { planMode: "village" });
+      const resourceProgress = builder.getVillageProgress(village, { planMode: "resource" });
+      const villageLabel = (villageProgress && villageProgress.active_template) || "—";
+      const resourceLabel = (resourceProgress && resourceProgress.active_template) || "—";
+      console.log(
+        `  ${color(String(index + 1), ANSI.bold, ANSI.cyan)} ${villageDisplayName(village)}  ${color(`village: ${villageLabel}`, ANSI.gray)}  ${color(`resource: ${resourceLabel}`, ANSI.gray)}`
+      );
+    });
+    console.log("");
+    console.log(
+      `  ${color("Pick", ANSI.bold, ANSI.cyan)} village number  ${color("B", ANSI.bold, ANSI.cyan)} back`
+    );
+
+    const answer = (await askQuestion(rl, "Village: ")).trim().toUpperCase();
+    if (answer === "B" || answer === "") {
+      done = true;
+      continue;
+    }
+    if (answer === "Q") {
+      if (hooks.menuSession) {
+        hooks.menuSession.quitRequested = true;
+      }
+      done = true;
+      continue;
+    }
+    const index = Number(answer);
+    if (!Number.isFinite(index) || index < 1 || index > villages.length) {
+      logWarn("Invalid selection. Enter a village number or B.");
+      continue;
+    }
+    const village = villages[index - 1];
+
+    printSubDivider(`ASSIGN TEMPLATE — ${villageDisplayName(village)}`);
+    templates.forEach((entry, i) => {
+      const mode = builderTemplatePlanMode(entry.key);
+      const progress = builder.getVillageProgress(village, { planMode: mode });
+      const isActive = progress && progress.active_template === entry.key;
+      const activeLabel = isActive ? color(" (active)", ANSI.bold, ANSI.green) : "";
+      console.log(
+        `  ${color(String(i + 1), ANSI.bold, ANSI.cyan)} ${entry.key}  ${color(`[${mode}]`, ANSI.gray)}${activeLabel}`
+      );
+    });
+    console.log("");
+    console.log(
+      `  ${color("Picking any of these clears whatever's active on the OTHER plan — one active template per village.", ANSI.gray)}`
+    );
+    console.log(`  ${color("[B]", ANSI.bold, ANSI.cyan)}  Back`);
+    const pick = (await askQuestion(rl, "Assign template number: ")).trim().toUpperCase();
+
+    if (pick === "B" || pick === "") {
+      continue;
+    }
+    const templateIndex = Number(pick);
+    if (!Number.isFinite(templateIndex) || templateIndex < 1 || templateIndex > templates.length) {
+      logWarn("Invalid template selection.");
+      continue;
+    }
+    const chosenEntry = templates[templateIndex - 1];
+    const mode = builderTemplatePlanMode(chosenEntry.key);
+    builder.setVillageProgress(
+      village,
+      {
+        active_template: chosenEntry.key,
+        stage_index: 0,
+        step_index: 0,
+        prereq_validated_template: null,
+        realigned_from_template: null
+      },
+      { planMode: mode }
+    );
+
+    // Whatever gets picked here becomes this village's ONLY active plan —
+    // clear the other mode's progress unconditionally, rather than leaving
+    // it tracked (and shown as "active") alongside the new pick. 1.8.56
+    // only did this when the newly-picked template was standalone, which
+    // meant picking a default-chain template (e.g. resource_fields_02) for
+    // one mode while a standalone template (e.g.
+    // village_stage_fast_basic_15c) was still active on the other mode
+    // silently recreated the exact "two plans active at once" conflict —
+    // a real user hit exactly that, right after fixing it the first time.
+    // [B] is a deliberate, one-at-a-time assignment tool; every pick here
+    // now means "this village runs only this template."
+    const otherMode = mode === "resource" ? "village" : "resource";
+    let clearedOtherMessage = "";
+    const otherProgress = builder.getVillageProgress(village, { planMode: otherMode });
+    if (otherProgress && otherProgress.active_template) {
+      clearedOtherMessage = ` (cleared ${otherMode} plan "${otherProgress.active_template}" — this village now runs only this template)`;
+      builder.clearVillagePlan(village, otherMode);
+    }
+
+    logSuccess(
+      `${villageDisplayName(village)} → ${mode} template "${chosenEntry.key}" (progress reset to stage 0 / step 0)${clearedOtherMessage}.`
+    );
     if (typeof hooks.onAssignmentChanged === "function") {
       hooks.onAssignmentChanged(village);
     }
@@ -4478,14 +4660,21 @@ const TRAINER_BUILDING_GID = {
   barracks: 19,
   great_barracks: 29,
   stable: 20,
-  great_stable: 30
+  great_stable: 30,
+  // Best-guess gid, following this same numbering (19 Barracks, 20 Stable,
+  // 21 Workshop next) that already matched exactly for the other four. Not
+  // load-bearing either way — mapLabelMatchesTrainerKind's text match below
+  // is the primary/fallback lookup, so a wrong guess here just means every
+  // row gets checked by label instead of a same-tick gid hit.
+  workshop: 21
 };
 
 const TRAINER_BUILDING_LABELS = {
   barracks: "Barracks",
   great_barracks: "Great Barracks",
   stable: "Stable",
-  great_stable: "Great Stable"
+  great_stable: "Great Stable",
+  workshop: "Workshop"
 };
 
 function normalizeMapBuildingLabel(value) {
@@ -4514,6 +4703,8 @@ function mapLabelMatchesTrainerKind(label, kind) {
       return c.includes("greatstable") || /\bgreat stable\b/.test(n);
     case "stable":
       return (c === "stable" || c === "stables" || /\bstable\b/.test(n) || /\bstables\b/.test(n)) && !/great/.test(n);
+    case "workshop":
+      return c === "workshop" || c === "workshops" || /\bworkshop\b/.test(n);
     default:
       return false;
   }
@@ -4613,13 +4804,18 @@ async function resolveGreatStableUrlFromVillageMap(getPage, settings, selectedVi
   return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "great_stable");
 }
 
+async function resolveWorkshopUrlFromVillageMap(getPage, settings, selectedVillageId) {
+  return resolveTrainerBuildUrlFromVillageMap(getPage, settings, selectedVillageId, "workshop");
+}
+
 const TROOP_ROW_SELECTOR = "form[name='snd'] table.build_details tbody tr";
 
 const TRAINER_BUILDING_RESOLVERS = {
   barracks: resolveBarracksUrlFromVillageMap,
   great_barracks: resolveGreatBarracksUrlFromVillageMap,
   stable: resolveStableUrlFromVillageMap,
-  great_stable: resolveGreatStableUrlFromVillageMap
+  great_stable: resolveGreatStableUrlFromVillageMap,
+  workshop: resolveWorkshopUrlFromVillageMap
 };
 
 function normalizeTrainerBuilding(building) {
@@ -4652,6 +4848,9 @@ async function trainerPageMatchesBuilding(page, kind) {
   }
   if (kind === "great_barracks") {
     return /great\s+barracks/i.test(h1);
+  }
+  if (kind === "workshop") {
+    return /\bworkshop\b/i.test(h1);
   }
 
   try {
@@ -6086,6 +6285,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         : "resource";
     let roundRobinIndex = 0;
     const realignStreakByKey = new Map();
+    const blockedStreakByKey = new Map();
     let crannyRoundRobinIndex = 0;
     const sessionId = runtimeControls.getSessionId
       ? runtimeControls.getSessionId()
@@ -6620,6 +6820,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return nextValue;
     };
 
+    // Mirrors the realign-streak tracker above but for blocked_*/idle_saturated
+    // statuses — a step that's cleanly blocked (storage capacity, mismatched
+    // building, disabled upgrade button, ...) retried every cooldown period
+    // never made noise anywhere before this: it just silently kept retrying
+    // forever with no visible signal that the village had stopped actually
+    // progressing while its warehouse/granary filled up. This surfaces it.
+    const resetBlockedStreak = (villageId, planMode) => {
+      blockedStreakByKey.delete(getBuilderVillagePlanKey(villageId, planMode));
+    };
+
+    const incrementBlockedStreak = (villageId, planMode) => {
+      const key = getBuilderVillagePlanKey(villageId, planMode);
+      const nextValue = (blockedStreakByKey.get(key) || 0) + 1;
+      blockedStreakByKey.set(key, nextValue);
+      return nextValue;
+    };
+
     const normalizeBuilderPlanMode = (planMode) =>
       String(planMode || settings.builderDefaultPlanMode || "resource").toLowerCase() === "resource"
         ? "resource"
@@ -6634,6 +6851,24 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    // Adds a village to BUILDER_RR_EXCLUDED_VILLAGE_IDS (persisted) and logs
+    // it, if not already excluded. Shared by the "resource plan just went
+    // all_complete mid-tick" path and the "fields already at 10 per a live
+    // check, template tracking just hasn't caught up" path.
+    const excludeVillageFromBuilderRR = async (village, reason) => {
+      const excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
+      if (excludedSet.has(Number(village.id))) {
+        return false;
+      }
+      excludedSet.add(Number(village.id));
+      settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedSet);
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
+      }
+      logSuccess(`[Builder Loop] ${reason} for ${villageDisplayName(village)} — excluded from Builder RR.`);
+      return true;
+    };
+
     const builderRrUsesResourceThenVillagePipeline = () =>
       Boolean(
         settings.builderRoundRobinEnabled &&
@@ -6645,9 +6880,41 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       if (!village) {
         return normalizeBuilderPlanMode(activeBuilderPlanMode);
       }
+
+      // A village manually pointed at a standalone/experimental "village"
+      // template (e.g. via [B] Builder Templates) — one that isn't part of
+      // the default village_stage_00->01->02 chain — is meant to run on
+      // its own, not gated behind the separate "resource" plan finishing
+      // first. Without this check, the resource-then-village pipeline below
+      // silently kept running the default resource_fields chain instead of
+      // the template the user explicitly assigned, ignoring it entirely
+      // until resource "completed" — which for a village whose field
+      // layout doesn't match the default chain's slot assumptions can mean
+      // never. A real user hit exactly this: assigned
+      // village_stage_fast_basic_15c, but the bot kept working
+      // resource_fields_02 (wrong field-slot assumptions for that village's
+      // layout) tick after tick, with both plans' actions interleaving.
+      const villageModeProgress = builder.getVillageProgress(village, { planMode: "village" });
+      const pinnedTemplate = villageModeProgress && villageModeProgress.active_template;
+      if (pinnedTemplate && !builder.isTemplateInDefaultChain(pinnedTemplate, "village")) {
+        return isBuilderPlanFullyComplete(village, "village") ? null : "village";
+      }
+
       if (builderRrUsesResourceThenVillagePipeline()) {
         if (!isBuilderPlanFullyComplete(village, "resource")) {
           return "resource";
+        }
+        // Resource plan is already complete. If auto-exclude-on-complete is
+        // on, this village has no more RR work regardless of village-stage
+        // status — it should have been excluded the tick resource finished,
+        // but a village that was ALREADY resource-complete before this
+        // setting took effect (or any other timing gap) would otherwise
+        // fall through to "village" here and keep building forever, never
+        // hitting the loopPlan.key === "resource" check that actually
+        // excludes it. Bug a real user hit: builder kept "counting through
+        // all templates" instead of stopping.
+        if (settings.builderRrAutoExcludeOnResourceComplete) {
+          return null;
         }
         if (!isBuilderPlanFullyComplete(village, "village")) {
           return "village";
@@ -6764,11 +7031,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    // Lowest allowed loop interval (minutes). Loops accept fractional
+    // minutes (e.g. 0.5 = 30s); this floor just guards against 0/negative
+    // misconfig causing a runaway tight loop.
+    const MIN_LOOP_MINUTES = 0.1;
+
     const normalizeMinuteRange = (minValue, maxValue, fallbackMin, fallbackMax) => {
       let min = Number.isFinite(minValue) ? minValue : fallbackMin;
       let max = Number.isFinite(maxValue) ? maxValue : fallbackMax;
-      min = Math.max(1, Math.floor(min));
-      max = Math.max(1, Math.floor(max));
+      min = Math.max(MIN_LOOP_MINUTES, min);
+      max = Math.max(MIN_LOOP_MINUTES, max);
       if (min > max) {
         const t = min;
         min = max;
@@ -6777,8 +7049,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return { min, max };
     };
 
-    const randomIntBetween = (min, max) =>
-      Math.floor(Math.random() * (max - min + 1)) + min;
+    const randomIntBetween = (min, max) => {
+      if (max <= min) {
+        return min;
+      }
+      if (Number.isInteger(min) && Number.isInteger(max)) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+      // Fractional bounds (e.g. 0.5-1 minute): sample continuously instead
+      // of treating min/max as an inclusive integer range.
+      return Math.random() * (max - min) + min;
+    };
 
     const pickNextFarmlistDelayMinutes = (min, max) => {
       let next = randomIntBetween(min, max);
@@ -7869,7 +8150,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       const schedulePlanLabel = builderRrUsesResourceThenVillagePipeline()
         ? "resource→village"
         : activePlan.short;
-      logInfo(`[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${minutes} minute(s).`);
+      logInfo(
+        `[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${Number(minutes.toFixed(2))} minute(s).`
+      );
 
       const runBuilderScheduledTick = async () => {
         if (done || !settings.builderLoopEnabled) {
@@ -7915,6 +8198,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
           const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
           const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+
+          // Catch-up: a village whose resource plan is already complete
+          // (e.g. it finished before auto-exclude was turned on, or any
+          // other timing gap versus the mid-tick exclude below) should
+          // actually be recorded in BUILDER_RR_EXCLUDED_VILLAGE_IDS, not
+          // just silently skipped by villageHasPendingBuilderWork — a real
+          // user hit exactly this: the builder kept "counting through all
+          // templates" for such a village instead of ever excluding it.
+          if (settings.builderRrAutoExcludeOnResourceComplete && builderRrUsesResourceThenVillagePipeline()) {
+            let excludedChanged = false;
+            for (const village of nonCapitalVillages) {
+              const villageId = Number(village.id);
+              if (!excludedVillageIds.has(villageId) && isBuilderPlanFullyComplete(village, "resource")) {
+                excludedVillageIds.add(villageId);
+                excludedChanged = true;
+                logSuccess(
+                  `[Builder Loop] Resource fields already complete for ${villageDisplayName(village)} — excluded from Builder RR.`
+                );
+              }
+            }
+            if (excludedChanged) {
+              settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedVillageIds);
+              if (runtimeControls.persistSettings) {
+                await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
+              }
+            }
+          }
+
           const rrCandidateVillages = nonCapitalVillages.filter(
             (village) =>
               !excludedVillageIds.has(Number(village.id)) && villageHasPendingBuilderWork(village)
@@ -8020,12 +8331,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }
 
         let shouldFastRetryDifferentVillage = false;
+        let executed = false;
+        let hadError = false;
         try {
+          // A manual builder run (or any other action) can hold the page
+          // lock for a while. Previously this tick bailed the instant it
+          // saw the lock held — "Skipped auto-builder: another action is
+          // currently running" — then retried again in 20s, producing that
+          // same warning on a loop for the entire duration of, say, a
+          // manual multi-step Resource Fields Builder session. Wait for the
+          // lock instead (same pattern Troop Auto already uses via
+          // waitForActionIdle), so the tick just resumes quietly right
+          // after the other action finishes rather than spamming a skip
+          // warning every 20s. Only actually logs anything if the lock is
+          // held when we get here, and only warns if it's still held after
+          // 90s — a real user asked for exactly this.
+          if (!(await waitForActionIdle("Builder Loop", { maxWaitMs: 90000 }))) {
+            const delayMs = 20000;
+            nextBuilderRunAt = Date.now() + delayMs;
+            builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+            return;
+          }
+
           const startedAt = Date.now();
-          const executed = await runAction("auto-builder", async () => {
+          executed = await runAction("auto-builder", async () => {
             let loopPlan = getBuilderPlanMeta(
               resolveBuilderPlanModeForVillage(targetVillage) || activeBuilderPlanMode
             );
+
             builderEfficiencyWindow.attempts += 1;
             await ensureVillageBrowserContext(targetVillage, "Builder Loop");
             logInfo(`[Builder Loop] Auto-build (${loopPlan.short}) starting for ${villageDisplayName(targetVillage)}...`);
@@ -8052,34 +8385,41 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 break;
               }
 
-              if (
-                finalResult &&
-                finalResult.status === "all_complete" &&
-                loopPlan.key === "resource" &&
-                builderRrUsesResourceThenVillagePipeline() &&
-                !isBuilderPlanFullyComplete(targetVillage, "village")
-              ) {
-                loopPlan = getBuilderPlanMeta("village");
-                logInfo(
-                  `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — continuing with village stage plan.`
-                );
-                await ensureVillageBrowserContext(targetVillage, "Builder Loop");
-                finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
-                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
-                  goldCompleteMax: settings.builderGoldCompleteMax,
-                  masterBuilderEnabled: settings.builderMasterBuilderEnabled,
-                  planMode: loopPlan.key
-                });
-                followupAttempt += 1;
-                continue;
+              if (finalResult && finalResult.status === "all_complete" && loopPlan.key === "resource") {
+                if (settings.builderRrAutoExcludeOnResourceComplete) {
+                  await excludeVillageFromBuilderRR(targetVillage, "Resource fields complete");
+                  break;
+                }
+
+                if (
+                  builderRrUsesResourceThenVillagePipeline() &&
+                  !isBuilderPlanFullyComplete(targetVillage, "village")
+                ) {
+                  loopPlan = getBuilderPlanMeta("village");
+                  logInfo(
+                    `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — continuing with village stage plan.`
+                  );
+                  await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+                  finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
+                    goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                    goldCompleteMax: settings.builderGoldCompleteMax,
+                    masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                    planMode: loopPlan.key
+                  });
+                  followupAttempt += 1;
+                  continue;
+                }
               }
 
               if (
                 !finalResult ||
                 !(
                   finalResult.status === "already_satisfied" ||
+                  finalResult.status === "skipped_wrong_building_type" ||
                   finalResult.status === "template_complete" ||
-                  finalResult.status === "realigned_template"
+                  finalResult.status === "realigned_template" ||
+                  finalResult.status === "storage_relief" ||
+                  finalResult.status === "prerequisite_relief"
                 )
               ) {
                 break;
@@ -8108,6 +8448,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }
             } else {
               resetRealignStreak(targetVillage.id, loopPlan.key);
+            }
+
+            // Any cleanly-blocked status (storage/queue/mismatch/disabled button/…)
+            // retried tick after tick with nothing ever surfacing it. success,
+            // storage_relief, and prerequisite_relief all represent real forward
+            // progress (both *_relief statuses clicked a genuine upgrade, just
+            // not the originally-targeted step), so all three reset the streak
+            // same as success would.
+            if (
+              String(finalResult.status || "").startsWith("blocked_") ||
+              finalResult.status === "idle_saturated" ||
+              finalResult.status === "click_failed"
+            ) {
+              const streak = incrementBlockedStreak(targetVillage.id, loopPlan.key);
+              if (streak >= 4) {
+                logWarn(
+                  `[Builder Loop] repeated_blocked (${streak}): ${villageDisplayName(targetVillage)} in ${loopPlan.short} plan keeps hitting ` +
+                  `'${finalResult.status}' — no upgrades are landing here while this persists. Latest: ${finalResult.message}`
+                );
+              }
+            } else {
+              resetBlockedStreak(targetVillage.id, loopPlan.key);
             }
 
             if (finalResult.status === "blocked_resources") {
@@ -8155,6 +8517,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               });
             } else if (finalResult.status === "template_complete" || finalResult.status === "all_complete") {
               logSuccess(`[Builder Loop] ${finalResult.message}`);
+            } else if (finalResult.status === "storage_relief" || finalResult.status === "prerequisite_relief") {
+              logSuccess(`[Builder Loop] ${finalResult.message}`);
             } else {
               if (String(finalResult.status || "").startsWith("blocked_") || finalResult.status === "idle_saturated") {
                 builderEfficiencyWindow.blocked += 1;
@@ -8164,7 +8528,25 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             maybeLogBuilderEfficiencyWindow();
           }, { raidGuardPriority: true });
         } catch (error) {
+          hadError = true;
           const message = error && error.message ? error.message : String(error);
+          const isTransientSessionState =
+            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|ERR_INSUFFICIENT_RESOURCES|interrupted by another navigation|Execution context was destroyed/i.test(
+              message
+            );
+
+          // A quit already in progress can close the browser out from under a
+          // tick that was already mid-flight past the `done` check above (the
+          // window between "user pressed q" and "cleanup actually tears the
+          // browser down"). That's an expected shutdown race, not a real
+          // failure — a real user saw this land after "Session ended." as a
+          // scary-looking "Auto-build failed" line. Skip the log/record
+          // entirely rather than let quitting leave a misleading failure as
+          // its last trace.
+          if (done && isTransientSessionState) {
+            return;
+          }
+
           recordAction({
             actionType: "building.upgrade",
             status: "failed",
@@ -8176,15 +8558,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             },
             errorMessage: message
           });
-          const isTransientSessionState =
-            /has been closed|context or browser has been closed|Session page is currently unavailable|ERR_ABORTED|ERR_INSUFFICIENT_RESOURCES|interrupted by another navigation|Execution context was destroyed/i.test(
-              message
-            );
           if (isTransientSessionState) {
             logWarn(`[Builder Loop] Auto-build skipped: ${message}`);
           } else {
             logError(`[Builder Loop] Auto-build failed: ${message}`);
           }
+        }
+
+        if (!executed && !hadError) {
+          // The build step was cleanly SKIPPED (another action — e.g. a
+          // manual builder run — was already using the page); this is
+          // distinct from a thrown error, which the catch block above
+          // already handled. Do NOT advance the RR index or navigate the
+          // page here: restoreSelectedVillageContext below does a real
+          // page.goto, and calling it unconditionally after a skip — while
+          // the concurrent action's page.evaluate() was still in flight —
+          // destroyed that action's execution context ("Execution context
+          // was destroyed, most likely because of a navigation"). A real
+          // user hit exactly this. Just retry soon without touching the page.
+          const delayMs = 20000;
+          nextBuilderRunAt = Date.now() + delayMs;
+          builderLoopTimer = setTimeout(() => void runBuilderScheduledTick(), delayMs);
+          return;
         }
 
         if (settings.builderRoundRobinEnabled) {
@@ -8322,7 +8717,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
-    /** Train a village's assigned plan across Barracks, Great Barracks, Stable, and/or Great Stable. */
+    /** Train a village's assigned plan across Barracks, Great Barracks, Stable, Great Stable, and/or Workshop. */
     const runTroopTrainingForVillage = async (targetVillage) => {
       const plan = troopPlans.resolvePlanForVillage(targetVillage);
       if (!plan) {
@@ -8634,6 +9029,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     const runTroopTemplateCategoryMenu = async () => {
       await runTroopPlansMenu(menuRl, settings, runtimeControls, troopPlanHooks);
+    };
+
+    const builderTemplateAssignHooks = {
+      menuSession,
+      requestQuit,
+      getSnapshot: () => ({
+        villages: villageState.villages.slice(),
+        selectedVillageId: villageState.selectedVillageId,
+        activeVillageId: villageState.activeVillageId
+      }),
+      refreshVillages: () =>
+        refreshVillageState({ navigateToStatusPage: true, silent: true }),
+      onAssignmentChanged: () => {
+        if (dashboardBridge) {
+          dashboardBridge.publishSnapshot({ force: true });
+        }
+      }
+    };
+
+    const runBuilderTemplateAssignMenu = async () => {
+      await runTemplateAssignMenu(menuRl, builderTemplateAssignHooks);
     };
 
     const scheduleTroopTrainingLoop = () => {
@@ -8955,10 +9371,66 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
           let deferFullReschedule = false;
           await runAction("NPC Crop Convert", async () => {
+            if (settings.capitalGranaryWatcherEnabled) {
+              const capitalVillage = (villageState.villages || []).find((v) => v.isCapital);
+              if (capitalVillage) {
+                const capitalResult = await npcCropConvert.convertCropIfGranaryFull(
+                  getPage(),
+                  settings,
+                  capitalVillage,
+                  {
+                    granaryRatio:
+                      settings.capitalGranaryWatcherRatio ?? settings.npcCropConvertGranaryRatio
+                  }
+                );
+                const capitalLabel = `${capitalVillage.name || "Capital"} (vid=${capitalVillage.id})`;
+                if (capitalResult.status === "npc_ok") {
+                  logSuccess(
+                    `[Capital Granary] ${capitalLabel}: converted crop → wood/clay/iron (${capitalResult.message || "ok"}).`
+                  );
+                  recordAction({
+                    actionType: "npc.crop_convert",
+                    status: "success",
+                    details: {
+                      villageId: capitalVillage.id,
+                      villageName: capitalVillage.name,
+                      watcher: "capital",
+                      before: capitalResult.before || null,
+                      desired: capitalResult.afterDesired || null,
+                      granaryPercent: capitalResult.granaryPercent
+                    }
+                  });
+                } else if (capitalResult.status === "npc_below_threshold") {
+                  logInfo(`[Capital Granary] ${capitalLabel}: ${capitalResult.message}`);
+                } else if (capitalResult.status === "npc_marketplace_busy") {
+                  logInfo(`[Capital Granary] ${capitalLabel}: ${capitalResult.message}`);
+                } else {
+                  logWarn(`[Capital Granary] ${capitalLabel}: ${capitalResult.message || capitalResult.status}`);
+                  recordAction({
+                    actionType: "npc.crop_convert",
+                    status: "failed",
+                    details: {
+                      villageId: capitalVillage.id,
+                      villageName: capitalVillage.name,
+                      watcher: "capital",
+                      status: capitalResult.status
+                    },
+                    errorMessage: capitalResult.message || capitalResult.status
+                  });
+                }
+              }
+            }
+
+            // Capital is handled by the dedicated watcher above (when enabled) —
+            // exclude it from the shared round-robin so it isn't double-checked.
+            const rrVillages = settings.capitalGranaryWatcherEnabled
+              ? (villageState.villages || []).filter((v) => !v.isCapital)
+              : villageState.villages;
+
             const result = await npcCropConvert.runNpcCropConvertRoundRobin(
               getPage(),
               settings,
-              villageState.villages,
+              rrVillages,
               { roundRobinIndex: npcCropConvertRoundRobinIndex }
             );
             if (Number.isFinite(Number(result.roundRobinIndex))) {
@@ -9048,6 +9520,50 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return next;
     };
 
+    const logOverflowGuardResult = (result) => {
+      const label = result.checkedVillageName
+        ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
+        : result.checkedVillageId
+          ? `vid=${result.checkedVillageId}`
+          : "?";
+      if (result.status === "overflow_sent") {
+        logSuccess(`[Overflow Guard] ${label}: ${result.message}`);
+        recordAction({
+          actionType: "resource.overflow_guard",
+          status: "success",
+          details: {
+            villageId: result.checkedVillageId,
+            villageName: result.checkedVillageName,
+            pivotVillageId: result.pivotVillageId,
+            pivotVillageName: result.pivotVillageName,
+            sent: result.sent || null,
+            distance: result.distance
+          }
+        });
+      } else if (result.status === "overflow_too_far") {
+        // Surplus is sitting there and cannot be relieved — worth calling
+        // out in red rather than burying it as routine info, since this
+        // village's warehouse/granary will just keep filling up.
+        logDanger(`[Overflow Guard] ${label}: ${result.message}`);
+      } else if (result.status === "overflow_ok" || result.status === "overflow_skipped") {
+        logInfo(`[Overflow Guard] ${label}: ${result.message}`);
+      } else if (result.status === "overflow_no_candidates") {
+        logWarn(`[Overflow Guard] ${result.message}`);
+      } else {
+        logDanger(`[Overflow Guard] ${label}: ${result.message || result.status}`);
+        recordAction({
+          actionType: "resource.overflow_guard",
+          status: "failed",
+          details: {
+            villageId: result.checkedVillageId,
+            villageName: result.checkedVillageName,
+            status: result.status
+          },
+          errorMessage: result.message || result.status
+        });
+      }
+    };
+
     const scheduleOverflowGuardLoop = (options = {}) => {
       cancelOverflowGuardLoopTimer();
       if (done || settings.resourceOverflowGuardEnabled === false) {
@@ -9104,57 +9620,34 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
           let deferFullReschedule = false;
           await runAction("Overflow Guard", async () => {
-            const result = await resourceCirculation.runOverflowGuardRoundRobin(
-              getPage,
-              settings,
-              villageState.villages,
-              {
-                roundRobinIndex: overflowGuardRoundRobinIndex,
-                log: (msg) => logInfo(msg)
-              }
-            );
-            if (Number.isFinite(Number(result.roundRobinIndex))) {
-              overflowGuardRoundRobinIndex = Number(result.roundRobinIndex);
-            }
-            const label = result.checkedVillageName
-              ? `${result.checkedVillageName} (vid=${result.checkedVillageId})`
-              : result.checkedVillageId
-                ? `vid=${result.checkedVillageId}`
-                : "?";
-            if (result.status === "overflow_sent") {
-              logSuccess(`[Overflow Guard] ${label}: ${result.message}`);
-              recordAction({
-                actionType: "resource.overflow_guard",
-                status: "success",
-                details: {
-                  villageId: result.checkedVillageId,
-                  villageName: result.checkedVillageName,
-                  pivotVillageId: result.pivotVillageId,
-                  pivotVillageName: result.pivotVillageName,
-                  sent: result.sent || null,
-                  distance: result.distance
+            if (settings.resourceOverflowCheckAllEachTick !== false) {
+              const batch = await resourceCirculation.runOverflowGuardAllVillages(
+                getPage,
+                settings,
+                villageState.villages,
+                { log: (msg) => logInfo(msg) }
+              );
+              if (batch.status === "overflow_no_candidates") {
+                logWarn(`[Overflow Guard] ${batch.message}`);
+              } else {
+                for (const result of batch.results) {
+                  logOverflowGuardResult(result);
                 }
-              });
-            } else if (
-              result.status === "overflow_ok" ||
-              result.status === "overflow_skipped" ||
-              result.status === "overflow_too_far"
-            ) {
-              logInfo(`[Overflow Guard] ${label}: ${result.message}`);
-            } else if (result.status === "overflow_no_candidates") {
-              logWarn(`[Overflow Guard] ${result.message}`);
+              }
             } else {
-              logWarn(`[Overflow Guard] ${label}: ${result.message || result.status}`);
-              recordAction({
-                actionType: "resource.overflow_guard",
-                status: "failed",
-                details: {
-                  villageId: result.checkedVillageId,
-                  villageName: result.checkedVillageName,
-                  status: result.status
-                },
-                errorMessage: result.message || result.status
-              });
+              const result = await resourceCirculation.runOverflowGuardRoundRobin(
+                getPage,
+                settings,
+                villageState.villages,
+                {
+                  roundRobinIndex: overflowGuardRoundRobinIndex,
+                  log: (msg) => logInfo(msg)
+                }
+              );
+              if (Number.isFinite(Number(result.roundRobinIndex))) {
+                overflowGuardRoundRobinIndex = Number(result.roundRobinIndex);
+              }
+              logOverflowGuardResult(result);
             }
           }).catch((error) => {
             logWarn(`[Overflow Guard] Tick failed: ${error.message || error}`);
@@ -10635,6 +11128,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             logSuccess(finalResult.message);
           } else if (finalResult.status === "all_complete") {
             logSuccess(finalResult.message);
+          } else if (finalResult.status === "storage_relief" || finalResult.status === "prerequisite_relief") {
+            logSuccess(finalResult.message);
           } else if (finalResult.status === "blocked_resources") {
             logInfo(`Builder: ${finalResult.message}`);
             await attemptResourceCirculation({
@@ -10846,6 +11341,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
       if (input === "T") {
         await runTroopTemplateCategoryMenu();
+        if (menuSession.quitRequested) {
+          done = true;
+        }
+        continue;
+      }
+
+      if (input === "B") {
+        await runBuilderTemplateAssignMenu();
         if (menuSession.quitRequested) {
           done = true;
         }
