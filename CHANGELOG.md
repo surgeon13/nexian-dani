@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.61] — 2026-08-20
+
+### Fixed
+
+- **`[NPC Crop] Tick failed: page.goto: net::ERR_ABORTED` — one loop's cosmetic cleanup was aborting another loop's real navigation.** Every auto loop ends its tick with `restoreSelectedVillageContext()`, which puts the browser back on the menu-selected village. For the top-level loop cleanups that call runs *after* `runAction()` has already released the page lock — so a different loop can have grabbed the lock and be mid-`page.goto` when the previous loop's restore fires a competing navigation and aborts it. In the reported case the Builder Loop's post-tick restore killed the NPC Crop granary check on `village1.php?vid=42423`. All three of `safeGotoWithRetry`'s attempts (250ms/500ms apart) landed inside the same restore window, so even its `ERR_ABORTED`-aware retry logic couldn't recover.
+
+  `restoreSelectedVillageContext()` now takes `{ skipIfBusy: true }`, which makes it a no-op when another action holds the lock — correct because the restore is purely cosmetic, whereas the navigation it was aborting is real work. Applied to the seven post-`runAction` cleanup sites (Farmlist ×3, Builder, Troop Auto, Cranny RR, Activity Sim), each individually verified to run outside the lock. Deliberately **not** applied to the four callers nested *inside* their own `runAction` (resource circulation ×3, Top 10 tracking) — those legitimately hold the lock themselves and would otherwise skip their own restore forever.
+
+  This is the same class of bug as 1.8.43, which fixed only the Builder Loop's *skipped-tick* path; the *success* path — and every other loop — still navigated unlocked.
+
 ## [1.8.60] — 2026-08-20
 
 ### Fixed

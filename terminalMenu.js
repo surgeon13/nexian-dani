@@ -6676,7 +6676,23 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
-    const restoreSelectedVillageContext = async (sourceLabel = "Context Restore") => {
+    const restoreSelectedVillageContext = async (sourceLabel = "Context Restore", options = {}) => {
+      // Post-loop cleanup calls run AFTER runAction released the page lock, so
+      // another loop can already have grabbed it and be mid-navigation. This
+      // restore is purely cosmetic — putting the browser back on the
+      // menu-selected village — so skip it rather than let its page.goto abort
+      // the other action's in-flight one. A real user hit exactly that:
+      // "[NPC Crop] Tick failed: page.goto: net::ERR_ABORTED" on the granary
+      // check, aborted by the Builder Loop's post-tick restore. All three of
+      // safeGotoWithRetry's attempts landed inside the same restore window, so
+      // even its transient-error retries couldn't save it.
+      //
+      // Callers nested INSIDE their own runAction (e.g. resource circulation)
+      // must not pass this — they legitimately hold the lock themselves, and
+      // would otherwise skip their own restore.
+      if (options.skipIfBusy && actionInProgress) {
+        return;
+      }
       const selectedVillage = getSelectedVillage();
       if (!selectedVillage) {
         return;
@@ -7978,7 +7994,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 ...getVillageMeta("all")
               }
             });
-            await restoreSelectedVillageContext("Farmlist Loop").catch(() => null);
+            await restoreSelectedVillageContext("Farmlist Loop", { skipIfBusy: true }).catch(() => null);
             scheduleFarmlistLoop();
             return;
           }
@@ -8028,7 +8044,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }
 
               if (farmlistExecuted) {
-                await restoreSelectedVillageContext("Farmlist Loop");
+                await restoreSelectedVillageContext("Farmlist Loop", { skipIfBusy: true });
                 scheduleFarmlistLoop();
                 return;
               }
@@ -8073,7 +8089,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }
 
         if (farmlistExecuted) {
-          await restoreSelectedVillageContext("Farmlist Loop");
+          await restoreSelectedVillageContext("Farmlist Loop", { skipIfBusy: true });
         }
         scheduleFarmlistLoop();
       };
@@ -8585,7 +8601,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (settings.builderRoundRobinEnabled) {
           roundRobinIndex += Math.max(1, roundRobinAdvanceStep);
         }
-        await restoreSelectedVillageContext("Builder Loop");
+        await restoreSelectedVillageContext("Builder Loop", { skipIfBusy: true });
         if (shouldFastRetryDifferentVillage) {
           const delayMs = 5000;
           nextBuilderRunAt = Date.now() + delayMs;
@@ -8840,7 +8856,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 trained: trained.map((o) => ({ unit: o.unitName, qty: o.queued, building: o.building }))
               }
             });
-            await restoreSelectedVillageContext("Troop Auto");
+            await restoreSelectedVillageContext("Troop Auto", { skipIfBusy: true });
           }
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
@@ -9239,7 +9255,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         }
 
         if (crannyExecuted) {
-          await restoreSelectedVillageContext("Cranny defense RR");
+          await restoreSelectedVillageContext("Cranny defense RR", { skipIfBusy: true });
         }
         scheduleCrannyDefenseLoop();
       };
@@ -10025,7 +10041,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 ...lastActivitySimulationAction
               }
             });
-            await restoreSelectedVillageContext("Activity Sim");
+            await restoreSelectedVillageContext("Activity Sim", { skipIfBusy: true });
             if (dashboardBridge) {
               dashboardBridge.publishSnapshot();
             }
