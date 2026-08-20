@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.63] — 2026-08-20
+
+### Fixed
+
+- **Residence still deadlocked after 1.8.60 — the builder's building discovery had no fallback when the village-map survey came up empty.** 1.8.60 correctly made discovery *run* for an empty slot, but `discoverBonusBuildingSlotFromMap()` was still map-survey-only: it parsed `map#map2 area[...]` title/alt text and, if that found nothing, reported the building as absent. So the deadlock persisted unchanged — `'Residence' is not listed for empty slot 25` tick after tick, while the village's Residence/Palace sat on another slot the whole time. (The game omits already-built unique buildings from an empty slot's construct list entirely, which is why it appeared in neither place.)
+
+  This is the **same map-survey weakness that hid Siege Workshop from the troop trainer in 1.8.62** — that fix added a slot probe on the trainer side but didn't generalize it to the builder. `discoverBonusBuildingSlotFromMap()` now falls back to probing inner slots directly (classic sites first, then the rest of 19-40), reading each slot page and matching its building name — the same layered map → probe strategy `villageExpansion.resolveResidenceSlot()` has used since 1.8.29.
+
+  Results are cached per village+building: a confirmed slot is reused (re-validated on each use, and dropped if the building moved), and a **full-probe miss is also remembered** for 30 minutes — without that, a building genuinely absent from the village would re-probe all ~22 inner slots on every single builder tick. The miss TTL is deliberately short so a newly-constructed building is picked up soon after it appears.
+
 ## [1.8.62] — 2026-08-20
 
 ### Fixed
