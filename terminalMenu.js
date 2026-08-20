@@ -10970,10 +10970,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (input === "2" || input === "3") {
-        const selectedPlan = getBuilderPlanMeta(input === "3" ? "resource" : "village");
-        activeBuilderPlanMode = selectedPlan.key;
+        const requestedPlan = getBuilderPlanMeta(input === "3" ? "resource" : "village");
+        // Kept in the outer scope because the .catch() below reports on it, and
+        // reassigned once the village's real plan is resolved.
+        let selectedPlan = requestedPlan;
         const startedAt = Date.now();
-        await runAction(selectedPlan.name, async () => {
+        await runAction(requestedPlan.name, async () => {
           let selectedVillage = getSelectedVillage();
           let roundRobinAdvanceStepManual = 1;
           let rrCandidateVillagesManual = [];
@@ -10981,22 +10983,49 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
             const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
             const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+            // Same candidate filter the auto loop uses, so manual and auto agree
+            // on which villages still have work rather than each deciding from a
+            // different plan mode.
             rrCandidateVillagesManual = nonCapitalVillages.filter(
               (village) =>
-                !excludedVillageIds.has(Number(village.id)) &&
-                !isBuilderPlanFullyComplete(village, selectedPlan.key)
+                !excludedVillageIds.has(Number(village.id)) && villageHasPendingBuilderWork(village)
             );
             if (rrCandidateVillagesManual.length) {
               const totalVillages = rrCandidateVillagesManual.length;
               rrCursorManual = ((roundRobinIndex % totalVillages) + totalVillages) % totalVillages;
               selectedVillage = rrCandidateVillagesManual[rrCursorManual] || rrCandidateVillagesManual[0];
               roundRobinAdvanceStepManual = 1;
-              logInfo(`[Builder Manual] RR picked ${villageDisplayName(selectedVillage)} (${selectedPlan.short}).`);
             }
           }
           if (!selectedVillage) {
             logWarn("No village selected/available for builder. Use V to select a village first.");
             return;
+          }
+
+          // Run whatever plan this village is actually on, exactly as the auto
+          // loop resolves it — including a standalone template assigned via [B].
+          // Previously the plan came straight from the keypress (2 = village,
+          // 3 = resource), so pressing 3 on a village assigned a standalone
+          // *village* template started a brand-new resource_fields_01 plan
+          // alongside it, recreating the very two-plans-per-village conflict
+          // [B] was changed to prevent. A real user hit exactly that.
+          const resolvedPlanKey = resolveBuilderPlanModeForVillage(selectedVillage);
+          if (resolvedPlanKey == null) {
+            logSuccess(
+              `[Builder Manual] ${villageDisplayName(selectedVillage)} has no pending builder work — nothing to do.`
+            );
+            return;
+          }
+          selectedPlan = getBuilderPlanMeta(resolvedPlanKey);
+          activeBuilderPlanMode = selectedPlan.key;
+          if (selectedPlan.key !== requestedPlan.key) {
+            logInfo(
+              `[Builder Manual] ${villageDisplayName(selectedVillage)} is on the ${selectedPlan.short} plan — ` +
+                `running that instead of ${requestedPlan.short} to stay aligned with the auto builder.`
+            );
+          }
+          if (settings.builderRoundRobinEnabled && rrCandidateVillagesManual.length) {
+            logInfo(`[Builder Manual] RR picked ${villageDisplayName(selectedVillage)} (${selectedPlan.short}).`);
           }
 
           // Show preview first
@@ -11095,11 +11124,22 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               if (!nextVillage || Number(nextVillage.id) === Number(selectedVillage.id)) {
                 continue;
               }
+              // Each village runs its own plan — re-resolve rather than reusing
+              // the plan of the village we hopped away from, which could be a
+              // different mode entirely (e.g. one village on a standalone
+              // template, the next on the default resource chain).
+              const hoppedPlanKey = resolveBuilderPlanModeForVillage(nextVillage);
+              if (hoppedPlanKey == null) {
+                continue;
+              }
+              const hoppedPlan = getBuilderPlanMeta(hoppedPlanKey);
               logInfo(
                 `[Builder Manual] ${finalResult.status} on ${villageDisplayName(selectedVillage)}. ` +
-                `Trying next RR village: ${villageDisplayName(nextVillage)}...`
+                `Trying next RR village: ${villageDisplayName(nextVillage)} (${hoppedPlan.short})...`
               );
               selectedVillage = nextVillage;
+              selectedPlan = hoppedPlan;
+              activeBuilderPlanMode = hoppedPlan.key;
               rrCursorManual = nextCursor;
               roundRobinAdvanceStepManual = hop + 1;
               await ensureVillageBrowserContext(selectedVillage, "Builder Manual");
@@ -11107,7 +11147,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 goldCompleteEnabled: settings.builderGoldCompleteEnabled,
                 goldCompleteMax: settings.builderGoldCompleteMax,
                 masterBuilderEnabled: settings.builderMasterBuilderEnabled,
-                planMode: selectedPlan.key
+                planMode: hoppedPlan.key
               });
               finalResult = hoppedResult;
               if (!isTemporaryBlockedBuilderStatus(finalResult && finalResult.status)) {

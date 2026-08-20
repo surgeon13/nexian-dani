@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.64] — 2026-08-20
+
+### Fixed
+
+- **The manual builder ignored the village's assigned plan and could recreate the two-plans-per-village conflict.** Keys **2** / **3** picked the plan mode straight from the keypress (`2` → village, `3` → resource) rather than resolving what the village is actually on. So pressing **3** on a village assigned a standalone *village* template via `[B]` started a brand-new `resource_fields_01` plan alongside it — exactly the conflict 1.8.53/1.8.56/1.8.57 were written to eliminate. Reported from a live log showing `[Builder Manual]` walking `resource_fields_01` → `resource_fields_02` on a village that should have been on `village_stage_fast_basic_15c`.
+
+  The manual builder now resolves the plan through the same `resolveBuilderPlanModeForVillage()` the auto loop uses — standalone template assignments included. If the resolved plan differs from the key pressed it runs the resolved one and says so, rather than silently creating a competing plan. If the village has no pending work it reports that instead of starting one.
+
+- **Manual RR village selection used a different filter than the auto loop** (`!isBuilderPlanFullyComplete(village, <key-derived mode>)` vs the loop's `villageHasPendingBuilderWork(village)`), so the two could disagree about which villages still had work. Both now use `villageHasPendingBuilderWork()`.
+
+- **Manual RR "hop to the next village" reused the previous village's plan mode.** When a village came back temporarily blocked, the manual builder moved on to the next RR candidate but kept running the *first* village's plan against it — wrong whenever the two villages are on different plans. Each hop now re-resolves the plan for the village it actually lands on, and skips candidates with no pending work.
+
 ## [1.8.63] — 2026-08-20
 
 ### Fixed
