@@ -119,9 +119,9 @@
     },
     {
       "name": "Stage 12 - Residence to 10",
-      "notes": "Slot 25 is a default guess; the bot auto-discovers the real inner-map slot for Residence/Palace if this one is wrong or occupied by something else (Palace also matches, since it's the same slot's mutually exclusive alternate).",
+      "notes": "Slot 22 is where this account's Residence actually sits (build.php?id=22) — 25 is the classic Roman site but is empty here, which is what kept the builder blocked. The bot still auto-discovers the real slot if this guess is ever wrong for another village (Palace also matches, since it's the same slot's mutually exclusive alternate).",
       "steps": [
-        { "slot": 25, "building": "Residence", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 22, "building": "Residence", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ]
     },
     {
@@ -345,7 +345,7 @@
       { "slot": 24, "building": "Granary", "min_level": 10 },
       { "slot": 33, "building": "Marketplace", "min_level": 10 },
       { "slot": 20, "building": "Grain Mill", "min_level": 5 },
-      { "slot": 25, "building": "Residence", "min_level": 10 },
+      { "slot": 22, "building": "Residence", "min_level": 10 },
       { "slot": 39, "building": "Rally Point", "min_level": 1 },
       { "slot": 21, "building": "Bakery", "min_level": 5 }
     ]
