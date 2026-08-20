@@ -1282,12 +1282,93 @@ function resolveBonusBuildingSlotFromSurvey(rows, buildingName) {
   return match ? match.slotId : null;
 }
 
+/**
+ * villageId:building -> { slot } once confirmed, or { missAt } when a full
+ * probe found nothing. The probe costs one page load per slot tried, so a miss
+ * must be remembered too — otherwise a building that genuinely isn't in the
+ * village would re-probe every inner slot on every single tick.
+ */
+const flexibleBuildingSlotCache = new Map();
+
+/** How long a "probed everything, not here" result stays trusted. Short enough
+ *  that a newly-constructed building is picked up soon after it appears. */
+const FLEXIBLE_SLOT_MISS_TTL_MS = 30 * 60 * 1000;
+
+const flexibleSlotCacheKey = (villageId, buildingName) =>
+  `${Number(villageId) || 0}:${compactBuildingName(buildingName)}`;
+
+/**
+ * Probe inner slots directly for a building, reading each slot page and
+ * matching its name. Last resort when the village-map survey comes up empty —
+ * that survey depends on `map#map2 area[...]` markup with usable title/alt
+ * text, which isn't reliable across tribes/UIs/servers.
+ */
+async function probeInnerSlotsForBuilding(page, baseUrl, villageId, buildingName) {
+  // Classic Travian sites for the flexible buildings first, then the rest of
+  // the inner range, so the common layouts resolve in one or two page loads.
+  const preferred = [25, 26, 20, 21, 22, 23, 27, 31];
+  const order = [...preferred];
+  for (let slot = 19; slot <= 40; slot += 1) {
+    if (!order.includes(slot)) {
+      order.push(slot);
+    }
+  }
+
+  for (const slot of order) {
+    try {
+      const info = await readSlotPage(page, baseUrl, slot, villageId);
+      if (info && !info.isEmptySlot && isSameBuildingName(info.buildingName, buildingName)) {
+        return slot;
+      }
+    } catch (_error) {
+      /* keep probing — a single unreadable slot shouldn't abort the search */
+    }
+  }
+  return null;
+}
+
 async function discoverBonusBuildingSlotFromMap(page, baseUrl, villageId, buildingName) {
   if (!buildingName || !isFlexibleMapBonusBuilding(buildingName)) {
     return null;
   }
+
+  const cacheKey = flexibleSlotCacheKey(villageId, buildingName);
+  const cached = flexibleBuildingSlotCache.get(cacheKey);
+  if (cached && Number.isFinite(cached.slot)) {
+    const info = await readSlotPage(page, baseUrl, cached.slot, villageId).catch(() => null);
+    if (info && !info.isEmptySlot && isSameBuildingName(info.buildingName, buildingName)) {
+      return cached.slot;
+    }
+    flexibleBuildingSlotCache.delete(cacheKey);
+  } else if (cached && Number.isFinite(cached.missAt)) {
+    if (Date.now() - cached.missAt < FLEXIBLE_SLOT_MISS_TTL_MS) {
+      // Already probed every inner slot recently and it wasn't there. Don't
+      // burn another ~22 page loads re-confirming that on this tick.
+      return null;
+    }
+    flexibleBuildingSlotCache.delete(cacheKey);
+  }
+
   const survey = await surveyInnerSlotsFromVillageMap(page, baseUrl, villageId);
-  return resolveBonusBuildingSlotFromSurvey(survey, buildingName);
+  const fromSurvey = resolveBonusBuildingSlotFromSurvey(survey, buildingName);
+  if (fromSurvey != null) {
+    return fromSurvey;
+  }
+
+  // The map survey is the ONLY thing this used to try. When it came up empty,
+  // callers concluded the building didn't exist — even when it plainly did.
+  // A real user hit this repeatedly: 'Residence' reported "not listed for empty
+  // slot 25" tick after tick while the village's Residence/Palace sat on
+  // another slot the whole time (the game omits already-built unique buildings
+  // from an empty slot's construct list entirely, so there was nothing to find
+  // there). Same map-survey weakness that hid Siege Workshop from the troop
+  // trainer in 1.8.62; this is the builder-side half of that fix.
+  const probed = await probeInnerSlotsForBuilding(page, baseUrl, villageId, buildingName);
+  flexibleBuildingSlotCache.set(
+    cacheKey,
+    probed != null ? { slot: probed } : { missAt: Date.now() }
+  );
+  return probed;
 }
 
 /**
