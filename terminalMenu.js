@@ -4810,6 +4810,40 @@ async function resolveWorkshopUrlFromVillageMap(getPage, settings, selectedVilla
 
 const TROOP_ROW_SELECTOR = "form[name='snd'] table.build_details tbody tr";
 
+/**
+ * villageId:kind -> inner slot id confirmed to hold that trainer building.
+ * Populated only by the probe fallback below, which is expensive (one page
+ * load per slot tried), so the result is remembered for the session.
+ */
+const trainerSlotCache = new Map();
+
+const trainerSlotCacheKey = (villageId, kind) => `${Number(villageId) || 0}:${kind}`;
+
+/**
+ * Inner-village slots to probe when map discovery can't find a trainer
+ * building. Ordered so the classic Travian sites for each building come
+ * first, then the rest of the inner range. Same "probe the slots" last
+ * resort villageExpansion.resolveResidenceSlot() already uses for
+ * Residence/Palace, for the same reason: village-map titles vary by
+ * tribe/UI/server and can't be relied on alone.
+ */
+function trainerProbeSlotOrder(kind) {
+  const preferred = {
+    barracks: [19, 20, 21],
+    great_barracks: [19, 20, 21],
+    stable: [20, 19, 21],
+    great_stable: [20, 19, 21],
+    workshop: [21, 22, 20]
+  }[kind] || [];
+  const rest = [];
+  for (let slot = 19; slot <= 40; slot += 1) {
+    if (!preferred.includes(slot)) {
+      rest.push(slot);
+    }
+  }
+  return [...preferred, ...rest];
+}
+
 const TRAINER_BUILDING_RESOLVERS = {
   barracks: resolveBarracksUrlFromVillageMap,
   great_barracks: resolveGreatBarracksUrlFromVillageMap,
@@ -4974,6 +5008,42 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
       kind === "stable" ? settings.troopStableTrainerUrl : settings.troopTrainerUrl;
     const targetTrainerUrl = withVillageId(configuredTrainer, villageId);
     loaded = await loadTrainerPageWithRows(page, targetTrainerUrl, kind);
+  }
+
+  // A slot this village already proved holds the building — skip straight to it
+  // instead of re-probing (the probe below costs one page load per slot tried).
+  const cacheKey = trainerSlotCacheKey(villageId, kind);
+  if (!loaded && trainerSlotCache.has(cacheKey)) {
+    const cachedUrl = withVillageId(
+      new URL(`build.php?id=${trainerSlotCache.get(cacheKey)}`, page.url()).toString(),
+      villageId
+    );
+    loaded = await loadTrainerPageWithRows(page, cachedUrl, kind);
+    if (!loaded) {
+      trainerSlotCache.delete(cacheKey);
+    }
+  }
+
+  // Last resort: probe inner slots directly. Until now only barracks/stable had
+  // any fallback at all (the configured-URL one above), so workshop /
+  // great_barracks / great_stable depended *entirely* on the village-map survey
+  // finding them — and if it didn't, the branch was reported missing and then
+  // silently muted for ~12h. A real user hit exactly that with Siege Workshop:
+  // siege units never trained. loadTrainerPageWithRows is the ideal probe
+  // predicate here since it already verifies both "this page has troop rows"
+  // and "this page is actually the right building".
+  if (!loaded) {
+    for (const slot of trainerProbeSlotOrder(kind)) {
+      const probeUrl = withVillageId(
+        new URL(`build.php?id=${slot}`, page.url()).toString(),
+        villageId
+      );
+      if (await loadTrainerPageWithRows(page, probeUrl, kind)) {
+        trainerSlotCache.set(cacheKey, slot);
+        loaded = true;
+        break;
+      }
+    }
   }
 
   if (!loaded) {
@@ -8825,8 +8895,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                     );
                   } else {
                     rememberMissingTroopBuilding(loopState, result.building);
-                    logInfo(
-                      `[Troop Auto] ${villageDisplayName(targetVillage)}: no ${result.buildingLabel} yet — skipping that branch on future runs (recheck in ~12h).`
+                    // Was logInfo, which buried a decision that silences this
+                    // branch for ~12h — easy to scroll past and then wonder why
+                    // a configured unit never trains. It now also follows a full
+                    // slot probe, so reaching here really does mean "not found
+                    // anywhere", which is worth saying out loud.
+                    logWarn(
+                      `[Troop Auto] ${villageDisplayName(targetVillage)}: ${result.buildingLabel} not found on the village map or in any inner slot — ` +
+                        "skipping that branch for ~12h (or until restart). If the building does exist, this is a detection bug worth reporting."
                     );
                   }
                 } else {
