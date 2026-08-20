@@ -1304,9 +1304,12 @@ const flexibleSlotCacheKey = (villageId, buildingName) =>
  * text, which isn't reliable across tribes/UIs/servers.
  */
 async function probeInnerSlotsForBuilding(page, baseUrl, villageId, buildingName) {
-  // Classic Travian sites for the flexible buildings first, then the rest of
-  // the inner range, so the common layouts resolve in one or two page loads.
-  const preferred = [25, 26, 20, 21, 22, 23, 27, 31];
+  // Common sites for the flexible buildings first, then the rest of the inner
+  // range, so typical layouts resolve in one or two page loads. 22 leads
+  // rather than the classic Roman 25 — villageExpansion.resolveResidenceSlot()
+  // already ordered its probe that way ("Gaul often uses 22"), and this
+  // account's Residence is in fact on 22 while 25 sits empty.
+  const preferred = [22, 25, 26, 20, 21, 23, 24, 27, 31];
   const order = [...preferred];
   for (let slot = 19; slot <= 40; slot += 1) {
     if (!order.includes(slot)) {

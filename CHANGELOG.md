@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.65] — 2026-08-20
+
+### Changed
+
+- **`village_stage_fast_basic_15c`: Residence moved from slot 25 to slot 22**, in both the Stage 12 step and `end_state`. Slot 25 is the classic Roman site but is empty on this account — the Residence actually lives at `build.php?id=22`, which is what kept the builder pushing at 25.
+- **Builder slot-probe now tries 22 before 25.** `probeInnerSlotsForBuilding()`'s fallback order led with the classic 25; `villageExpansion.resolveResidenceSlot()` had already learned otherwise (its probe list is commented *"Gaul often uses 22"*) and this account confirms it. Aligned the builder's order to match, so the fallback resolves in fewer page loads on this server's layout.
+
 ## [1.8.64] — 2026-08-20
 
 ### Fixed
