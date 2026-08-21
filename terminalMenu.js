@@ -7274,7 +7274,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         label === "auto-builder" ||
         label === "auto-troop-trainer" ||
         label === "cranny-defense-rr" ||
-        label === "activity-simulation"
+        label === "activity-simulation" ||
+        label === "top10-tracking" ||
+        label === "npc crop convert" ||
+        label === "overflow guard" ||
+        label === "celebrations rr"
       );
     };
 
