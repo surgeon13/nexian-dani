@@ -9155,18 +9155,32 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.troopTrainingLoopMinMinutes,
         settings.troopTrainingLoopMaxMinutes
       );
-      const minutes = pickVillageTroopDelayMinutes(village, interval.min, interval.max);
-      let delayMs = minutes * 60 * 1000 + Math.floor(Math.random() * 60000);
       const staggerTotal = Number(options.staggerTotal) || 0;
       const staggerIndex = Number(options.staggerIndex) || 0;
-      if (staggerTotal > 1) {
-        const spreadMs = Math.floor((interval.max * 60 * 1000) / staggerTotal);
-        delayMs += staggerIndex * spreadMs;
+
+      let delayMs;
+      if (options.initial) {
+        // First run after startup / enabling the loop happens promptly instead
+        // of a full interval away. Previously the first train was scheduled
+        // 30-60 min out (plus up to another full interval of stagger), so a
+        // session restarted more often than that trained NOTHING, ever —
+        // exactly what a user hit while restarting to pick up fixes. Villages
+        // are still spread apart so they don't all fire at once.
+        delayMs = 30000 + staggerIndex * 20000 + Math.floor(Math.random() * 15000);
+      } else {
+        const minutes = pickVillageTroopDelayMinutes(village, interval.min, interval.max);
+        delayMs = minutes * 60 * 1000 + Math.floor(Math.random() * 60000);
+        if (staggerTotal > 1) {
+          const spreadMs = Math.floor((interval.max * 60 * 1000) / staggerTotal);
+          delayMs += staggerIndex * spreadMs;
+        }
       }
+
       const state = getTroopVillageLoopState(village);
       state.nextRunAt = Date.now() + delayMs;
       logInfo(
-        `[Troop Auto] ${villageDisplayName(village)} next train in ${formatDelayMs(delayMs)} (plan "${plan.name}", ${interval.min}-${interval.max} min).`
+        `[Troop Auto] ${villageDisplayName(village)} next train in ${formatDelayMs(delayMs)} ` +
+          `(plan "${plan.name}", ${interval.min}-${interval.max} min${options.initial ? ", first run after startup" : ""}).`
       );
 
       const runTroopVillageScheduledTick = async () => {
@@ -9263,7 +9277,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       for (let i = 0; i < rrVillages.length; i++) {
         scheduleTroopVillageLoop(rrVillages[i], {
           staggerIndex: i,
-          staggerTotal: rrVillages.length
+          staggerTotal: rrVillages.length,
+          // Startup / loop-enable / plan-change: train soon rather than a full
+          // interval from now, so turning the loop on visibly does something.
+          initial: true
         });
       }
     };
@@ -9278,7 +9295,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         settings.troopTrainingRoundRobinEnabled &&
         troopPlans.resolvePlanForVillage(village)
       ) {
-        scheduleTroopVillageLoop(village);
+        // Just assigned/re-enabled by hand — train soon so the change is
+        // visibly effective, rather than up to an hour later.
+        scheduleTroopVillageLoop(village, { initial: true });
       }
       if (dashboardBridge) {
         dashboardBridge.publishSnapshot({ force: true });
