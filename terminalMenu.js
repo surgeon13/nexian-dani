@@ -6338,6 +6338,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let farmlistResumeWaitLogged = false;
     let farmlistShortRetriesLeft = 0;
     const FARMLIST_SHORT_RETRY_MS = 120000;
+    /**
+     * Max time a farmlist send waits for a pre-empted background loop to
+     * actually stop before giving up on this tick. cancelRequested only gets
+     * checked between discrete steps (start of a followup/per-village loop,
+     * or before the pre-action delay) — not mid network-call — so whatever is
+     * currently running may not yield for a while regardless of how long we
+     * wait. Farmlist sending is meant to be quick, so this stays short and
+     * lets the 2-minute short-retry cycle absorb the rest instead of blocking
+     * visibly for up to 90s on every tick.
+     */
+    const FARMLIST_PREEMPT_MAX_WAIT_MS = 20000;
     /** Max time troop auto waits for another action before preempting builder / skipping. */
     const TROOP_AUTO_ACTION_IDLE_WAIT_MS = 45000;
     const TROOP_AUTO_BUSY_RETRY_MIN_MS = 15000;
@@ -7366,7 +7377,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         logInfo(
           `[Farmlist] Pre-empting ${currentActionLabel || "auto loop"} for ${label}…`
         );
-        if (!(await waitForPreemptedActionRelease(label, currentActionLabel || "auto loop"))) {
+        if (
+          !(await waitForPreemptedActionRelease(
+            label,
+            currentActionLabel || "auto loop",
+            FARMLIST_PREEMPT_MAX_WAIT_MS
+          ))
+        ) {
           return false;
         }
       } else if (canPreemptTemplateBuilder) {
@@ -8592,6 +8609,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             while (followupAttempt < maxFollowupAttempts) {
               if (Date.now() - startedAt > maxFollowupElapsedMs) {
                 logInfo("[Builder Loop] Follow-up retry budget reached for this tick. Continuing on next cycle.");
+                break;
+              }
+
+              // Let a farmlist/cranny-defense pre-emption request cut this short
+              // between steps instead of running the full up-to-20-step/120s
+              // follow-up budget before the lock is released. Without this,
+              // waitForPreemptedActionRelease could sit waiting the whole time.
+              if (cancelRequested) {
+                logInfo("[Builder Loop] Pre-empted — stopping follow-up retries early.");
                 break;
               }
 
