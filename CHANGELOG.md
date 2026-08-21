@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.72] — 2026-08-20
+
+### Fixed
+
+- **The first troop training run was scheduled a full interval away, so a frequently-restarted session never trained anything.** `scheduleTroopVillageLoop()` always picked a fresh `30-60 min` delay (plus up to another full interval of per-village stagger) — including for the very first run after startup or after enabling the loop. Every restart reset it, so a session restarted more often than that trained **nothing, ever**. Measured on a 3-village account, first trains landed at 35 / 75 / **99** minutes.
+
+  The first run after startup, after enabling the loop, or after assigning/re-enabling a village by hand now happens promptly (~30-90s, still staggered so villages don't all fire at once). Recurring runs afterwards are unchanged at the configured interval.
+
+  This is what was actually behind the reported "everything is configured but no units train" — the plan, the assignment, and (after 1.8.71) the loop toggle were all correct; the first tick simply hadn't arrived yet and each restart pushed it back out again.
+
 ## [1.8.71] — 2026-08-20
 
 ### Fixed
