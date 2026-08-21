@@ -705,8 +705,28 @@ async function escapeShownewBlockingPage(page) {
   }
 }
 
+// Farmlist sending is meant to be a quick click-and-wait task, not something
+// that tolerates the full 60s-per-attempt default navigation timeout across
+// several fallback tiers. A single stalled/slow navigation under this budget
+// still gets retried (safeGotoWithRetry), it just can't eat a full minute
+// doing it.
+const FARMLIST_NAV_TIMEOUT_MS = 20000;
+// Hard ceiling on the whole sendFarmlists() call, across every fallback tier
+// combined. Without this, a page that keeps failing to show a send control
+// could walk through fallback 1 -> fallback 2 -> legacy path -> role/label
+// search, each with its own navigation(s), and silently run for minutes
+// before finally throwing — exactly the "gets stuck for a while" symptom.
+// Hitting this budget aborts with a clear error instead, so the runAction
+// lock is released and other activities can continue.
+const FARMLIST_SEND_BUDGET_MS = 90000;
+
 async function safeGotoFarmlist(page, farmlistUrl, retries = 2) {
-  await safeGotoWithRetry(page, farmlistUrl, {}, retries);
+  await safeGotoWithRetry(
+    page,
+    farmlistUrl,
+    { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true },
+    retries
+  );
 }
 
 async function gotoFarmlistWithNewsEscape(page, farmlistUrl) {
@@ -1250,16 +1270,30 @@ async function sendFarmlists(getPage, settings, options = {}) {
     ? withVillageId(settings.farmlistUrl, pinnedVillageId)
     : settings.farmlistUrl;
 
+  const sendStartedAt = Date.now();
+  const assertWithinBudget = (stage) => {
+    const elapsedMs = Date.now() - sendStartedAt;
+    if (elapsedMs > FARMLIST_SEND_BUDGET_MS) {
+      throw new Error(
+        `[Farmlist] Send timed out after ${Math.round(elapsedMs / 1000)}s at "${stage}" — ` +
+          `aborting so other activities can continue. URL: ${page.url()}`
+      );
+    }
+  };
+
+  logInfo("[Farmlist] Navigating to farmlist page...");
   await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
 
   await page.waitForLoadState("domcontentloaded").catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 3500 }).catch(() => {});
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1000);
+  logInfo("[Farmlist] Page loaded, looking for the send control...");
 
   if (!(await isLikelyFarmlistPage(page))) {
+    assertWithinBudget("re-navigating to farmlist page");
     await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1000);
   }
 
   const sendSelectors = [
@@ -1326,6 +1360,8 @@ async function sendFarmlists(getPage, settings, options = {}) {
 
   // Fallback 1: discover farmlist URL from the current page and navigate there.
   if (!chosenSendSelector) {
+    assertWithinBudget("fallback 1 (discovered farmlist link)");
+    logWarn("[Farmlist] Send control not found on first pass — trying the farmlist link on the current page...");
     const discoveredFarmlistHref = await page.evaluate(() => {
       const candidates = [
         "a[href*='build.php'][href*='t=99'][href*='gid=16']",
@@ -1346,15 +1382,9 @@ async function sendFarmlists(getPage, settings, options = {}) {
 
     if (discoveredFarmlistHref) {
       const resolved = new URL(discoveredFarmlistHref, page.url()).toString();
-      await page.goto(resolved, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000
-      });
+      await safeGotoWithRetry(page, resolved, { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true }, 1);
       if (await escapeShownewBlockingPage(page)) {
-        await page.goto(resolved, {
-          waitUntil: "domcontentloaded",
-          timeout: 60000
-        }).catch(() => null);
+        await safeGotoWithRetry(page, resolved, { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true }, 1).catch(() => null);
       }
     } else {
       await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
@@ -1365,6 +1395,8 @@ async function sendFarmlists(getPage, settings, options = {}) {
 
   // Fallback 2: Village center -> Rally Point -> Farm Lists.
   if (!chosenSendSelector) {
+    assertWithinBudget("fallback 2 (village center -> rally point)");
+    logWarn("[Farmlist] Still not found — trying via village center -> Rally Point...");
     let villageCenterHref = null;
     if (!pinnedVillageId) {
       villageCenterHref = await page.evaluate(() => {
@@ -1378,10 +1410,7 @@ async function sendFarmlists(getPage, settings, options = {}) {
       ? withVillageId(new URL(villageCenterHref, page.url()).toString(), pinnedVillageId)
       : withVillageId(new URL("/village2.php", page.url()).toString(), pinnedVillageId);
 
-    await page.goto(targetVillageCenter, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    });
+    await safeGotoWithRetry(page, targetVillageCenter, { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true }, 1);
 
     const rallyPointHref = await page.evaluate(() => {
       const link = document.querySelector(
@@ -1393,10 +1422,13 @@ async function sendFarmlists(getPage, settings, options = {}) {
     });
 
     if (rallyPointHref) {
-      await page.goto(new URL(rallyPointHref, page.url()).toString(), {
-        waitUntil: "domcontentloaded",
-        timeout: 60000
-      });
+      assertWithinBudget("fallback 2 (rally point -> farm lists)");
+      await safeGotoWithRetry(
+        page,
+        new URL(rallyPointHref, page.url()).toString(),
+        { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true },
+        1
+      );
 
       const farmListsHref = await page.evaluate(() => {
         const link = document.querySelector(
@@ -1408,10 +1440,12 @@ async function sendFarmlists(getPage, settings, options = {}) {
       });
 
       if (farmListsHref) {
-        await page.goto(new URL(farmListsHref, page.url()).toString(), {
-          waitUntil: "domcontentloaded",
-          timeout: 60000
-        });
+        await safeGotoWithRetry(
+          page,
+          new URL(farmListsHref, page.url()).toString(),
+          { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true },
+          1
+        );
       }
     }
 
@@ -1420,6 +1454,8 @@ async function sendFarmlists(getPage, settings, options = {}) {
 
   // Legacy path: if send button still not found, try old select-all flow.
   if (!chosenSendSelector) {
+    assertWithinBudget("legacy select-all flow");
+    logWarn("[Farmlist] Still not found — trying the legacy select-all flow...");
     const selectAll = page.locator(settings.selectAllSelector);
     const hasSelectAll = await selectAll.count().then((count) => count > 0).catch(() => false);
     if (hasSelectAll) {
@@ -1438,6 +1474,8 @@ async function sendFarmlists(getPage, settings, options = {}) {
   }
 
   if (!chosenSendSelector) {
+    assertWithinBudget("last-resort role/label search");
+    logWarn("[Farmlist] Still not found — trying a last-resort role/label search...");
     await ensureFarmlistSelectAllBeforeSend(page, settings);
     await page.waitForTimeout(500);
 
@@ -1502,7 +1540,7 @@ async function sendFarmlists(getPage, settings, options = {}) {
   ) {
     await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1000);
     chosenSendSelector = await waitForSendSelector(12000);
   }
 
@@ -1513,6 +1551,8 @@ async function sendFarmlists(getPage, settings, options = {}) {
     );
   }
 
+  assertWithinBudget("selecting lists before send");
+  logInfo(`[Farmlist] Send control found ('${chosenSendSelector}') — selecting lists and sending...`);
   await ensureFarmlistSelectAllBeforeSend(page, settings);
   let sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 12000);
   if (!sendEnabled) {
@@ -1664,8 +1704,16 @@ function withVillageId(url, villageId) {
 
 /** Retry goto when Nexian redirects (e.g. village1.php → village1.php?vid=…). */
 async function safeGotoWithRetry(page, url, options = {}, retries = 2) {
-  const gotoOptions = { waitUntil: "domcontentloaded", timeout: 60000, ...options };
-  const maxRetries = Math.max(retries, 4);
+  const { strictRetries, ...gotoExtra } = options || {};
+  const gotoOptions = { waitUntil: "domcontentloaded", timeout: 60000, ...gotoExtra };
+  // Callers that don't ask for strictRetries keep the historical floor of 4
+  // retries (unchanged behavior for builder/troop/status navigations). A
+  // caller that explicitly needs a bounded, "this should be quick" wait —
+  // farmlist sending — opts in with strictRetries so its retry count is
+  // honored exactly instead of being silently bumped up to 4, which could
+  // turn a single navigation into several minutes of retries+backoff under
+  // sustained connectivity trouble.
+  const maxRetries = strictRetries ? Math.max(0, retries) : Math.max(retries, 4);
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     try {
