@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.75** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.76** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -121,7 +121,9 @@ GAME_HOST=https://s1.nexian.world
 node login.js --headed --keep-open
 ```
 
-(or `npm run login:headed`, or `start-headed.cmd` on Windows.)
+(or `npm run login:headed`, or double-click `start-headed.cmd` on Windows.)
+
+For everyday runs after that, double-click **`start.cmd`** — it's the one-click Windows equivalent of `npm run login` (opens a console window, keeps its memory settings in sync with the npm script, and pauses on error so you can read what went wrong instead of the window vanishing).
 
 If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only. This applies to any `--nexian-env-file=` target, not just plain `.env`: a missing `--nexian-env-file=.env.termux` gets created from `.env.termux.example` if one exists next to it (falling back to the generic `.env.example` otherwise), so a fresh machine only ever needs its credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) edited in before the first real run — `login.js` refuses to proceed with placeholder credentials and tells you exactly which file to edit.
 
@@ -133,8 +135,8 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 
 | Script | Meaning |
 |--------|---------|
-| `npm run login` | Default headless/normal launch |
-| `npm run login:headed` | Visible browser + keep-open defaults |
+| `npm run login` / `start.cmd` | Default headless/normal launch — double-click `start.cmd` on Windows |
+| `npm run login:headed` / `start-headed.cmd` | Visible browser + keep-open defaults — double-click `start-headed.cmd` on Windows |
 | `npm run login:nexian` | Uses `.env.nexian` (path via `NEXIAN_ENV_FILE` or package script convention) |
 | `npm run login:nexian:headed` / `:headless` | Variants for `.env.nexian` profiles |
 | `npm run dashboard` | Headless login + dashboard at `http://127.0.0.1:3847` |
