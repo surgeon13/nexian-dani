@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.66] — 2026-08-20
+
+### Changed
+
+- **A village with no builder work left is now auto-excluded from Builder RR, whichever plan finished.** Auto-exclude only ever triggered on *resource* plan completion (1.8.41), so a village logging `All village stage templates completed for this village.` — or finishing a standalone template assigned via `[B]` — stayed in the rotation indefinitely, re-resolved and re-skipped on every single tick without ever being recorded in `BUILDER_RR_EXCLUDED_VILLAGE_IDS`.
+
+  Both the tick-start catch-up and the mid-tick handler now key off *"this village has no pending builder work"* rather than *"the resource plan is done"*, which covers all three ways a village can finish: the resource chain, the village-stage chain, and a standalone template. The exclusion message names which plan completed (`Resource fields complete` / `Village stage plan complete` / `All builder plans complete`).
+
+  Verified against the real modules that a half-finished village is still kept: a standalone template mid-progress, a resource chain mid-progress, and a village-stage chain mid-progress with resource already done all stay in the rotation, while each genuinely-finished case is excluded.
+
 ## [1.8.65] — 2026-08-20
 
 ### Changed
