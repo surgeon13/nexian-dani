@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.70] — 2026-08-20
+
+### Added
+
+- **A village stuck on the same structural block is now auto-excluded from Builder RR** instead of consuming a rotation turn indefinitely. New `BUILDER_RR_AUTO_EXCLUDE_BLOCKED_STREAK` (default **12** consecutive ticks, `0` disables) — the existing `repeated_blocked` warning still appears from 4, so there's plenty of visible notice before anything is excluded. The exclusion is logged in red and names the status, the streak, and how to undo it (remove the id from `BUILDER_RR_EXCLUDED_VILLAGE_IDS`).
+
+  **Only non-self-resolving statuses count.** `blocked_resources` (resources arrive, and it drives circulation), `blocked_queue` (queue drains), `blocked_storage` (handled by storage relief), and `idle_saturated` are all deliberately exempt — excluding on those would strand a village that was about to recover on its own. Qualifying statuses are the structural ones: `blocked_no_upgrade_button` (the reported case), `blocked_upgrade_disabled`, `blocked_mismatch`, `blocked_target_unavailable`, `blocked_target_locked`, `blocked_prerequisite_building`, `blocked_master_builder_only`, and `click_failed`. Classification verified across all eighteen statuses the builder can return.
+
+  This exclusion deliberately **bypasses** the 1.8.68 completion re-check. That check exists to stop a village being excluded as *finished* when the game disagrees — but a village excluded for being *stuck* is incomplete by definition, so applying the veto here would have guaranteed the exact villages we most want out of the rotation could never leave it.
+
 ## [1.8.69] — 2026-08-20
 
 ### Added
