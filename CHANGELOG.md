@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.75] — 2026-08-21
+
+### Fixed
+
+- **Found the actual cause of "Send Farmlists" hanging silently for minutes.** A screenshot showed the manual "Send Farmlists" action pre-empting `auto-builder` almost instantly (the 1.8.74 fix working correctly) and then producing *zero* further output while the Builder Loop's own 1-minute timer skipped twice and the Farmlist auto-loop's own tick also skipped — meaning the send itself, not the pre-emption wait, was the thing sitting stuck.
+
+  Root cause: `terminalMenu.js` has its own local `safeGotoWithRetry()` — a near-duplicate of the one in `browserNavigation.js`, kept separately because it has extra Nexian-specific redirect handling. It contained `const maxRetries = Math.max(retries, 4);`, silently flooring **every** call to at least 4 retries (5 attempts) no matter what the caller asked for. `sendFarmlists()` walks up to five sequential fallback tiers when it can't immediately find the send control (discovered-link nav, village-center → Rally Point → farm lists, legacy select-all, last-resort role/label search), and every navigation in that chain went through this floored retry count at the default 60-second-per-attempt timeout. Under a slow/degraded connection, a *single* one of those navigation calls could legitimately take 5 attempts × 60s + backoff ≈ 4+ minutes, with no log line in between — and the fallback chain could hit several such calls in one send.
+
+  Fixes, all inside `sendFarmlists()` and its two navigation helpers:
+  - `safeGotoWithRetry()` now accepts an opt-in `strictRetries` flag that honors the caller's exact retry count instead of flooring it to 4. Existing callers that don't pass it (builder loop, troop trainer, village status, etc.) are completely unaffected. Farmlist's own navigations now opt in.
+  - Every navigation in the farmlist send path (primary page load and all three fallback tiers) now uses a 20s timeout instead of the 60s default, and 1-2 retries instead of the floored 4-5.
+  - Added a hard 90-second ceiling on the whole `sendFarmlists()` call. If it's still hunting for a send control past that, it aborts with a clear error naming the stage it was on, instead of silently continuing through the next fallback tier — releasing the automation lock so other activities can proceed, per the intended "quick click-and-wait, then other activities continue" behavior.
+  - Added `[Farmlist]` log lines at every stage (navigating, page loaded, each fallback tier, found send control) so a future slowdown is visible in the log instead of a silent multi-minute gap.
+  - The fixed ~600ms wait after the page loads is now 1000ms (a clean "wait at least one second for the page to finish loading" instead of under a second), on top of the existing bounded `networkidle` wait.
+
 ## [1.8.74] — 2026-08-21
 
 ### Fixed
