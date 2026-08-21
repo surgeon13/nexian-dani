@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.67] — 2026-08-20
+
+### Fixed
+
+- **A new village that simply couldn't afford its next building blocked forever instead of triggering resource circulation.** On an *empty* slot the builder returns from the new-building guard **before** the resource-sufficiency check further down ever runs, so "listed but locked because we can't afford it yet" was indistinguishable from a hard block: it reported `blocked_target_locked` and retried indefinitely, never routing to `attemptResourceCirculation()` the way `blocked_resources` does. Reported on a brand-new village — 28 consecutive blocks on `Granary` with `Buildable now: none`, which is just what an empty village with no resources looks like.
+
+  `readSlotPage()` now captures each new-building option's cost alongside its name and buildable flag (reusing the same `img.r1..r4` + adjacent-text-node pattern this file already uses for `#contract` upgrade costs). When the target option is locked and its cost exceeds current stock, the step returns `blocked_resources` with the deficit — so circulation runs and the log names what's missing instead of repeating "not currently buildable".
+
+  A locked option the village *can* afford still takes the existing prerequisite path unchanged, and if costs can't be parsed the behavior degrades to exactly what it was before. Verified all four cases in isolation.
+
 ## [1.8.66] — 2026-08-20
 
 ### Changed

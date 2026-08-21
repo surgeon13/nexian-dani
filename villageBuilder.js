@@ -522,6 +522,27 @@ async function readSlotPage(page, baseUrl, slotId, villageId) {
     if (isEmptySlot) {
       const normalizeText = (value) => String(value || "").replace(/\u00a0/g, " ").trim();
 
+      // Per-option build cost, using the same "img.r1..r4 followed by a text
+      // node" pattern this file already relies on for #contract upgrade costs.
+      // Needed to tell a locked option that's merely unaffordable apart from
+      // one blocked by an unmet prerequisite \u2014 they look identical otherwise.
+      const readOptionCosts = (scope) => {
+        const out = {};
+        if (!scope) {
+          return out;
+        }
+        scope.querySelectorAll("img.r1, img.r2, img.r3, img.r4").forEach((img) => {
+          const rawText = img.nextSibling ? (img.nextSibling.textContent || "") : "";
+          const value = Number(String(rawText).replace(/[^\d]/g, "")) || 0;
+          const cls = String(img.className || "");
+          if (cls.includes("r1")) out.wood = value;
+          else if (cls.includes("r2")) out.clay = value;
+          else if (cls.includes("r3")) out.iron = value;
+          else if (cls.includes("r4")) out.crop = value;
+        });
+        return out;
+      };
+
       // T3.6 variant: each option is a <table class="new_building"> with <img title="Warehouse">
       // and <a class="build">Construct building</a>.
       const tableItems = document.querySelectorAll("table.new_building, #contract_building table.new_building");
@@ -537,7 +558,7 @@ async function readSlotPage(page, baseUrl, slotId, villageId) {
           buildLink.getAttribute("aria-disabled") !== "true"
         );
         if (bName) {
-          newBuildingLinks.push({ name: bName, canBuild });
+          newBuildingLinks.push({ name: bName, canBuild, costs: readOptionCosts(table) });
         }
       });
 
@@ -560,7 +581,7 @@ async function readSlotPage(page, baseUrl, slotId, villageId) {
             buildBtn.getAttribute("aria-disabled") !== "true"
           );
           if (bName) {
-            newBuildingLinks.push({ name: bName, canBuild });
+            newBuildingLinks.push({ name: bName, canBuild, costs: readOptionCosts(item) });
           }
         });
       }
@@ -2441,6 +2462,29 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
           .filter((opt) => opt.canBuild)
           .map((opt) => opt.name || "?")
           .join(", ") || "none";
+
+        // An empty slot returns here BEFORE the resource-sufficiency guard
+        // further down ever runs, so "locked only because we can't afford it
+        // yet" was indistinguishable from a hard block: it reported
+        // blocked_target_locked and retried forever without triggering
+        // resource circulation. A real user hit this on a brand-new village —
+        // 28 consecutive blocks on 'Granary' with "Buildable now: none",
+        // which is simply what an empty village with no resources looks like.
+        // Report it as blocked_resources so circulation can actually help.
+        const optionCosts = targetOption.costs || {};
+        if (Object.keys(optionCosts).length > 0) {
+          const { sufficient, deficit } = checkResourceSufficiency(slotInfo, optionCosts);
+          if (!sufficient) {
+            return {
+              status: "blocked_resources",
+              report,
+              deficit,
+              message:
+                `Not enough resources to construct ${step.building} on slot ${resolvedSlot}. ` +
+                `Missing: ${Object.entries(deficit).map(([res, amount]) => `${res} ${amount}`).join(", ")}.`
+            };
+          }
+        }
 
         const prereqRealign = await tryRealignForLockedNewBuildingPrerequisite(
           page,
