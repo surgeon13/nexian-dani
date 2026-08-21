@@ -3111,6 +3111,13 @@ async function runTroopPlanAssignMenu(rl, hooks) {
     const chosenPlan = plans[planIndex - 1];
     troopPlans.setAssignment(village, { plan: chosenPlan.name, enabled: true });
     logSuccess(`${villageDisplayName(village)} → plan "${chosenPlan.name}" (auto-train ON).`);
+    // "(auto-train ON)" above is the per-village toggle; it says nothing about
+    // the global loop, which is what actually runs the timers.
+    if (hooks.isTroopLoopEnabled && !hooks.isTroopLoopEnabled()) {
+      logDanger(
+        "[Troop Plans] Auto-train loop is OFF globally — this village still will not train until you turn it on (T → [L])."
+      );
+    }
     if (typeof hooks.onAssignmentChanged === "function") {
       hooks.onAssignmentChanged(village);
     }
@@ -3345,6 +3352,11 @@ async function runTroopPlansMenu(rl, settings, runtimeControls, hooks = {}) {
       const patch = await promptTroopPlanFields(rl, null);
       const saved = troopPlans.upsertPlan(name, patch);
       logSuccess(`Created plan "${saved.name}" — ${troopPlans.describePlan(saved)}.`);
+      if (!settings.troopTrainingRoundRobinEnabled) {
+        logDanger(
+          "[Troop Plans] Auto-train loop is OFF — this plan will not run until you turn it on ([L] here)."
+        );
+      }
       if (typeof hooks.onPlansChanged === "function") {
         hooks.onPlansChanged();
       }
@@ -3366,6 +3378,14 @@ async function runTroopPlansMenu(rl, settings, runtimeControls, hooks = {}) {
       const patch = await promptTroopPlanFields(rl, plan);
       const saved = troopPlans.upsertPlan(plan.name, patch);
       logSuccess(`Updated "${saved.name}" — ${troopPlans.describePlan(saved)}.`);
+      // Configuring a plan is exactly when someone expects training to start,
+      // so it's the right moment to point out that the master switch is off —
+      // otherwise the plan looks correct and simply never runs.
+      if (!settings.troopTrainingRoundRobinEnabled) {
+        logDanger(
+          "[Troop Plans] Auto-train loop is OFF — this plan will not run until you turn it on ([L] here)."
+        );
+      }
       if (typeof hooks.onPlansChanged === "function") {
         hooks.onPlansChanged();
       }
@@ -6282,6 +6302,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
   const troopVillageLoopState = new Map();
   /** Serializes troop auto runs so per-village timers do not fight for the browser lock. */
   let troopAutoRunChain = Promise.resolve();
+  /** One-shot guard so the "auto-train loop is OFF" notice does not repeat on every sync. */
+  let troopLoopDisabledNoticeLogged = false;
   const TROOP_MISSING_BUILDING_RETRY_MS = 12 * 60 * 60 * 1000;
 
   try {
@@ -9205,9 +9227,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     const syncAllTroopVillageLoops = () => {
       cancelAllTroopVillageLoops();
-      if (done || !settings.troopTrainingRoundRobinEnabled) {
+      if (done) {
         return;
       }
+      // The master switch being off used to return here in total silence — no
+      // timers, no logs, nothing — so a fully configured plan simply never ran
+      // and gave no clue why. (The "no villages assigned" notice below is also
+      // past this point, so it couldn't fire either.) A real user lost a long
+      // time to exactly this: a plan with siege configured, and nothing
+      // training. Say it out loud instead, once per state change.
+      if (!settings.troopTrainingRoundRobinEnabled) {
+        const assignedCount = troopPlans.listEnabledVillages(villageState.villages).length;
+        if (assignedCount > 0 && !troopLoopDisabledNoticeLogged) {
+          troopLoopDisabledNoticeLogged = true;
+          logDanger(
+            `[Troop Auto] Auto-train loop is OFF, so nothing will train even though ${assignedCount} village(s) ` +
+              "are assigned to a plan. Turn it on: menu T → [L], or TROOP_TRAINING_ROUND_ROBIN_ENABLED=true."
+          );
+        }
+        return;
+      }
+      troopLoopDisabledNoticeLogged = false;
       if (!villageState.villages.length) {
         setTimeout(() => {
           if (!done && settings.troopTrainingRoundRobinEnabled) {
@@ -9257,6 +9297,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         refreshVillageState({ navigateToStatusPage: true, silent: true }),
       listTrainableUnits: (village, building) =>
         listTrainableUnits(getPage, settings, village.id, building),
+      isTroopLoopEnabled: () => Boolean(settings.troopTrainingRoundRobinEnabled),
       onAssignmentChanged: (village) => resyncTroopVillageLoop(village),
       onPlansChanged: () => syncAllTroopVillageLoops()
     };

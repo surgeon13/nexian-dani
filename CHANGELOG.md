@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.71] — 2026-08-20
+
+### Fixed
+
+- **A fully configured troop plan could silently never run, with zero output explaining why.** `syncAllTroopVillageLoops()` opened with `if (done || !settings.troopTrainingRoundRobinEnabled) return;` — so with the auto-train loop toggled off (which is the **default**, `TROOP_TRAINING_ROUND_ROBIN_ENABLED=false`) the entire troop system exited immediately: no timers, no logs, nothing. The existing "No villages assigned to a troop plan" notice sits *below* that return, so it couldn't fire either.
+
+  A user lost a long time to exactly this, reporting siege units never training. Their plan was correct the whole way through — a screenshot confirmed `5 Workshop  Trebuchet x5` configured — and two earlier speculative fixes (1.8.62's trainer slot probe, 1.8.59's unset-branch flagging) addressed real robustness gaps but not this, because there was no output to diagnose from.
+
+  The disabled state is now loud instead of silent, at all three moments where training is expected to start:
+  - **Loop sync** — if the loop is off while villages are assigned to a plan, logs in red how many villages are affected and how to turn it on. Once per state change, not per sync.
+  - **Creating or editing a plan** — warns that the plan won't run until the loop is enabled.
+  - **Assigning a village to a plan** — the existing `(auto-train ON)` message refers only to the *per-village* toggle, which is actively misleading when the global loop is off; that case now says so explicitly.
+
 ## [1.8.70] — 2026-08-20
 
 ### Added
