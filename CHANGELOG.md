@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.74] — 2026-08-21
+
+### Fixed
+
+- **Farmlist sending could sit stuck for up to 90 seconds waiting on a loop it "pre-empted," even though it should be a quick click-and-wait.** 1.8.73 widened farmlist's pre-emption to four more background loops (`top10-tracking`, NPC Crop Convert, Overflow Guard, Celebrations RR), but pre-emption there was never real interruption — `cancelRequested` is only checked between discrete steps (start of a followup/per-village loop, or before the pre-action random delay), never mid network-call. None of those four loops — nor auto-builder's own up-to-20-step/120s follow-up retry loop — had a checkpoint to notice the request at all, so `waitForPreemptedActionRelease`'s default 90-second cap wasn't a worst case, it was close to the *typical* wait whenever farmlist's tick landed while one of them was mid-run.
+
+  Two changes:
+  - Farmlist's pre-emption wait now caps at **20 seconds** instead of 90. If whatever's running doesn't yield in time, farmlist skips that tick and falls back to the existing 2-minute short-retry cycle — a fast, visible failure instead of an up-to-90-second silent stall on every contended tick. (Cranny defense's own pre-emption of auto-builder is untouched, still 90s — no evidence that one needed changing.)
+  - Auto-builder's follow-up retry loop now actually checks `cancelRequested` between steps, so a pre-emption request (from farmlist or cranny defense) can cut it short after the current step instead of running its full budget regardless.
+
 ## [1.8.73] — 2026-08-21
 
 ### Fixed
