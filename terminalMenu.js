@@ -6941,9 +6941,68 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     // it, if not already excluded. Shared by the "resource plan just went
     // all_complete mid-tick" path and the "fields already at 10 per a live
     // check, template tracking just hasn't caught up" path.
+    /**
+     * Live-verify a village really is finished before excluding it. previewPlan()
+     * — which every "complete" decision rests on — only walks progress.json's
+     * stage/step pointer and never looks at the game, so a tracker that drifted
+     * ahead of reality reads as done. A real user hit exactly that: a village
+     * excluded as "Village stage plan complete" whose resource fields were not
+     * all at level 10.
+     *
+     * Costs one page load (whole village map at once). Returns false only when
+     * the game actively contradicts the tracker; an unreadable map is
+     * inconclusive, not a veto, so a server whose map markup we can't parse
+     * doesn't strand villages in the rotation forever.
+     */
+    const verifiedIncompleteBeforeExclude = async (village) => {
+      let result;
+      try {
+        result = await builder.verifyPlanChainCompleteLive(getPage(), settings, village);
+      } catch (error) {
+        logWarn(
+          `[Builder Loop] Completion re-check failed for ${villageDisplayName(village)}: ` +
+            `${error && error.message ? error.message : error}. Trusting tracked progress.`
+        );
+        return false;
+      }
+      if (!result || result.status !== "incomplete") {
+        return false;
+      }
+
+      const worst = result.failures
+        .slice()
+        .sort((a, b) => a.actualLevel - b.actualLevel)
+        .slice(0, 4)
+        .map((f) => `slot ${f.slot} at ${f.actualLevel}/${f.requiredLevel}`)
+        .join(", ");
+      logDanger(
+        `[Builder Loop] ${villageDisplayName(village)} reports complete but the village disagrees — ` +
+          `${result.failures.length} resource field(s) below target (${worst}). Not excluding; ` +
+          `realigning to '${result.firstUnmetTemplateKey}' to finish them.`
+      );
+
+      if (result.firstUnmetTemplateKey) {
+        builder.setVillageProgress(
+          village,
+          {
+            active_template: result.firstUnmetTemplateKey,
+            stage_index: 0,
+            step_index: 0,
+            prereq_validated_template: null,
+            realigned_from_template: null
+          },
+          { planMode: String(result.firstUnmetTemplateKey).startsWith("resource_fields_") ? "resource" : "village" }
+        );
+      }
+      return true;
+    };
+
     const excludeVillageFromBuilderRR = async (village, reason) => {
       const excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
       if (excludedSet.has(Number(village.id))) {
+        return false;
+      }
+      if (await verifiedIncompleteBeforeExclude(village)) {
         return false;
       }
       excludedSet.add(Number(village.id));
@@ -8297,34 +8356,30 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           // via [B]. Previously only resource completion was handled, so a
           // village logging "All village stage templates completed for this
           // village." stayed in the rotation indefinitely.
-          {
-            let excludedChanged = false;
-            for (const village of nonCapitalVillages) {
-              const villageId = Number(village.id);
-              if (excludedVillageIds.has(villageId) || villageHasPendingBuilderWork(village)) {
-                continue;
-              }
-              excludedVillageIds.add(villageId);
-              excludedChanged = true;
-
-              const resourceDone = isBuilderPlanFullyComplete(village, "resource");
-              const villageDone = isBuilderPlanFullyComplete(village, "village");
-              const reason = resourceDone && villageDone
-                ? "All builder plans complete"
-                : villageDone
-                  ? "Village stage plan complete"
-                  : resourceDone
-                    ? "Resource fields complete"
-                    : "No builder work left";
-              logSuccess(
-                `[Builder Loop] ${reason} for ${villageDisplayName(village)} — excluded from Builder RR.`
-              );
+          for (const village of nonCapitalVillages) {
+            const villageId = Number(village.id);
+            if (excludedVillageIds.has(villageId) || villageHasPendingBuilderWork(village)) {
+              continue;
             }
-            if (excludedChanged) {
-              settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedVillageIds);
-              if (runtimeControls.persistSettings) {
-                await runtimeControls.persistSettings(["BUILDER_RR_EXCLUDED_VILLAGE_IDS"]);
-              }
+
+            const resourceDone = isBuilderPlanFullyComplete(village, "resource");
+            const villageDone = isBuilderPlanFullyComplete(village, "village");
+            const reason = resourceDone && villageDone
+              ? "All builder plans complete"
+              : villageDone
+                ? "Village stage plan complete"
+                : resourceDone
+                  ? "Resource fields complete"
+                  : "No builder work left";
+
+            // Routed through the shared helper so this path gets the same live
+            // verification (and persistence) as the mid-tick exclude, instead
+            // of writing the exclusion inline on unverified progress. It
+            // returns false — and realigns the village — when the game
+            // contradicts the tracker, so the village stays in the rotation
+            // and actually finishes its fields.
+            if (await excludeVillageFromBuilderRR(village, reason)) {
+              excludedVillageIds.add(villageId);
             }
           }
 

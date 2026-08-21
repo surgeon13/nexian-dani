@@ -1180,6 +1180,219 @@ function isFlexibleMapBonusBuilding(name) {
   );
 }
 
+/**
+ * Reads EVERY slot on the village map in a single page load, keeping both the
+ * building label and its level. The narrower readers above/below deliberately
+ * drop one or the other (inner slots strip the level; field slots ignore the
+ * label), which is fine for their jobs but useless for verifying a whole
+ * village at once.
+ */
+async function readVillageMapSlots(page, baseUrl, villageId) {
+  if (!villageId) {
+    return [];
+  }
+  const centerUrl = buildVillageCenterUrl(baseUrl, villageId);
+  await safeGotoWithRetry(page, centerUrl, { waitUntil: "domcontentloaded", timeout: 60000 }, 2);
+
+  return page.evaluate(() => {
+    const normalize = (value) => String(value || "").replace(/ /g, " ").trim();
+    const areas = Array.from(
+      document.querySelectorAll("map#map2 area[href*='build.php?id='], area[href*='build.php?id=']")
+    );
+    const seen = new Map();
+    for (const area of areas) {
+      const href = area.getAttribute("href") || "";
+      const match = href.match(/[?&]id=(\d+)/i);
+      const slotId = match ? Number(match[1]) : null;
+      if (!Number.isFinite(slotId) || seen.has(slotId)) {
+        continue;
+      }
+      const combined = `${normalize(area.getAttribute("title") || "")} ${normalize(area.getAttribute("alt") || "")}`;
+      const levelMatch =
+        combined.match(/\blevel\s+(\d+)\b/i) || combined.match(/\blvl\.?\s*(\d+)\b/i);
+      const label = combined
+        .replace(/\blevel\s+\d+\b/gi, " ")
+        .replace(/\blvl\.?\s*\d+\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      seen.set(slotId, {
+        slotId,
+        label,
+        level: levelMatch ? Number(levelMatch[1]) : null
+      });
+    }
+    return Array.from(seen.values());
+  });
+}
+
+/**
+ * Highest level each RESOURCE FIELD slot (1-18) is expected to reach across a
+ * plan's whole template chain, from both the build steps and the end_state
+ * declarations, keyed by slot.
+ *
+ * Steps are read, not just end_state, because a template's end_state can
+ * under-declare what it actually builds: village_stage_fast_basic_15c pushes
+ * all 18 fields to 10 across its crop/wood/clay/iron passes, yet its end_state
+ * lists zero field slots — so an end_state-only check would have missed
+ * exactly the case this exists to catch.
+ *
+ * Deliberately limited to slots 1-18. Those have fixed positions, so a level
+ * comparison is unambiguous. Inner buildings (19+) are placed on
+ * tribe/village-dependent slots and get remapped at runtime, so asserting a
+ * template's *guessed* slot number for them would manufacture false failures.
+ * Levels only — never building names: the crop/wood/clay/iron passes
+ * intentionally target the same slots with different building names via
+ * strict_match/skip_if_mismatch, so only the resulting level is meaningful.
+ */
+function collectChainFieldRequirements(index, chainStartKey) {
+  const requirements = new Map();
+
+  const record = (slot, level, templateKey) => {
+    const slotId = Number(slot);
+    const wanted = Number(level) || 0;
+    if (!Number.isFinite(slotId) || slotId < 1 || slotId > 18 || wanted <= 0) {
+      return;
+    }
+    const existing = requirements.get(slotId);
+    if (!existing || wanted > existing.minLevel) {
+      requirements.set(slotId, { slot: slotId, minLevel: wanted, templateKey });
+    }
+  };
+
+  for (const key of getTemplateChain(index, chainStartKey)) {
+    let template;
+    try {
+      template = loadTemplate(key);
+    } catch (_error) {
+      continue;
+    }
+    for (const stage of (template && template.stages) || []) {
+      for (const step of (stage && stage.steps) || []) {
+        record(step && step.slot, step && step.target_level, key);
+      }
+    }
+    const endSlots =
+      template && template.end_state && Array.isArray(template.end_state.slots)
+        ? template.end_state.slots
+        : [];
+    for (const requirement of endSlots) {
+      record(requirement && requirement.slot, requirement && requirement.min_level, key);
+    }
+  }
+  return requirements;
+}
+
+/**
+ * Verify against the LIVE village that a plan really is finished, before
+ * anything acts on previewPlan()'s "all_complete" — which only means the
+ * tracked progress pointer ran off the end of the chain, not that the
+ * buildings exist at the required levels. A real user hit the gap directly: a
+ * village was excluded from Builder RR as "Village stage plan complete" while
+ * its resource fields were not actually all at level 10.
+ *
+ * Costs ONE page load: the whole village map is read at once and checked
+ * against the chain's combined end_state requirements.
+ *
+ * Returns { status: "ok" | "incomplete" | "inconclusive", failures, firstUnmetTemplateKey }.
+ * "inconclusive" means the map couldn't be read usefully (it isn't reliable on
+ * every server — the same weakness that needed slot probes elsewhere), and
+ * callers should fall back to their previous behavior rather than treat an
+ * unreadable map as proof of incompleteness.
+ */
+async function verifyPlanChainCompleteLive(page, settings, village, options = {}) {
+  const mode = normalizePlanMode(options.planMode);
+  const baseUrl = (settings && settings.villageBuilderUrl) || "https://nexian.world/village2.php";
+  const index = loadIndex();
+
+  // Gather requirements from every plan this village runs, not just the one
+  // that happens to have finished. Excluding a village means "no builder work
+  // left anywhere", and the resource fields live in the resource chain — so
+  // verifying only the village plan (whose templates assert no field slots at
+  // all) would rubber-stamp exactly the case this exists to catch.
+  const modesToCheck = options.planMode ? [mode] : [PLAN_MODE_RESOURCE, PLAN_MODE_VILLAGE];
+  const requirements = new Map();
+  for (const checkMode of modesToCheck) {
+    const progress = getVillageProgress(village, { planMode: checkMode });
+    const activeKey = progress && progress.active_template;
+    // Start from the chain's beginning so earlier templates' requirements
+    // count too, not just whichever one progress points at now. A standalone
+    // template isn't on any default chain, so it starts from itself.
+    const startKey =
+      activeKey && templateMatchesPlan(activeKey, checkMode) && !isTemplateInDefaultChain(activeKey, checkMode)
+        ? activeKey
+        : resolveDefaultTemplateForPlan(index, checkMode);
+    if (!startKey) {
+      continue;
+    }
+    for (const [slot, requirement] of collectChainFieldRequirements(index, startKey)) {
+      const existing = requirements.get(slot);
+      if (!existing || requirement.minLevel > existing.minLevel) {
+        requirements.set(slot, requirement);
+      }
+    }
+  }
+  if (!requirements.size) {
+    return { status: "inconclusive", failures: [], firstUnmetTemplateKey: null };
+  }
+
+  let slots;
+  try {
+    slots = await readVillageMapSlots(page, baseUrl, village.id);
+  } catch (_error) {
+    return { status: "inconclusive", failures: [], firstUnmetTemplateKey: null };
+  }
+  if (!Array.isArray(slots) || !slots.length) {
+    return { status: "inconclusive", failures: [], firstUnmetTemplateKey: null };
+  }
+
+  const bySlot = new Map(slots.map((row) => [Number(row.slotId), row]));
+  const failures = [];
+  let readableChecks = 0;
+
+  for (const requirement of requirements.values()) {
+    const row = bySlot.get(requirement.slot);
+    // A slot the map didn't report, or reported without a level, can't be
+    // judged — don't invent a failure from missing data.
+    if (!row || !Number.isFinite(Number(row.level))) {
+      continue;
+    }
+    readableChecks += 1;
+    if (Number(row.level) < requirement.minLevel) {
+      failures.push({
+        slot: requirement.slot,
+
+        requiredLevel: requirement.minLevel,
+        actualLevel: Number(row.level),
+        templateKey: requirement.templateKey
+      });
+    }
+  }
+
+  if (!readableChecks) {
+    return { status: "inconclusive", failures: [], firstUnmetTemplateKey: null };
+  }
+  if (!failures.length) {
+    return { status: "ok", failures: [], firstUnmetTemplateKey: null };
+  }
+
+  // Name the earliest template that still has unmet requirements, so a caller
+  // can realign the rebuild to the right place. Ordering is resolved against
+  // the resource chain (where the field requirements come from); a standalone
+  // template isn't on it, in which case the failure's own key stands.
+  const resourceChain = getTemplateChain(index, resolveDefaultTemplateForPlan(index, PLAN_MODE_RESOURCE));
+  let firstUnmetTemplateKey = failures[0].templateKey;
+  let bestIndex = resourceChain.indexOf(firstUnmetTemplateKey);
+  for (const failure of failures) {
+    const at = resourceChain.indexOf(failure.templateKey);
+    if (at >= 0 && (bestIndex < 0 || at < bestIndex)) {
+      bestIndex = at;
+      firstUnmetTemplateKey = failure.templateKey;
+    }
+  }
+
+  return { status: "incomplete", failures, firstUnmetTemplateKey };
+}
+
 async function surveyInnerSlotsFromVillageMap(page, baseUrl, villageId) {
   if (!villageId) {
     return [];
@@ -3332,5 +3545,8 @@ module.exports = {
   surveyInnerSlotsFromVillageMap,
   readResourceFieldLevelsFromMap,
   areAllResourceFieldsAtLevel,
+  readVillageMapSlots,
+  collectChainFieldRequirements,
+  verifyPlanChainCompleteLive,
   readSlotPage
 };
