@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.69] — 2026-08-20
+
+### Added
+
+- **A build step that can never be placed is now skipped so the rest of the template keeps running.** When every inner building site in a village is already occupied and the step's target isn't one of them, there is physically nowhere to put it — retrying accomplishes nothing while upgrades to buildings that *do* exist sit waiting behind it. Both blocking paths (`blocked_target_unavailable` on an empty slot, and `blocked_mismatch` on an occupied one) now check this once and advance past the step with a new `skipped_village_full` status, logged as a warning so the skip is visible rather than silent.
+
+  Deliberately conservative — it keeps the old blocking behavior whenever the answer isn't clear-cut: the map is unreadable, the map reports no levels, any free site remains, or the target already exists somewhere (in which case the caller remaps to it instead of skipping). Verified across all those cases.
+
+### Fixed
+
+- **`Number.isFinite(Number(row.level))` treated a missing level as level 0** — `Number(null)` is `0`, which *is* finite. This silently inverted two checks introduced in 1.8.68/this release: a free (level-less) building site read as "occupied at level 0", and the completion verifier manufactured a failure for every slot whose level it couldn't parse — which would have blocked exclusion on an unreadable map instead of falling back to inconclusive. Both now use an explicit `hasReadableLevel()` helper that distinguishes a genuine level 0 from an absent one.
+
+  Caught by testing the placement logic across its edge cases; the first pass of that test hid the bug by hand-copying the predicate as `Number.isFinite(row.level)` (which *is* false for `null`) rather than exercising the shipped code. Re-verified against the real exported functions.
+
+- **The manual builder's follow-up loop had drifted from the auto loop's** — it advanced on only `already_satisfied` / `template_complete` / `realigned_template`, so a manual run stopped dead on `skipped_wrong_building_type`, `storage_relief`, and `prerequisite_relief`, all of which the auto loop walks straight through. Both sets are now identical (and include the new `skipped_village_full`).
+
 ## [1.8.68] — 2026-08-20
 
 ### Added
