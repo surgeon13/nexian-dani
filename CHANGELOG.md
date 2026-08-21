@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.76] — 2026-08-21
+
+### Changed
+
+- **`start.cmd` and `start-headed.cmd` are now proper one-click launchers, not bare `node` calls.** They were already double-clickable on Windows, but silently: no memory flag (so they didn't actually match `npm run login` / `npm run login:headed`, which both set `--max-old-space-size=768`), no check that Node.js is even installed, and no pause on error — a failed launch just flashed a console window shut before you could read why. Both now check for Node on PATH with a clear message if it's missing, set the same memory flag the npm scripts use, print which npm script they mirror, and pause on a non-zero exit so errors stay on screen instead of vanishing. `start.cmd` is the one-click equivalent of `npm run login`; `start-headed.cmd` of `npm run login:headed`. Documented both in the README's NPM scripts table and first-setup steps.
+
 ## [1.8.75] — 2026-08-21
 
 ### Fixed
