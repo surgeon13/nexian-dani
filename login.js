@@ -337,6 +337,14 @@ const settings = {
   builderRrAutoExcludeOnResourceComplete:
     String(process.env.BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE || "true").toLowerCase() ===
     "true",
+  // Consecutive ticks a village may spend stuck on the same non-transient
+  // blocked status before it is auto-excluded from Builder RR, so the
+  // rotation stops spending turns on a village nothing can be built in.
+  // Only structural blocks count (a missing upgrade button, a mismatched or
+  // unavailable target, …) — never blocked_resources / blocked_queue /
+  // blocked_storage / idle_saturated, which clear on their own. Set 0 to
+  // disable and keep retrying forever.
+  builderRrAutoExcludeBlockedStreak: numberEnv("BUILDER_RR_AUTO_EXCLUDE_BLOCKED_STREAK", 12),
   troopTrainingRoundRobinEnabled:
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   troopTrainingLoopMinMinutes: numberEnv("TROOP_TRAINING_LOOP_MIN_MINUTES", 5),
@@ -577,6 +585,7 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE: settings.builderRrAutoExcludeOnResourceComplete
       ? "true"
       : "false",
+    BUILDER_RR_AUTO_EXCLUDE_BLOCKED_STREAK: String(settings.builderRrAutoExcludeBlockedStreak ?? 12),
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),

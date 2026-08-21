@@ -6381,6 +6381,28 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       skippedCooldown: 0
     };
 
+    /**
+     * Blocked statuses that will NOT clear by themselves, so a village stuck
+     * repeating one is genuinely stuck rather than waiting. The transient ones
+     * are excluded on purpose: blocked_resources clears once resources arrive
+     * (and drives circulation), blocked_queue clears when the queue drains,
+     * blocked_storage is handled by storage relief, and idle_saturated means
+     * the queue is simply full right now.
+     */
+    const isPersistentBuilderBlock = (status) => {
+      const key = String(status || "");
+      const transient = new Set([
+        "blocked_resources",
+        "blocked_queue",
+        "blocked_storage",
+        "idle_saturated"
+      ]);
+      if (transient.has(key)) {
+        return false;
+      }
+      return key.startsWith("blocked_") || key === "click_failed";
+    };
+
     const getBuilderCooldownMsForStatus = (status) => {
       switch (status) {
         case "blocked_queue":
@@ -6997,12 +7019,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       return true;
     };
 
-    const excludeVillageFromBuilderRR = async (village, reason) => {
+    const excludeVillageFromBuilderRR = async (village, reason, options = {}) => {
       const excludedSet = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
       if (excludedSet.has(Number(village.id))) {
         return false;
       }
-      if (await verifiedIncompleteBeforeExclude(village)) {
+      // The completion re-check exists to stop a village being excluded as
+      // "finished" when the game says otherwise. A village excluded for being
+      // STUCK is incomplete by definition, so applying that veto here would
+      // guarantee it can never be excluded — exactly the villages we most want
+      // out of the rotation. Callers pass skipVerification for those.
+      if (!options.skipVerification && (await verifiedIncompleteBeforeExclude(village))) {
         return false;
       }
       excludedSet.add(Number(village.id));
@@ -8637,6 +8664,35 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   `[Builder Loop] repeated_blocked (${streak}): ${villageDisplayName(targetVillage)} in ${loopPlan.short} plan keeps hitting ` +
                   `'${finalResult.status}' — no upgrades are landing here while this persists. Latest: ${finalResult.message}`
                 );
+              }
+
+              // Stop burning RR turns on a village that is stuck for a
+              // structural reason. Only statuses that don't resolve on their
+              // own qualify: blocked_resources / blocked_queue /
+              // blocked_storage / idle_saturated are all expected to clear
+              // with time (or via circulation and storage relief), so
+              // excluding on those would strand a village that was about to
+              // recover anyway.
+              const streakLimit = Number(settings.builderRrAutoExcludeBlockedStreak);
+              if (
+                Number.isFinite(streakLimit) &&
+                streakLimit > 0 &&
+                streak >= streakLimit &&
+                isPersistentBuilderBlock(finalResult.status)
+              ) {
+                const excluded = await excludeVillageFromBuilderRR(
+                  targetVillage,
+                  `Stuck on '${finalResult.status}' for ${streak} consecutive ticks`,
+                  { skipVerification: true }
+                );
+                if (excluded) {
+                  logDanger(
+                    `[Builder Loop] ${villageDisplayName(targetVillage)} excluded from Builder RR after ${streak} ticks stuck on ` +
+                      `'${finalResult.status}'. Fix it in-game, then remove the village id from BUILDER_RR_EXCLUDED_VILLAGE_IDS ` +
+                      "(Settings) to put it back in the rotation."
+                  );
+                  resetBlockedStreak(targetVillage.id, loopPlan.key);
+                }
               }
             } else {
               resetBlockedStreak(targetVillage.id, loopPlan.key);
