@@ -8,10 +8,21 @@ function isResourceExhaustionError(error) {
   );
 }
 
+// Mobile/Termux connections routinely drop DNS or hand-off between wifi and
+// cellular mid-navigation. These net errors look "hard" (Chromium never got
+// a byte back) but are commonly a few-second blip rather than a real outage,
+// so treat them as retryable the same way resource exhaustion is.
+function isConnectivityError(error) {
+  return /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_REFUSED/i.test(
+    navigationErrorMessage(error)
+  );
+}
+
 function isTransientNavigationError(error) {
   const msg = navigationErrorMessage(error);
   return (
     isResourceExhaustionError(error) ||
+    isConnectivityError(error) ||
     /ERR_ABORTED|Execution context was destroyed|interrupted by another navigation|Navigation failed because page was closed/i.test(
       msg
     )
@@ -19,7 +30,7 @@ function isTransientNavigationError(error) {
 }
 
 function navigationRetryDelayMs(attempt, error) {
-  if (isResourceExhaustionError(error)) {
+  if (isResourceExhaustionError(error) || isConnectivityError(error)) {
     return Math.min(30000, 3000 * 2 ** attempt);
   }
   return 250 + attempt * 250;
@@ -55,6 +66,7 @@ async function safeGotoWithRetry(page, url, options = {}, retries = 3) {
 module.exports = {
   navigationErrorMessage,
   isResourceExhaustionError,
+  isConnectivityError,
   isTransientNavigationError,
   navigationRetryDelayMs,
   safeGotoWithRetry

@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.73] — 2026-08-21
+
+### Fixed
+
+- **A DNS blip during a farmlist send was treated as a hard failure instead of being retried.** `[Farmlist Loop] Auto-send failed: page.goto: net::ERR_NAME_NOT_RESOLVED` — the navigation-retry helper (`safeGotoWithRetry`, used by every page navigation in the bot) already retries "transient" errors with backoff, but `isTransientNavigationError()`'s pattern didn't include `ERR_NAME_NOT_RESOLVED`, `ERR_INTERNET_DISCONNECTED`, `ERR_CONNECTION_TIMED_OUT`, `ERR_ADDRESS_UNREACHABLE`, or `ERR_CONNECTION_REFUSED` — all common on a mobile/Termux connection switching between wifi and cellular, or a DNS resolver hiccuping for a few seconds. Those errors now retry with the same exponential backoff (3s, 6s, 12s, capped at 30s) already used for resource-exhaustion errors, instead of aborting the send on the first blip.
+
+### Changed
+
+- **Farmlist sending can now pre-empt more background loops, not just four of them.** The bot already had a "farmlist priority" mechanism — `farmlistPriority: true` pauses whichever background loop currently holds the automation lock so a farmlist send can go first, then lets it resume — but the list of loops it was allowed to pause (`isPreemptibleAutoAction`) only covered `auto-builder`, `auto-troop-trainer`, `cranny-defense-rr`, and `activity-simulation`. Four other recurring background loops (`top10-tracking`, NPC Crop Convert, Overflow Guard, Celebrations RR) were missing from that list, so if one of them happened to be running when a farmlist tick fired, the send was skipped outright (no wait at all) and fell back to two 2-minute short-retries before dropping to the full loop interval — the exact "other activity delayed the high-priority farmlist send" behavior reported. Those four loops are now pre-emptible too.
+
+  Left deliberately out: raid evacuation (`raid-evacuation-<villageId>`) and one-off manual/user-invoked actions. Evacuating resources ahead of an incoming attack is itself time-critical and defensive; pausing it so an *outgoing* farm raid can be sent first would be the wrong trade-off.
+
 ## [1.8.72] — 2026-08-20
 
 ### Fixed
