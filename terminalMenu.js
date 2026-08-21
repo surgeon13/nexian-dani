@@ -8585,6 +8585,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 !(
                   finalResult.status === "already_satisfied" ||
                   finalResult.status === "skipped_wrong_building_type" ||
+                  finalResult.status === "skipped_village_full" ||
                   finalResult.status === "template_complete" ||
                   finalResult.status === "realigned_template" ||
                   finalResult.status === "storage_relief" ||
@@ -8686,6 +8687,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               });
             } else if (finalResult.status === "template_complete" || finalResult.status === "all_complete") {
               logSuccess(`[Builder Loop] ${finalResult.message}`);
+            } else if (finalResult.status === "skipped_village_full") {
+              logWarn(`[Builder Loop] ${finalResult.message}`);
             } else if (finalResult.status === "storage_relief" || finalResult.status === "prerequisite_relief") {
               logSuccess(`[Builder Loop] ${finalResult.message}`);
             } else {
@@ -11172,11 +11175,19 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           const maxFollowupElapsedMs = 120000;
           let followupAttempt = 0;
           const followupStartedAt = Date.now();
+          // Kept in step with the auto loop's follow-up set: every status that
+          // means "progress moved, try the next step" belongs here. The
+          // skipped_* and *_relief statuses were missing, so a manual run
+          // stopped dead on cases the auto loop walks straight through.
           while (
             finalResult &&
             (finalResult.status === "already_satisfied" ||
+              finalResult.status === "skipped_wrong_building_type" ||
+              finalResult.status === "skipped_village_full" ||
               finalResult.status === "template_complete" ||
-              finalResult.status === "realigned_template") &&
+              finalResult.status === "realigned_template" ||
+              finalResult.status === "storage_relief" ||
+              finalResult.status === "prerequisite_relief") &&
             followupAttempt < maxFollowupAttempts
           ) {
             if (Date.now() - followupStartedAt > maxFollowupElapsedMs) {

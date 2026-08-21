@@ -1187,6 +1187,16 @@ function isFlexibleMapBonusBuilding(name) {
  * label), which is fine for their jobs but useless for verifying a whole
  * village at once.
  */
+/**
+ * True only when a map row carries a real, parsed level. Must not be written
+ * as Number.isFinite(Number(row.level)): Number(null) is 0, which IS finite,
+ * so a level-less (i.e. free/unparsed) site would read as "occupied at level
+ * 0" — silently inverting both callers below.
+ */
+function hasReadableLevel(row) {
+  return Boolean(row) && row.level != null && Number.isFinite(Number(row.level));
+}
+
 async function readVillageMapSlots(page, baseUrl, villageId) {
   if (!villageId) {
     return [];
@@ -1353,7 +1363,7 @@ async function verifyPlanChainCompleteLive(page, settings, village, options = {}
     const row = bySlot.get(requirement.slot);
     // A slot the map didn't report, or reported without a level, can't be
     // judged — don't invent a failure from missing data.
-    if (!row || !Number.isFinite(Number(row.level))) {
+    if (!hasReadableLevel(row)) {
       continue;
     }
     readableChecks += 1;
@@ -1391,6 +1401,48 @@ async function verifyPlanChainCompleteLive(page, settings, village, options = {}
   }
 
   return { status: "incomplete", failures, firstUnmetTemplateKey };
+}
+
+/**
+ * True when a "construct <building>" step can never succeed as things stand:
+ * every inner building site is already occupied AND the target isn't one of
+ * the buildings occupying them. There is physically nowhere left to put it, so
+ * retrying forever accomplishes nothing — the caller should advance to the
+ * next step and let the rest of the template (upgrades to buildings that DO
+ * exist) keep making progress.
+ *
+ * Costs one page load. Deliberately conservative — returns false, meaning
+ * "keep the existing blocked behavior", whenever the answer isn't clear:
+ *   - map unreadable or empty (it isn't reliable on every server)
+ *   - the building already exists somewhere (caller remaps to it instead)
+ *   - any free site remains (the block is a prerequisite/resource issue that
+ *     can still resolve on its own)
+ * so a village is never skipped past a step it could actually complete.
+ */
+async function isNewBuildingUnplaceable(page, baseUrl, villageId, buildingName) {
+  if (!buildingName || !villageId) {
+    return false;
+  }
+  let slots;
+  try {
+    slots = await readVillageMapSlots(page, baseUrl, villageId);
+  } catch (_error) {
+    return false;
+  }
+  if (!Array.isArray(slots) || !slots.length) {
+    return false;
+  }
+
+  const inner = slots.filter((row) => Number(row.slotId) >= 19);
+  if (!inner.length) {
+    return false;
+  }
+  if (inner.some((row) => isSameBuildingName(row.label, buildingName))) {
+    return false;
+  }
+  // An occupied site reports "<name> level N"; a free construction site has no
+  // level to report. If nothing is level-less, there is no room left.
+  return inner.every(hasReadableLevel);
 }
 
 async function surveyInnerSlotsFromVillageMap(page, baseUrl, villageId) {
@@ -2540,6 +2592,26 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
       );
     }
 
+    // Slot holds a different building and there's nowhere else to put ours —
+    // no amount of retrying frees a site up, so let the rest of the template
+    // (upgrades to buildings that DO exist) keep progressing.
+    if (await isNewBuildingUnplaceable(page, baseUrl, village.id, step.building)) {
+      return advancePastStep(
+        village,
+        mode,
+        planLabel,
+        template,
+        activeTemplateKey,
+        stageIndex,
+        stepIndex,
+        isLast,
+        report,
+        "skipped_village_full",
+        `Slot ${resolvedSlot} holds '${slotInfo.buildingName || "unknown"}' and every other inner site is ` +
+          `occupied too, so '${step.building}' cannot be placed anywhere. Skipping to the next template step.`
+      );
+    }
+
     const tribeLayoutHint =
       isFlexibleMapBonusBuilding(step.building)
         ? ` No matching '${step.building}' on inner village map; build it on the correct site for your tribe or adjust the template.`
@@ -2659,6 +2731,23 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
               `Target bonus building '${step.building}' is not available on slot ${resolvedSlot}. ` +
               "Realigning to Stage 1 prerequisite resource fields to continue progressing."
           };
+        }
+
+        if (await isNewBuildingUnplaceable(page, baseUrl, village.id, step.building)) {
+          return advancePastStep(
+            village,
+            mode,
+            planLabel,
+            template,
+            activeTemplateKey,
+            stageIndex,
+            stepIndex,
+            isLast,
+            report,
+            "skipped_village_full",
+            `'${step.building}' cannot be placed — every inner building site in this village is ` +
+              "already occupied and it isn't one of them. Skipping to the next template step."
+          );
         }
 
         return {
@@ -3546,6 +3635,8 @@ module.exports = {
   readResourceFieldLevelsFromMap,
   areAllResourceFieldsAtLevel,
   readVillageMapSlots,
+  hasReadableLevel,
+  isNewBuildingUnplaceable,
   collectChainFieldRequirements,
   verifyPlanChainCompleteLive,
   readSlotPage
