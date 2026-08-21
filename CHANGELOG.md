@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.68] — 2026-08-20
+
+### Added
+
+- **Villages are now live-verified against the game before being excluded from Builder RR.** Every "plan complete" decision rested on `previewPlan()`, which only walks `progress.json`'s stage/step pointer and **never looks at the game** — so a tracker that drifted ahead of reality read as finished. Reported directly: a village excluded as `Village stage plan complete` while its resource fields were not actually all at level 10.
+
+  New `villageBuilder.verifyPlanChainCompleteLive()` reads the **entire village map in one page load** and checks it against what the plans actually require. Exclusion is now vetoed when the game contradicts the tracker, and progress is realigned to the earliest template with unmet requirements so the missing levels actually get built. Both exclusion paths (mid-tick and tick-start catch-up) route through the same verified helper — the catch-up previously wrote exclusions inline on unverified progress.
+
+  Two details that make it actually catch the reported case:
+  - **Requirements come from build steps, not just `end_state`.** A template's `end_state` can under-declare what it builds: `village_stage_fast_basic_15c` pushes all 18 fields to 10 across its crop/wood/clay/iron passes, yet declares **zero** field slots in `end_state`. An `end_state`-only check would have rubber-stamped exactly this village.
+  - **Both plan modes are checked, not just the one that finished.** Exclusion means "no work left anywhere", and resource fields live in the resource chain — verifying only the village plan (whose templates assert no field slots at all) would have missed them again.
+
+  Scoped to resource-field slots 1-18 and compared by **level only**: those slots have fixed positions, whereas inner buildings get remapped at runtime, so asserting a template's *guessed* inner slot number would manufacture false failures. Building names are ignored because the crop/wood/clay/iron passes deliberately target the same slots under different names via `strict_match`/`skip_if_mismatch`.
+
+  Fails safe: only an active contradiction blocks exclusion. An unreadable or level-less village map is treated as *inconclusive* and falls back to the previous behavior, so a server whose map markup can't be parsed never strands villages in the rotation. Verified across all six outcomes — the reported case (tracker complete, 3 fields at 6/10) correctly blocks and realigns; all-at-target, above-target, empty map, level-less map, and single-field-short all behave correctly.
+
 ## [1.8.67] — 2026-08-20
 
 ### Fixed
