@@ -8285,24 +8285,40 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
           const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
 
-          // Catch-up: a village whose resource plan is already complete
-          // (e.g. it finished before auto-exclude was turned on, or any
-          // other timing gap versus the mid-tick exclude below) should
-          // actually be recorded in BUILDER_RR_EXCLUDED_VILLAGE_IDS, not
-          // just silently skipped by villageHasPendingBuilderWork — a real
-          // user hit exactly this: the builder kept "counting through all
+          // Catch-up: a village with no builder work left should actually be
+          // recorded in BUILDER_RR_EXCLUDED_VILLAGE_IDS, not just silently
+          // skipped by villageHasPendingBuilderWork on every tick forever — a
+          // real user hit exactly this: the builder kept "counting through all
           // templates" for such a village instead of ever excluding it.
-          if (settings.builderRrAutoExcludeOnResourceComplete && builderRrUsesResourceThenVillagePipeline()) {
+          //
+          // Keyed off "nothing pending" rather than "the resource plan is
+          // done", so it covers every way a village can finish: the resource
+          // chain, the village-stage chain, or a standalone template assigned
+          // via [B]. Previously only resource completion was handled, so a
+          // village logging "All village stage templates completed for this
+          // village." stayed in the rotation indefinitely.
+          {
             let excludedChanged = false;
             for (const village of nonCapitalVillages) {
               const villageId = Number(village.id);
-              if (!excludedVillageIds.has(villageId) && isBuilderPlanFullyComplete(village, "resource")) {
-                excludedVillageIds.add(villageId);
-                excludedChanged = true;
-                logSuccess(
-                  `[Builder Loop] Resource fields already complete for ${villageDisplayName(village)} — excluded from Builder RR.`
-                );
+              if (excludedVillageIds.has(villageId) || villageHasPendingBuilderWork(village)) {
+                continue;
               }
+              excludedVillageIds.add(villageId);
+              excludedChanged = true;
+
+              const resourceDone = isBuilderPlanFullyComplete(village, "resource");
+              const villageDone = isBuilderPlanFullyComplete(village, "village");
+              const reason = resourceDone && villageDone
+                ? "All builder plans complete"
+                : villageDone
+                  ? "Village stage plan complete"
+                  : resourceDone
+                    ? "Resource fields complete"
+                    : "No builder work left";
+              logSuccess(
+                `[Builder Loop] ${reason} for ${villageDisplayName(village)} — excluded from Builder RR.`
+              );
             }
             if (excludedChanged) {
               settings.builderRoundRobinExcludedVillageIds = formatPivotCsvFromSet(excludedVillageIds);
@@ -8495,6 +8511,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   followupAttempt += 1;
                   continue;
                 }
+              }
+
+              // Village-stage plan finished: there is genuinely nothing left for
+              // the builder to do here, so record the exclusion instead of
+              // leaving the village in the RR to be re-resolved and re-skipped
+              // every tick. Same treatment the resource plan already got in
+              // 1.8.41 — the village track just never had it, so a village that
+              // logged "All village stage templates completed for this village."
+              // still sat in the rotation forever.
+              if (finalResult && finalResult.status === "all_complete" && loopPlan.key === "village") {
+                await excludeVillageFromBuilderRR(targetVillage, "Village stage plan complete");
+                break;
               }
 
               if (
