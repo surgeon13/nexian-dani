@@ -61,15 +61,16 @@ function colorTaggedMessage(message, ...bodyCodes) {
   return `${ANSI.yellow}${tag}${ANSI.reset}${bodyCodes.join("")}${rest}${ANSI.reset}`;
 }
 
-// "[HH:MM]:" prefix on every log line, e.g. "[16:37]:[Troop Auto] queued...".
-// Local wall-clock time, zero-padded, no seconds — matches what's asked for.
-// Colored separately (gray) from the "[Tag]" coloring colorTaggedMessage
-// already does, so the existing tag highlighting is untouched.
+// "[HH:MM:SS]:" prefix on every log line, e.g. "[16:37:42]:[Troop Auto] queued...".
+// Local wall-clock time, zero-padded. Colored separately (gray) from the
+// "[Tag]" coloring colorTaggedMessage already does, so the existing tag
+// highlighting is untouched.
 function timestampTag() {
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
-  return `[${hh}:${mm}]:`;
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `[${hh}:${mm}:${ss}]:`;
 }
 
 function logInfo(message) {

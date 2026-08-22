@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.78] — 2026-08-22
+
+### Changed
+
+- **Log timestamp now includes seconds:** `[HH:MM]:` → `[HH:MM:SS]:`, e.g. `[16:37:42]:[Troop Auto] queued 10 Haeduan (Stable)`. Same shared `timestampTag()` helper added in 1.8.77, just with seconds appended.
+
 ## [1.8.77] — 2026-08-22
 
 ### Added
