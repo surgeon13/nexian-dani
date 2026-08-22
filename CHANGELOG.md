@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.77] — 2026-08-22
+
+### Added
+
+- **Every log line now starts with a `[HH:MM]:` timestamp** (local wall-clock time, 24h, zero-padded), e.g. `[16:37]:[Troop Auto] 5-MeO-DMT (106|22) (vid=42423): queued 10 Haeduan (Stable)`. Added at the shared `logInfo`/`logSuccess`/`logWarn`/`logError`/`logDanger` helpers, so it applies uniformly to every existing log call across the whole bot (Farmlist Loop, Troop Auto, Builder Loop, Celebrations, Overflow Guard, etc.) with no per-call-site changes needed. The timestamp is colored separately (gray) from the existing `[Tag]` highlighting, so tags like `[Troop Auto]` keep their yellow highlight exactly as before.
+
 ## [1.8.76] — 2026-08-21
 
 ### Changed

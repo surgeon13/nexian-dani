@@ -61,27 +61,38 @@ function colorTaggedMessage(message, ...bodyCodes) {
   return `${ANSI.yellow}${tag}${ANSI.reset}${bodyCodes.join("")}${rest}${ANSI.reset}`;
 }
 
+// "[HH:MM]:" prefix on every log line, e.g. "[16:37]:[Troop Auto] queued...".
+// Local wall-clock time, zero-padded, no seconds — matches what's asked for.
+// Colored separately (gray) from the "[Tag]" coloring colorTaggedMessage
+// already does, so the existing tag highlighting is untouched.
+function timestampTag() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `[${hh}:${mm}]:`;
+}
+
 function logInfo(message) {
-  console.log(colorTaggedMessage(message, ANSI.cyan));
+  console.log(color(timestampTag(), ANSI.gray) + colorTaggedMessage(message, ANSI.cyan));
 }
 
 function logSuccess(message) {
-  console.log(colorTaggedMessage(message, ANSI.green, ANSI.bold));
+  console.log(color(timestampTag(), ANSI.gray) + colorTaggedMessage(message, ANSI.green, ANSI.bold));
 }
 
 function logWarn(message) {
-  console.log(colorTaggedMessage(message, ANSI.yellow));
+  console.log(color(timestampTag(), ANSI.gray) + colorTaggedMessage(message, ANSI.yellow));
 }
 
 function logError(message) {
-  console.error(colorTaggedMessage(message, ANSI.red, ANSI.bold));
+  console.error(color(timestampTag(), ANSI.gray) + colorTaggedMessage(message, ANSI.red, ANSI.bold));
 }
 
 // For urgent-but-not-crashed situations worth calling out in red (e.g. a
 // resource overflow guard being blocked, so surplus keeps accumulating) —
 // distinct from logError, which is for actual failures and goes to stderr.
 function logDanger(message) {
-  console.log(colorTaggedMessage(message, ANSI.red, ANSI.bold));
+  console.log(color(timestampTag(), ANSI.gray) + colorTaggedMessage(message, ANSI.red, ANSI.bold));
 }
 
 class MenuInterruptError extends Error {
