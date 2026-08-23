@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.81] — 2026-08-23
+
+### Changed
+
+- **Login now goes straight to the login form on your realm, skipping the portal's click-through entirely.** `LOGIN_URL` used to always default to the bare portal homepage (`https://nexian.world/`), which meant every login walked through `openNexianPortalLoginForm`'s fallback chain — click "Play Now", then either match a realm card's `openLogin('s1')` handler or poke the page's Alpine.js state directly, all DOM-structure-dependent and the most plausible thing to break on any portal redesign.
+
+  Verified against the portal's actual served HTML/JS: `https://nexian.world/?login=1&world=<id>` is a documented entry point in the page's own `landingPage()` Alpine component — those query params seed its initial state as `{ journey: true, view: 'login', serverId: <id> }` server-side, so the login form is already open and visible for that exact realm the instant the page loads. `LOGIN_URL` now defaults to this directly (`world=` set from `GAME_HOST`, e.g. `?login=1&world=s1` when `GAME_HOST=https://s1.nexian.world`) instead of the bare portal URL, when `GAME_HOST` names a specific realm. `NEXIAN_URL` still overrides both if set.
+
+  **`.env.example` / `.env.termux.example`: `NEXIAN_URL` is now commented out by default** so this new derivation actually applies — it used to be set explicitly to the bare portal URL, which would have silently overridden the new logic for anyone using the template as-is. Existing `.env` files aren't touched by an update — if yours already has `NEXIAN_URL=https://nexian.world/` from before, comment it out (or update it) to pick up the new behavior.
+
 ## [1.8.80] — 2026-08-23
 
 ### Fixed
