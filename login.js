@@ -21,6 +21,7 @@ const {
   proxyPool
 } = require("./proxyConfig");
 const sessionPresence = require("./sessionPresence");
+const { safeGotoWithRetry } = require("./browserNavigation");
 
 function getArgValue(prefix) {
   const match = process.argv.find((arg) => arg.startsWith(prefix));
@@ -1129,9 +1130,11 @@ async function tryOpenStoredSession(browser, effectiveHeadless) {
     await applyContextSpeedups(context);
     const page = await context.newPage();
     const startUrl = settings.villageStatusUrl || `${GAME_HOST}/dorf1.php`;
-    await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+    // A transient blip here used to throw away a perfectly good saved
+    // session and force a full fresh login — retry first instead.
+    await safeGotoWithRetry(page, startUrl, { waitUntil: "domcontentloaded", timeout: 45000 }, 2);
     if (/shownew|show_news/i.test(String(page.url() || ""))) {
-      await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+      await safeGotoWithRetry(page, startUrl, { waitUntil: "domcontentloaded", timeout: 30000 }, 1).catch(() => null);
     }
     if (!(await ensureLoggedInAtVillagePage(page, { timeoutMs: 12000 }))) {
       await context.close().catch(() => null);
@@ -1282,7 +1285,11 @@ if (
 
 async function loginToPage(page, context) {
   console.log(`  Opening ${LOGIN_URL} ...`);
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+  // The very first navigation of the whole run — a transient network blip
+  // here (ERR_TIMED_OUT, DNS hiccup, etc.) used to fail the entire login
+  // outright with no retry. Give it the same retry/backoff treatment as
+  // every in-game navigation already gets.
+  await safeGotoWithRetry(page, LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60000 }, 3);
 
   const legacyForm = page.locator('form[name="login"]');
   const onLegacyLogin = await legacyForm.isVisible().catch(() => false);

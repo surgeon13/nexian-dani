@@ -13,7 +13,7 @@ function isResourceExhaustionError(error) {
 // a byte back) but are commonly a few-second blip rather than a real outage,
 // so treat them as retryable the same way resource exhaustion is.
 function isConnectivityError(error) {
-  return /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_REFUSED/i.test(
+  return /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_TIMED_OUT|ERR_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_REFUSED/i.test(
     navigationErrorMessage(error)
   );
 }

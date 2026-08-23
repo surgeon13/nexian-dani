@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.80] — 2026-08-23
+
+### Fixed
+
+- **`Playwright login run failed: page.goto: net::ERR_TIMED_OUT at https://nexian.world/` failed the whole run outright on the very first navigation, with no retry.** The 1.8.79 failure-screenshot feature paid off immediately — it caught this on the first `page.goto()` of the entire process (`chrome-error://chromewebdata/`, a pure network failure, not a portal/DOM change). `login.js` never imported the shared navigation-retry helper (`browserNavigation.js`) at all — every `page.goto()` in the login flow was a bare, single-attempt call, unlike the in-game automation loops which have had retry/backoff since earlier this session. A transient network blip (DNS hiccup, brief connection timeout — exactly the class of error this session has repeatedly hit on both Termux and Windows) failed the entire login with no chance to recover.
+
+  `login.js` now imports `safeGotoWithRetry` and uses it for the initial portal navigation (3 retries) and the saved-session restore navigation (2 retries, so a blip doesn't needlessly throw away a valid saved session and force a full re-login). Also added `ERR_TIMED_OUT` (the generic Chromium navigation timeout — distinct from `ERR_CONNECTION_TIMED_OUT`, already covered) to `browserNavigation.js`'s transient-error classification, since that's the exact error code this failure reported.
+
 ## [1.8.79] — 2026-08-23
 
 ### Added
