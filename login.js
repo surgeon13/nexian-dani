@@ -165,10 +165,6 @@ const actionLogFilePath = path.resolve(
 const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 const STORAGE_STATE_PATH = path.resolve(process.cwd(), "storageState.json");
 
-const LOGIN_URL = process.env.NEXIAN_URL || "https://nexian.world/";
-const USERNAME = process.env.NEXIAN_USERNAME;
-const PASSWORD = process.env.NEXIAN_PASSWORD;
-
 // Realm host for in-game pages (farmlist, builder, trainer, status, logout).
 // Set GAME_HOST=https://s1.nexian.world (or your realm) so URLs target the realm,
 // not the nexian.world portal which redirects to village2.php.
@@ -194,6 +190,23 @@ function portalServerIdFromGameHost(gameHost = GAME_HOST) {
 }
 
 const PORTAL_SERVER_ID = portalServerIdFromGameHost();
+
+// The portal's own landing-page component (window.landingPage(), served
+// inline) supports ?login=1&world=<id> as a documented entry point: it seeds
+// the modal's initial Alpine state as { journey: true, view: 'login',
+// serverId: <id> } server-side, so the login form is already open and
+// visible on the realm we want the instant the page loads — no "Play Now"
+// click, no realm-card selection, none of openNexianPortalLoginForm's
+// fallback chain needed. Confirmed against the portal's actual served HTML/JS.
+// Falls back to the bare portal URL when GAME_HOST doesn't name a specific
+// realm (nothing to preselect). NEXIAN_URL still overrides both.
+const LOGIN_URL =
+  process.env.NEXIAN_URL ||
+  (PORTAL_SERVER_ID
+    ? `https://nexian.world/?login=1&world=${PORTAL_SERVER_ID}`
+    : "https://nexian.world/");
+const USERNAME = process.env.NEXIAN_USERNAME;
+const PASSWORD = process.env.NEXIAN_PASSWORD;
 const headlessByDefault = !(
   process.argv.includes("--headed") || process.env.HEADLESS === "false"
 );
