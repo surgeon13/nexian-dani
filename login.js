@@ -1358,8 +1358,46 @@ async function createSession(headless) {
   const context = await browser.newContext();
   await applyContextSpeedups(context);
   const page = await context.newPage();
-  await loginToPage(page, context);
+  try {
+    await loginToPage(page, context);
+  } catch (error) {
+    await captureLoginFailureDiagnostics(page, error).catch(() => {});
+    throw error;
+  }
   return { browser, context, page, headless: effectiveHeadless };
+}
+
+/**
+ * Login failures are especially hard to diagnose headless (Termux/CI) — no
+ * window to look at when e.g. a portal DOM change or a slow page load makes
+ * a selector time out. Save a screenshot + the failing URL so the next
+ * report has evidence to root-cause from, instead of just an error message
+ * and a locator string.
+ */
+async function captureLoginFailureDiagnostics(page, error) {
+  if (!page || page.isClosed()) {
+    return;
+  }
+  const dir = path.join(process.cwd(), "debug");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (_dirError) {
+    return;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const screenshotPath = path.join(dir, `login-failure-${stamp}.png`);
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 10000 });
+    console.error(`  [Login] Failure screenshot saved: ${screenshotPath}`);
+  } catch (_screenshotError) {
+    // Best effort — page may already be unresponsive if this is what failed.
+  }
+  try {
+    console.error(`  [Login] Failure URL: ${page.url()}`);
+  } catch (_urlError) {
+    // ignore
+  }
+  console.error(`  [Login] Failure reason: ${error && error.message ? error.message : error}`);
 }
 
 async function run() {

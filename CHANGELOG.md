@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.79] — 2026-08-23
+
+### Added
+
+- **Login failures now save a screenshot for diagnosis.** A reported `locator.waitFor: Timeout 30000ms exceeded` waiting for the portal's username field surfaced a real gap: on a headless/Termux setup there's no window to look at when a login step times out, so a report like this is just an error string with no way to tell whether the portal's page changed, a banner/captcha got in the way, or it was a one-off slow load. `createSession()` now catches any `loginToPage()` failure, saves a full-page screenshot plus the failing URL to `debug/login-failure-<timestamp>.png`, and rethrows the original error unchanged (the screenshot capture never masks or replaces the real failure). `debug/` is git-ignored. Documented in the README's Troubleshooting section.
+
 ## [1.8.78] — 2026-08-22
 
 ### Changed
