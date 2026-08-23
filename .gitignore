@@ -13,6 +13,7 @@ log.jsonl
 top10.log
 session-presence.json
 log-archive/
+debug/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
