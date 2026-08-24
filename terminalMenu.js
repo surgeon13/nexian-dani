@@ -731,6 +731,13 @@ const FARMLIST_NAV_TIMEOUT_MS = 20000;
 // Hitting this budget aborts with a clear error instead, so the runAction
 // lock is released and other activities can continue.
 const FARMLIST_SEND_BUDGET_MS = 90000;
+// If sendFarmlists() still hits the budget ceiling above despite the
+// per-step checkpoints, the page itself is likely in a stuck state (a hung
+// AJAX call, a half-loaded farmlist page) that calling sendFarmlists() again
+// on the same page won't clear. Reload first, then retry, up to this many
+// total attempts before giving up with a clear failure instead of leaving
+// the caller to retry indefinitely.
+const FARMLIST_SEND_MAX_ATTEMPTS = 3;
 
 async function safeGotoFarmlist(page, farmlistUrl, retries = 2) {
   await safeGotoWithRetry(
@@ -1452,6 +1459,7 @@ async function sendFarmlists(getPage, settings, options = {}) {
       });
 
       if (farmListsHref) {
+        assertWithinBudget("fallback 2 (farm lists page)");
         await safeGotoWithRetry(
           page,
           new URL(farmListsHref, page.url()).toString(),
@@ -1568,6 +1576,13 @@ async function sendFarmlists(getPage, settings, options = {}) {
   await ensureFarmlistSelectAllBeforeSend(page, settings);
   let sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 12000);
   if (!sendEnabled) {
+    // Each of these steps is individually bounded (waitFor/click/poll all have
+    // their own finite timeouts), but several of them in a row can still add
+    // up past the overall budget without any single one looking "stuck" on
+    // its own. Re-checking between steps turns that into a clean abort at the
+    // budget ceiling instead of silently running long and holding the
+    // runAction lock (blocking every other loop) well past it.
+    assertWithinBudget("retrying select-all before send");
     await ensureFarmlistSelectAllBeforeSend(page, settings);
     sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 8000);
   }
@@ -1603,6 +1618,7 @@ async function sendFarmlists(getPage, settings, options = {}) {
     }
   }
 
+  assertWithinBudget("activating send control");
   const clicked = await activateFarmlistSendControl(page, chosenSendSelector);
   if (!clicked) {
     const stillDisabled = await isSendControlDisabled(page, chosenSendSelector);
@@ -1697,6 +1713,46 @@ async function sendFarmlists(getPage, settings, options = {}) {
   }
 
   return { status: "sent" };
+}
+
+function isFarmlistBudgetTimeoutError(error) {
+  return /^\[Farmlist\] Send timed out after \d+s/.test(
+    String(error && error.message ? error.message : error || "")
+  );
+}
+
+/**
+ * Wraps sendFarmlists() with refresh-and-retry specifically for the budget
+ * timeout case (see FARMLIST_SEND_BUDGET_MS / assertWithinBudget above): a
+ * stuck page won't necessarily un-stick itself just by calling
+ * sendFarmlists() again, so reload first. Other failure types (idle/no
+ * farmlists, config errors, blocked selectors, etc.) are not retried here —
+ * they already have their own handling and a page reload wouldn't fix a
+ * config problem anyway. Gives up after FARMLIST_SEND_MAX_ATTEMPTS with one
+ * clear final failure instead of leaving the caller to retry indefinitely.
+ */
+async function sendFarmlistsWithRecovery(getPage, settings, options = {}) {
+  for (let attempt = 1; attempt <= FARMLIST_SEND_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await sendFarmlists(getPage, settings, options);
+    } catch (error) {
+      if (!isFarmlistBudgetTimeoutError(error)) {
+        throw error;
+      }
+      if (attempt >= FARMLIST_SEND_MAX_ATTEMPTS) {
+        throw new Error(
+          `[Farmlist] Failed after ${FARMLIST_SEND_MAX_ATTEMPTS} attempts (page refreshed between each): ${error.message || error}`
+        );
+      }
+      logWarn(
+        `[Farmlist] Attempt ${attempt}/${FARMLIST_SEND_MAX_ATTEMPTS} timed out — refreshing the page and retrying...`
+      );
+      const page = getPage();
+      if (page && !page.isClosed()) {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      }
+    }
+  }
 }
 
 function withVillageId(url, villageId) {
@@ -8161,7 +8217,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           sendResult = await runWithRandomDelay(
             settings,
             "Auto Send Farmlists",
-            () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
+            () => sendFarmlistsWithRecovery(getPage, settings, { villageId: resolveFarmlistVillageId() }),
             () => cancelRequested
           );
           if (sendResult && sendResult.status === "idle") {
@@ -11213,7 +11269,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           const sendResult = await runWithRandomDelay(
             settings,
             "Send Farmlists",
-            () => sendFarmlists(getPage, settings, { villageId: resolveFarmlistVillageId() }),
+            () => sendFarmlistsWithRecovery(getPage, settings, { villageId: resolveFarmlistVillageId() }),
             () => cancelRequested
           );
           if (sendResult && sendResult.status === "idle") {

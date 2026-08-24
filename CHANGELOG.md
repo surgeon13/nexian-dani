@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.83] — 2026-08-24
+
+### Fixed
+
+- **Farmlist sending could still block every other loop for 90+ seconds despite the 1.8.75 budget ceiling.** Reported live: `[Builder Loop] Timed out after 90s — auto-send farmlists still running.` / `[Troop Auto] Timed out after 45s — auto-send farmlists still running.` — both other loops gave up waiting while farmlist's own lock was still held. Root cause: the 90-second budget (`FARMLIST_SEND_BUDGET_MS`) was only checked at the *start* of each major phase (each fallback tier, before selecting lists, etc.), not between the individual bounded steps within a phase. The post-selector "select lists and click send" segment alone chains several individually-bounded waits (`waitSendControlEnabled` up to 20s, `activateFarmlistSendControl`'s click retries up to 28s, `ensureFarmlistSelectAllBeforeSend` twice, plus delays) that could add up past the 90s ceiling with no checkpoint in between to catch it — so the budget existed but wasn't actually being enforced in that segment. Added checkpoints between each of those steps (and the two unguarded fallback-2 navigation hops), so a cumulative overrun now gets caught and aborted cleanly within roughly one step's worth of the ceiling, instead of silently running long.
+
+### Added
+
+- **Farmlist sending now recovers from a stuck page instead of just failing once.** When a send genuinely hits the budget ceiling (page stuck in some AJAX/half-loaded state), calling `sendFarmlists()` again on the same page isn't reliable — the page needs to actually reload first. Both call sites (the auto-loop and the manual "Send Farmlists" menu action) now go through `sendFarmlistsWithRecovery()`: on a budget-timeout failure, it reloads the page and retries, up to 3 total attempts, then gives up with one clear final failure message (`[Farmlist] Failed after 3 attempts (page refreshed between each): ...`) instead of leaving the caller to sort out an ambiguous error or retry indefinitely. Only budget-timeout failures get this treatment — idle/no-farmlists results and config errors (wrong village, no Rally Point, etc.) are unaffected, since a page reload wouldn't fix those anyway.
+
 ## [1.8.82] — 2026-08-24
 
 ### Fixed
