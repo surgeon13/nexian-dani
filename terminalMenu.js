@@ -6926,6 +6926,24 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
     };
 
+    // Deliberately narrower than isOnVillageStatusLikePage's use elsewhere —
+    // build.php is a specific-slot detail page, not a village overview, so
+    // most callers of ensureVillageBrowserContext still shouldn't treat it as
+    // "usable". Only opted into by the builder loop's own follow-up retry
+    // (see allowBuildPage below), where runBuilderStep() is about to navigate
+    // to another build.php?id=<slot> anyway regardless of the current page.
+    const isOnBuildPage = (page) => {
+      if (!page || page.isClosed()) {
+        return false;
+      }
+      try {
+        const pathname = new URL(String(page.url() || "")).pathname.toLowerCase();
+        return /\/build\.php$/.test(pathname);
+      } catch (_error) {
+        return false;
+      }
+    };
+
     const restoreSelectedVillageContext = async (sourceLabel = "Context Restore", options = {}) => {
       // Post-loop cleanup calls run AFTER runAction released the page lock, so
       // another loop can already have grabbed it and be mid-navigation. This
@@ -6967,7 +6985,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     };
 
     /** Open status/overview for `village` in the browser (does not change menu selection). Round-robin builder needs this before slot reads. */
-    const ensureVillageBrowserContext = async (village, sourceLabel = "Context") => {
+    const ensureVillageBrowserContext = async (village, sourceLabel = "Context", options = {}) => {
       if (!village || !Number.isFinite(Number(village.id)) || Number(village.id) <= 0) {
         return;
       }
@@ -6977,7 +6995,9 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
       const currentVid = getCurrentVidFromPage(page);
       const sameVillageAlready = Number.isFinite(currentVid) && Number(currentVid) === Number(village.id);
-      const alreadyOnUsableVillagePage = sameVillageAlready && isOnVillageStatusLikePage(page);
+      const onAcceptablePage =
+        isOnVillageStatusLikePage(page) || (options.allowBuildPage && isOnBuildPage(page));
+      const alreadyOnUsableVillagePage = sameVillageAlready && onAcceptablePage;
       if (!alreadyOnUsableVillagePage) {
         await safeGotoWithRetry(
           page,
@@ -8760,7 +8780,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   logInfo(
                     `[Builder Loop] Resource fields complete for ${villageDisplayName(targetVillage)} — continuing with village stage plan.`
                   );
-                  await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+                  await ensureVillageBrowserContext(targetVillage, "Builder Loop", { allowBuildPage: true });
                   finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
                     goldCompleteEnabled: settings.builderGoldCompleteEnabled,
                     goldCompleteMax: settings.builderGoldCompleteMax,
@@ -8802,7 +8822,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               const followupTag =
                 finalResult.status === "realigned_template" ? "realigned_template" : "progress_advanced";
               logInfo(`[Builder Loop] ${followupTag}: ${finalResult.message} Retrying next step...`);
-              await ensureVillageBrowserContext(targetVillage, "Builder Loop");
+              await ensureVillageBrowserContext(targetVillage, "Builder Loop", { allowBuildPage: true });
               finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
                 goldCompleteEnabled: settings.builderGoldCompleteEnabled,
                 goldCompleteMax: settings.builderGoldCompleteMax,
