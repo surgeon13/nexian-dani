@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.88] — 2026-08-24
+
+### Fixed
+
+- **Farmlist's fallback 2 (village center → Rally Point) could get permanently stuck on the wrong host.** Reported live: `[Farmlist Loop] Auto-send failed: Could not find a farmlist send button on page: https://nexian.world/village2.php?vid=42423` — the portal host, not the realm (`s1.nexian.world`), which the README already documents as breaking farmlist/builder navigation. Root cause: fallback 2 constructed its village-center URL as `new URL("/village2.php", page.url())` — relative to whatever the *current* page happened to be, not the known-correct realm. If an earlier step in the fallback chain had already drifted onto the wrong host for any reason, this fallback perpetuated it instead of correcting it — the exact opposite of what a fallback should do.
+
+  Anchored both branches (a discovered village-center link, and the bare `/village2.php` guess) to `farmlistTargetUrl` — the realm URL fixed at the top of `sendFarmlists()` — instead of `page.url()`. Now this fallback always lands back on the correct realm host regardless of where the page drifted to beforehand.
+
 ## [1.8.87] — 2026-08-24
 
 ### Changed
