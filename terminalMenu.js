@@ -894,7 +894,41 @@ async function inspectFarmlistSendState(page, sendSelector) {
     }));
 }
 
+/**
+ * Each farm list is its own Alpine.js-driven collapsible section
+ * (`<span class="flArrow" :class="{'flOpen': listOpen}">` toggles per list).
+ * A collapsed list's target rows/checkboxes may not be selectable — reported
+ * live: sends work reliably when every list is manually uncollapsed first,
+ * and fail intermittently (mostly headless) when left collapsed. Click every
+ * closed arrow before touching any checkboxes.
+ */
+async function expandAllFarmlists(page) {
+  return page
+    .evaluate(() => {
+      const arrows = Array.from(document.querySelectorAll(".flArrow"));
+      let expanded = 0;
+      for (const arrow of arrows) {
+        if (!arrow.classList.contains("flOpen")) {
+          try {
+            arrow.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+            expanded += 1;
+          } catch (_err) {
+            /* ignore */
+          }
+        }
+      }
+      return { totalLists: arrows.length, expanded };
+    })
+    .catch(() => ({ totalLists: 0, expanded: 0 }));
+}
+
 async function ensureFarmlistSelectAllBeforeSend(page, settings) {
+  const expandResult = await expandAllFarmlists(page);
+  if (expandResult && expandResult.expanded > 0) {
+    logInfo(
+      `[Farmlist] Expanded ${expandResult.expanded}/${expandResult.totalLists} collapsed list(s) before selecting.`
+    );
+  }
   await page
     .evaluate(() => {
       const fireChange = (el) => {

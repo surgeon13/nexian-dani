@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.86] — 2026-08-24
+
+### Fixed
+
+- **Farmlist sends could fail to select/send targets in collapsed lists.** Reported live: sends work reliably when every farm list is manually uncollapsed first, and fail intermittently (mostly headless) when left collapsed — confirmed by the actual markup (`<span class="flArrow" :class="{'flOpen': listOpen}">`, an Alpine.js-driven per-list collapse toggle). `ensureFarmlistSelectAllBeforeSend()` only ever touched checkboxes — it never clicked anything to open a collapsed list first, so a list's target rows could stay non-interactable exactly the way manually leaving it collapsed does.
+
+  Added `expandAllFarmlists()`, called before any checkbox selection: clicks every `.flArrow` not already carrying `flOpen`, leaving already-open lists untouched. Logs `[Farmlist] Expanded N/M collapsed list(s) before selecting.` when it actually had to open anything, silent otherwise.
+
 ## [1.8.85] — 2026-08-24
 
 ### Fixed
