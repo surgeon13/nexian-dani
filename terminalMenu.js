@@ -1466,9 +1466,16 @@ async function sendFarmlists(getPage, settings, options = {}) {
           : null;
       });
     }
+    // Anchored to farmlistTargetUrl (the known-correct realm host), not
+    // page.url() — if an earlier step already drifted onto the wrong host
+    // (e.g. the nexian.world portal, which the README already documents as
+    // breaking farmlist/builder navigation), resolving relative to page.url()
+    // would just perpetuate that wrong host instead of correcting it. Real
+    // failure: "Could not find a farmlist send button on page:
+    // https://nexian.world/village2.php?vid=..." — the portal, not the realm.
     const targetVillageCenter = villageCenterHref
-      ? withVillageId(new URL(villageCenterHref, page.url()).toString(), pinnedVillageId)
-      : withVillageId(new URL("/village2.php", page.url()).toString(), pinnedVillageId);
+      ? withVillageId(new URL(villageCenterHref, farmlistTargetUrl).toString(), pinnedVillageId)
+      : withVillageId(new URL("/village2.php", farmlistTargetUrl).toString(), pinnedVillageId);
 
     await safeGotoWithRetry(page, targetVillageCenter, { timeout: FARMLIST_NAV_TIMEOUT_MS, strictRetries: true }, 1);
 
