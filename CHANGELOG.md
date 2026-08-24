@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.87] — 2026-08-24
+
+### Changed
+
+- **Skip checkbox selection entirely when the found control is `#btn_send_all`.** That specific button ("Send all lists") submits a form carrying only a hidden CSRF-style token — no per-list checkbox state is part of its payload at all, confirmed against the real markup. `ensureFarmlistSelectAllBeforeSend()` (and its retry) ran unconditionally before every send regardless of which control was found, wasting real time selecting checkboxes a `#btn_send_all` click doesn't even look at. Now skipped whenever `#btn_send_all` is the chosen control — still does one cheap `waitSendControlEnabled` check first (a real "nothing to send" case still reports idle correctly), just without the pointless selection work in between. Any other selector (e.g. a custom `FARMLIST_SEND_BUTTON_SELECTOR`) keeps the original select-first behavior unchanged.
+
 ## [1.8.86] — 2026-08-24
 
 ### Fixed
