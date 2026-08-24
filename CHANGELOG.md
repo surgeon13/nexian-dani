@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.82] — 2026-08-24
+
+### Fixed
+
+- **The keep-alive watchdog discarded the bot's own console output entirely, hiding every crash reason.** `keep-alive.log` reported `bot process exited code=1` on a crash-loop with no way to see why — because `scripts/keep-alive.js` spawned the bot child with `stdio: "ignore"`, silently throwing away everything the bot printed, including the login-failure screenshot/URL/reason diagnostics added in 1.8.79. Under the recommended 24/7 launch path (`start-24-7.cmd` / `npm run start:24-7:pc`), every crash was completely opaque — you'd see the watchdog repeatedly restart the bot (and, as a visible side effect, reopen a fresh dashboard browser tab on every restart with no dedup) but never learn what was actually failing.
+
+  The bot child's stdout/stderr are now captured to **`bot-output.log`**, overwritten fresh on each restart so it always reflects the most recent run. `keep-alive.log` still says *that* it crashed; `bot-output.log` now says *why*. Gitignored, same as the other runtime logs.
+
 ## [1.8.81] — 2026-08-23
 
 ### Changed

@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.81** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.82** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -321,7 +321,7 @@ npm run start:24-7      # Linux/macOS/Cursor with tmux
 2. Does `http://127.0.0.1:3847/api/status` answer? → else restart  
 3. Is `log.jsonl` older than **20 minutes** (`STALE_MINUTES`) while loops are expected? → restart (skipped if automation is paused / session rest)
 
-Heartbeats and restart reasons are appended to **`keep-alive.log`**.
+Heartbeats and restart reasons are appended to **`keep-alive.log`**. The bot child's own console output (startup errors, login-failure diagnostics, etc.) is captured separately to **`bot-output.log`**, overwritten fresh on each restart — `keep-alive.log` only tells you *that* it crashed (`bot process exited code=1`); `bot-output.log` tells you *why*.
 
 ### Cursor Cloud (run inside Cursor)
 
@@ -477,6 +477,7 @@ Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FI
 - **Top 10 log:** `top10.log` (or `TOP10_TRACKING_LOG_FILE`) — one JSON object per line per ranking category per snapshot (`ts`, `epochMs`, `top10`, `self`). The dashboard aggregates these lines for Δ and `/h`.
 - **Session presence:** `session-presence.json` (or `SESSION_PRESENCE_LOG_FILE`) — online periods with start/end, egress IP, and proxy. API `GET /api/session-presence`.
 - **Keep-alive log:** `keep-alive.log` — watchdog heartbeats and restart reasons (gitignored)
+- **Bot output log:** `bot-output.log` — the bot child's own console output when launched via the keep-alive watchdog (startup errors, login-failure diagnostics); overwritten on each restart, so it always reflects the most recent run (gitignored)
 - **Rotation:** When `log.jsonl` exceeds `NEXIAN_ACTION_LOG_MAX_BYTES` (default 10MB), it is renamed into `log-archive/` and logging continues in a new empty file.
 - **Format:** append-only JSONL (action + Top 10); keep-alive is plain text timestamps
 - **Summary menu** counts farmlists, troops, upgrades, gold autocomplete, merchant-transfer history (mostly historical), evacuation history (mostly historical).
@@ -512,7 +513,8 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
-- **Bot crashed / dashboard dead:** run `npm run cursor:ensure` (or `npm run start:24-7`). Check `keep-alive.log` for `restarting bot (...)`.
+- **Bot crashed / dashboard dead:** run `npm run cursor:ensure` (or `npm run start:24-7`). Check `keep-alive.log` for `restarting bot (...)`, then `bot-output.log` for the actual error/stack trace from the crashed run — `keep-alive.log` only says *that* it exited, not why.
+- **Bot keeps crash-looping under the keep-alive watchdog (repeated restarts, dashboard tab reopening every time):** the tab reopening on every restart is expected (`DASHBOARD_OPEN_BROWSER=false` to stop it) — but the real problem is whatever's making it crash. Check `bot-output.log` for the actual failure.
 - **Wrong egress IP / stuck on old proxy:** `POST /api/proxy-settings` with `{"action":"next"}` (or **Apply**). Confirm `account.publicAddress` matches the new proxy host after `automation.reason` is `online`.
 - **Top 10 empty / no Δ:** need at least two successful snapshots in `top10.log`; confirm `TOP10_TRACKING_ENABLED` and that `/api/top10` returns `ok: true` categories.
 - **Login fails with a locator timeout (e.g. `waiting for locator('input[placeholder="Enter your username"]') to be visible`):** the bot saves a full-page screenshot + the failing URL to `debug/login-failure-<timestamp>.png` on any login failure — check it to see what the page actually looked like (portal redesign, cookie banner, maintenance page, slow load). Especially useful on headless/Termux setups where there's no window to look at directly. `debug/` is git-ignored; nothing in it gets committed.
