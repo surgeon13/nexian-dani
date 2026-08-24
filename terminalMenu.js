@@ -1023,7 +1023,12 @@ async function ensureFarmlistSelectAllBeforeSend(page, settings) {
     }
   }
 
-  await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => {});
+  // networkidle is a cap, not a target — a page with any background polling
+  // (ads, trackers) never truly goes idle and just burns the full timeout
+  // for nothing. The fixed waitForTimeout right after already provides a
+  // settle margin, so this only needs to be short enough to stop wasting
+  // seconds on pages that were never going to idle out anyway.
+  await page.waitForLoadState("networkidle", { timeout: 1200 }).catch(() => {});
   await page.waitForTimeout(650);
 }
 
@@ -1304,7 +1309,9 @@ async function sendFarmlists(getPage, settings, options = {}) {
   await gotoFarmlistWithNewsEscape(page, farmlistTargetUrl);
 
   await page.waitForLoadState("domcontentloaded").catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 3500 }).catch(() => {});
+  // Cap, not a target — see the comment on the networkidle wait inside
+  // ensureFarmlistSelectAllBeforeSend for why this doesn't need to be long.
+  await page.waitForLoadState("networkidle", { timeout: 1500 }).catch(() => {});
   await page.waitForTimeout(1000);
   logInfo("[Farmlist] Page loaded, looking for the send control...");
 
@@ -1652,7 +1659,9 @@ async function sendFarmlists(getPage, settings, options = {}) {
     );
   }
 
-  await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
+  // Cap, not a target — see the comment on the networkidle wait inside
+  // ensureFarmlistSelectAllBeforeSend for why this doesn't need to be long.
+  await page.waitForLoadState("networkidle", { timeout: 1800 }).catch(() => {});
   await page.waitForTimeout(800);
 
   // Nexian shows e.g. "Raids sent: 5 | Skipped: 690 (insufficient troops), 1 (paused)"
