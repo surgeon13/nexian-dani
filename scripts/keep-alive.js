@@ -27,6 +27,12 @@ const DASH_URL = process.env.DASH_URL || `http://127.0.0.1:${DASH_PORT}/api/stat
 const LOG_FILE = process.env.LOG_FILE || path.join(ROOT, "keep-alive.log");
 const ACTION_LOG = path.join(ROOT, "log.jsonl");
 const ENV_FILE = path.join(ROOT, ".env");
+// The bot child's own console output (startup errors, login-failure
+// diagnostics, etc.) used to be discarded entirely (stdio: "ignore"), so a
+// crash under the watchdog left only "bot process exited code=1" here with
+// no explanation. Captured to a file instead, overwritten fresh on each
+// restart so it always reflects the most recent run.
+const BOT_OUTPUT_LOG = path.join(ROOT, "bot-output.log");
 
 let lastRestartEpoch = 0;
 let botChild = null;
@@ -142,15 +148,29 @@ function killLoginJs() {
 function startBot() {
   killLoginJs();
   const nodeArgs = ["--max-old-space-size=768", "login.js", "--dashboard", "--keep-open"];
+  let botLogFd = null;
+  try {
+    botLogFd = fs.openSync(BOT_OUTPUT_LOG, "w");
+  } catch (_e) {
+    /* fall through to stdio: "ignore" below if the log file can't be opened */
+  }
   botChild = spawn(process.execPath, nodeArgs, {
     cwd: ROOT,
     env: process.env,
     detached: false,
-    stdio: "ignore",
+    stdio: botLogFd != null ? ["ignore", botLogFd, botLogFd] : "ignore",
     windowsHide: true
   });
   botChild.on("exit", (code, signal) => {
-    log(`bot process exited code=${code} signal=${signal || ""}`);
+    if (botLogFd != null) {
+      try {
+        fs.closeSync(botLogFd);
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    const detail = botLogFd != null ? ` — see ${path.basename(BOT_OUTPUT_LOG)} for details` : "";
+    log(`bot process exited code=${code} signal=${signal || ""}${detail}`);
     botChild = null;
   });
   botChild.unref?.();

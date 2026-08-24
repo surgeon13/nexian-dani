@@ -42,3 +42,4 @@ network-usage/
 
 # 24/7 keep-alive watchdog log
 keep-alive.log
+bot-output.log
