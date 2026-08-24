@@ -1614,9 +1614,18 @@ async function sendFarmlists(getPage, settings, options = {}) {
 
   assertWithinBudget("selecting lists before send");
   logInfo(`[Farmlist] Send control found ('${chosenSendSelector}') — selecting lists and sending...`);
-  await ensureFarmlistSelectAllBeforeSend(page, settings);
+
+  // #btn_send_all ("Send all lists") submits a form carrying only a hidden
+  // CSRF-style token — no per-list checkbox state is part of its payload at
+  // all (confirmed against the real markup). Selecting checkboxes first is
+  // pure wasted time for this control, and an extra chance to time out.
+  const isSendAllControl = chosenSendSelector === "#btn_send_all";
+
+  if (!isSendAllControl) {
+    await ensureFarmlistSelectAllBeforeSend(page, settings);
+  }
   let sendEnabled = await waitSendControlEnabled(page, chosenSendSelector, 12000);
-  if (!sendEnabled) {
+  if (!sendEnabled && !isSendAllControl) {
     // Each of these steps is individually bounded (waitFor/click/poll all have
     // their own finite timeouts), but several of them in a row can still add
     // up past the overall budget without any single one looking "stuck" on
