@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.85] — 2026-08-24
+
+### Fixed
+
+- **Builder Loop catching up an already-overbuilt village did twice the navigations it needed to.** Reported live: a village where every managed building was already well above its template's current target (`Sawmill slot 30 already at level 5 (target: 1)`, then the same slot again moments later at `(target: 3)` as the plan pointer advanced one step at a time) rapid-fired through many `build.php?id=<slot>` page loads in a row — "obsessively going through those loops."
+
+  Root cause: the follow-up retry loop's `ensureVillageBrowserContext()` call only accepted `village1.php`/`dorf1.php`/`village2.php`/`dorf2.php` as an already-usable page. After each `runBuilderStep()` leaves the browser on a specific slot's `build.php?id=X`, that doesn't count — so *every* already-satisfied step paid for two real page loads (bounce back to the village overview, then into the next slot) instead of one, even though `runBuilderStep()` navigates to its own exact target URL directly and doesn't need to start from an overview page (the existing manual "Builder Manual" run path already proved this — it never re-establishes context between follow-up steps at all).
+
+  `ensureVillageBrowserContext()` now accepts an opt-in `allowBuildPage` option — when set, staying on `build.php` for the *same* village no longer triggers a redundant re-navigation. Only the builder loop's own follow-up retry (the two spots hammering through already-satisfied steps) opts in; every other caller (troop trainer, farmlist, cranny defense, the initial per-tick context establish) is unaffected. Roughly halves the page-load cost of catching up a village that's significantly ahead of its plan's current stage, without changing which steps are considered satisfied or how templates advance.
+
+  This speeds up the catch-up; it doesn't eliminate the step-by-step nature of it — a village dozens of steps ahead of its stage pointer still walks through them one at a time, just faster. A deeper fix (bulk-reading all slot levels up front to skip straight to the first unsatisfied step) is a bigger, riskier change to the core plan-advancement logic and wasn't attempted here.
+
 ## [1.8.84] — 2026-08-24
 
 ### Changed
