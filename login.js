@@ -198,13 +198,23 @@ const PORTAL_SERVER_ID = portalServerIdFromGameHost();
 // visible on the realm we want the instant the page loads — no "Play Now"
 // click, no realm-card selection, none of openNexianPortalLoginForm's
 // fallback chain needed. Confirmed against the portal's actual served HTML/JS.
+//
+// setlang=en forces English regardless of whatever geo-IP/browser-locale
+// detection the portal does — confirmed live: a real user's session
+// rendered the entire portal (realm cards, login modal, button text) in
+// Hebrew, so our English-text selectors (e.g.
+// input[placeholder="Enter your username"]) never matched and every login
+// attempt timed out waiting for a field that was there, just not in
+// English. Also confirmed against the portal's served markup that setlang
+// accepts en/he/ro/tr/ru/es/th/it/cs/br/pt.
+//
 // Falls back to the bare portal URL when GAME_HOST doesn't name a specific
 // realm (nothing to preselect). NEXIAN_URL still overrides both.
 const LOGIN_URL =
   process.env.NEXIAN_URL ||
   (PORTAL_SERVER_ID
-    ? `https://nexian.world/?login=1&world=${PORTAL_SERVER_ID}`
-    : "https://nexian.world/");
+    ? `https://nexian.world/?login=1&world=${PORTAL_SERVER_ID}&setlang=en`
+    : "https://nexian.world/?setlang=en");
 const USERNAME = process.env.NEXIAN_USERNAME;
 const PASSWORD = process.env.NEXIAN_PASSWORD;
 const headlessByDefault = !(
@@ -1139,7 +1149,7 @@ async function tryOpenStoredSession(browser, effectiveHeadless) {
   let context = null;
   try {
     console.log("  Restoring saved session...");
-    context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
+    context = await browser.newContext({ storageState: STORAGE_STATE_PATH, locale: "en-US" });
     await applyContextSpeedups(context);
     const page = await context.newPage();
     const startUrl = settings.villageStatusUrl || `${GAME_HOST}/dorf1.php`;
@@ -1375,7 +1385,16 @@ async function createSession(headless) {
     return restored;
   }
 
-  const context = await browser.newContext();
+  // locale drives the Accept-Language header Chromium sends on every
+  // request, which is what the portal actually uses to pick a language —
+  // confirmed live and by direct testing: a session with a non-English
+  // Accept-Language rendered the entire portal (realm cards, login modal)
+  // in Hebrew, breaking every English-text selector (e.g.
+  // input[placeholder="Enter your username"]) and timing out logins that
+  // had nothing wrong with them otherwise. The portal's own setlang= URL
+  // param turned out unreliable in isolation — Accept-Language wins when
+  // they disagree — so this is the actual fix, not that.
+  const context = await browser.newContext({ locale: "en-US" });
   await applyContextSpeedups(context);
   const page = await context.newPage();
   try {

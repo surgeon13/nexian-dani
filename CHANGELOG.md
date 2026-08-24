@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.89] — 2026-08-24
+
+### Fixed
+
+- **Found the real cause of a recurring "same timeout" login failure: the portal was rendering in Hebrew.** A screenshot showed the actual login modal fully rendered — in Hebrew, not English. Every English-text selector this bot uses to log in (starting with `input[placeholder="Enter your username"]`) can never match Hebrew text, so `openNexianPortalLoginForm` waits the full 30s for a field that's genuinely there, just not in the language expected, and times out every time regardless of network conditions — explaining why this kept recurring across multiple "same timeout" reports that looked network-related but weren't.
+
+  Root cause, confirmed by direct testing against the live portal: the site's language follows the browser's `Accept-Language` request header (its own `?setlang=` URL parameter turned out unreliable in isolation — `Accept-Language` wins when they disagree). Playwright's browser context defaults to the *system's* default locale when none is set, so the rendered language silently depended on whatever locale the underlying OS/container happened to report — invisible in the terminal output, and unrelated to anything actually wrong with the bot's login logic.
+
+  Both places a browser context gets created (fresh login, and restoring a saved session) now explicitly set `locale: "en-US"`, which Playwright documents as controlling the `Accept-Language` header on every request. The portal's login form now reliably renders in English regardless of the host machine's system locale.
+
 ## [1.8.88] — 2026-08-24
 
 ### Fixed
