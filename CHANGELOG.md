@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.84] — 2026-08-24
+
+### Changed
+
+- **Farmlist sending's happy-path speed tightened toward the 10-20s it should take with no issues.** Three `waitForLoadState("networkidle", …)` calls in the send flow (after the initial page load, after selecting lists, after clicking send) were capped generously (3500/2500/4000ms). `networkidle` only resolves once there's been no network activity for 500ms — if the page has *any* background polling (ads, trackers, periodic AJAX), it never truly goes idle and each of those three waits burns its **full** timeout for nothing, up to 10 seconds combined. Each is already followed by a small fixed settle delay regardless, so the networkidle cap was pure waste on a page that was never going to idle out. Reduced to 1500/1200/1800ms (4.5s combined worst case) — doesn't slow down a page that resolves quickly (it already wasn't hitting the old caps), only stops wasting time on one that doesn't.
+
+  Note: the deliberate ~1-2s "safety" delay before clicking send (`preSendDelayMs`, paced by the same random-delay settings used elsewhere to avoid instant load-then-click patterns) is intentional pacing, not waste, and was left as-is.
+
 ## [1.8.83] — 2026-08-24
 
 ### Fixed
