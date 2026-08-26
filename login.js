@@ -373,6 +373,14 @@ const settings = {
     String(process.env.TROOP_TRAINING_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   troopTrainingLoopMinMinutes: numberEnv("TROOP_TRAINING_LOOP_MIN_MINUTES", 5),
   troopTrainingLoopMaxMinutes: numberEnv("TROOP_TRAINING_LOOP_MAX_MINUTES", 10),
+  // When ON, a branch (Barracks/Great Barracks/Stable/Great Stable/Workshop) is
+  // skipped for the tick if its existing training queue already runs at or
+  // beyond TROOP_QUEUE_CAP_HOURS — so one building can't hog resources for a
+  // whole day while the rest of the plan starves. Off by default: existing
+  // installs keep today's behavior until a user opts in.
+  troopQueueCapEnabled:
+    String(process.env.TROOP_QUEUE_CAP_ENABLED || "false").toLowerCase() === "true",
+  troopQueueCapHours: numberEnv("TROOP_QUEUE_CAP_HOURS", 12),
   crannyDefenseRoundRobinEnabled:
     String(process.env.CRANNY_DEFENSE_ROUND_ROBIN_ENABLED || "false").toLowerCase() === "true",
   crannyDefenseLoopMinMinutes: numberEnv("CRANNY_DEFENSE_LOOP_MIN_MINUTES", 8),
@@ -613,6 +621,8 @@ function persistRuntimeSettings(selectedKeys) {
     TROOP_TRAINING_ROUND_ROBIN_ENABLED: settings.troopTrainingRoundRobinEnabled ? "true" : "false",
     TROOP_TRAINING_LOOP_MIN_MINUTES: String(settings.troopTrainingLoopMinMinutes),
     TROOP_TRAINING_LOOP_MAX_MINUTES: String(settings.troopTrainingLoopMaxMinutes),
+    TROOP_QUEUE_CAP_ENABLED: settings.troopQueueCapEnabled ? "true" : "false",
+    TROOP_QUEUE_CAP_HOURS: String(settings.troopQueueCapHours),
     CRANNY_DEFENSE_ROUND_ROBIN_ENABLED: settings.crannyDefenseRoundRobinEnabled ? "true" : "false",
     CRANNY_DEFENSE_LOOP_MIN_MINUTES: String(settings.crannyDefenseLoopMinMinutes || 8),
     CRANNY_DEFENSE_LOOP_MAX_MINUTES: String(settings.crannyDefenseLoopMaxMinutes || 15),
@@ -2138,6 +2148,26 @@ async function run() {
     };
   };
 
+  const updateTroopQueueCapConfig = async (nextConfig) => {
+    if (typeof nextConfig.enabled === "boolean") {
+      settings.troopQueueCapEnabled = nextConfig.enabled;
+    }
+
+    if (nextConfig.hours !== undefined) {
+      const hours = Number(nextConfig.hours);
+      if (Number.isFinite(hours) && hours > 0) {
+        settings.troopQueueCapHours = hours;
+      }
+    }
+
+    persistRuntimeSettings(["TROOP_QUEUE_CAP_ENABLED", "TROOP_QUEUE_CAP_HOURS"]);
+
+    return {
+      enabled: settings.troopQueueCapEnabled,
+      hours: settings.troopQueueCapHours
+    };
+  };
+
   const updateNpcCropConvertLoopConfig = async (nextConfig) => {
     if (typeof nextConfig.enabled === "boolean") {
       settings.npcCropConvertEnabled = nextConfig.enabled;
@@ -2535,6 +2565,7 @@ async function run() {
           updateFarmlistLoopConfig,
           updateBuilderLoopConfig,
           updateTroopTrainingLoopConfig,
+          updateTroopQueueCapConfig,
           updateCrannyDefenseLoopConfig,
           updateActivitySimulationLoopConfig,
           updateTop10TrackingLoopConfig,
