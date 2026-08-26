@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.90** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.91** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -509,7 +509,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 
 - **PowerShell blocks `npm`:** use `npm.cmd`, or adjust execution policy (`RemoteSigned` for CurrentUser), or run `node login.js` directly.
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
-- **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow.
+- **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow. If the action doesn't actually stop (a background loop can be mid network-call when you press it), you'll see `(press Ctrl+C again to force quit)` — press it again and the process force-exits within ~1-2s regardless of what's stuck (v1.8.91+).
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
