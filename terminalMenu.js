@@ -7632,13 +7632,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       );
       let waited = 0;
       let lastNoticeAt = 0;
-      while (actionInProgress && waited < maxWaitMs) {
+      while (actionInProgress && !done && waited < maxWaitMs) {
         await sleep(pollMs);
         waited += pollMs;
         if (noticeEveryMs > 0 && waited - lastNoticeAt >= noticeEveryMs) {
           lastNoticeAt = waited;
           logInfo(`[${label}] Still waiting (${Math.round(waited / 1000)}s)…`);
         }
+      }
+      if (done) {
+        return false;
       }
       if (actionInProgress) {
         logWarn(
@@ -7747,6 +7750,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     }
 
     let lastUserInterruptAt = 0;
+    // How many Ctrl+C presses in a row landed on "an action is still running"
+    // — i.e. cancelRequested + window.stop() were already tried and it's
+    // still stuck. A background loop tick (Builder Loop, Troop Auto, ...)
+    // only checks cancelRequested/done between discrete steps, so whatever is
+    // mid network-call right now may never yield. Without an escape hatch
+    // here, that leaves the user with no way to exit at all — a real report:
+    // repeated Ctrl+C just re-logs "Cancel requested" while a loop's own
+    // "Still waiting (Ns)…" ticks keep printing underneath it, forever.
+    let consecutiveBusyInterrupts = 0;
     const handleUserInterrupt = () => {
       if (menuRl.closed) {
         return;
@@ -7759,6 +7771,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       lastUserInterruptAt = now;
 
       if (pendingTerminalAnswer) {
+        consecutiveBusyInterrupts = 0;
         console.log("");
         logInfo("Ctrl+C pressed. Leaving submenu (Back)...");
         const deliver = pendingTerminalAnswer;
@@ -7768,6 +7781,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (actionInProgress) {
+        consecutiveBusyInterrupts += 1;
         cancelRequested = true;
         const currentPage = getPage();
         if (currentPage && !currentPage.isClosed()) {
@@ -7780,9 +7794,26 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             .catch(() => {});
         }
 
-        logWarn("Ctrl+C received. Cancel requested for current activity...");
+        if (consecutiveBusyInterrupts >= 2) {
+          logWarn(
+            "Ctrl+C received again — the current activity still hasn't stopped. Forcing an immediate shutdown."
+          );
+          requestQuit();
+          // requestQuit() only flips flags for a graceful stop; that depends
+          // on whatever's stuck eventually noticing cancelRequested/done. It
+          // has already proven (this is press #2) that it isn't going to in
+          // any reasonable time, so back it with a hard exit rather than
+          // leaving the user stuck forever.
+          setTimeout(() => process.exit(0), 1200);
+          return;
+        }
+
+        logWarn(
+          "Ctrl+C received. Cancel requested for current activity... (press Ctrl+C again to force quit)"
+        );
         return;
       }
+      consecutiveBusyInterrupts = 0;
 
       if (dashboardMode) {
         console.log("");

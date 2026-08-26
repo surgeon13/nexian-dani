@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.91] — 2026-08-26
+
+### Fixed
+
+- **"Stuck on exit": repeated Ctrl+C could never actually stop the process.** Reported live: three Ctrl+C presses back to back, then the terminal just kept printing `[Builder Loop] Still waiting (Ns)…` past 70 seconds while a later Ctrl+C press did nothing either. Root cause: when an action was in progress, `handleUserInterrupt()` only ever set `cancelRequested = true` and called `window.stop()` on the page — it never called `requestQuit()`, so `done` never became `true`. A background loop tick (Builder Loop here, but Troop Auto and others share the same `waitForActionIdle()` helper) only checks `cancelRequested`/`done` between discrete steps, not mid network-call, so whatever was holding the action lock could keep it well past any reasonable wait — and there was no escalation path at all: pressing Ctrl+C any number of times just re-logged "Cancel requested" forever.
+
+  `handleUserInterrupt()` now counts consecutive Ctrl+C presses that land on "an action is still running." The first press behaves as before (cancel + `window.stop()`) and now says so — `(press Ctrl+C again to force quit)`. A second such press calls `requestQuit()` and, since the first press already proved cancellation alone isn't enough, backs it with a hard `process.exit(0)` ~1.2s later so the process actually terminates regardless of what's stuck. The counter only advances while actions stay stuck — an action clearing normally, or Ctrl+C used for its existing jobs (leaving a submenu, returning to the main menu, dashboard-mode quit), still behaves exactly as before. Also made `waitForActionIdle()` bail out immediately once a quit is in flight (`done`) instead of polling out its full wait budget first, so the "Still waiting" spam stops as soon as a shutdown is actually requested.
+
 ## [1.8.90] — 2026-08-26
 
 ### Added
