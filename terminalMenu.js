@@ -2523,6 +2523,9 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("T")}  Troop RR Loop      ${dim("[")}${onOff(settings.troopTrainingRoundRobinEnabled)}${dim("]")}  ${tag("every", `${settings.troopTrainingLoopMinMinutes}-${settings.troopTrainingLoopMaxMinutes}m`)}`
   );
   console.log(
+    `  ${opt("QC")}  Troop Queue Cap    ${dim("[")}${onOff(settings.troopQueueCapEnabled)}${dim("]")}  ${tag("skip if ≥", `${settings.troopQueueCapHours}h`)}`
+  );
+  console.log(
     `  ${opt("U")}  Troop Plans        ${tag("manage", "plans + village assignment")}`
   );
   console.log(
@@ -4470,6 +4473,50 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       continue;
     }
 
+    if (input === "QC") {
+      const enabledText = (
+        await askQuestion(rl, "Enable troop queue cap? (Y/N, Enter keep): ")
+      ).trim().toUpperCase();
+
+      let nextEnabled = settings.troopQueueCapEnabled;
+      if (enabledText === "Y") {
+        nextEnabled = true;
+      } else if (enabledText === "N") {
+        nextEnabled = false;
+      }
+
+      const nextHoursText = (
+        await askQuestion(
+          rl,
+          `Skip a branch once its queue reaches N hours (e.g. 6, 12, 18, 24 — Enter keep ${settings.troopQueueCapHours}): `
+        )
+      ).trim();
+
+      const nextConfig = {
+        enabled: nextEnabled,
+        hours: nextHoursText ? Number(nextHoursText) : settings.troopQueueCapHours
+      };
+
+      if (!runtimeControls.updateTroopQueueCapConfig) {
+        logWarn("Troop queue cap update is not available in this runtime.");
+        continue;
+      }
+
+      try {
+        const applied = await runtimeControls.updateTroopQueueCapConfig(nextConfig);
+        settings.troopQueueCapEnabled = applied.enabled;
+        settings.troopQueueCapHours = applied.hours;
+
+        logSuccess(
+          `Troop queue cap updated: ${applied.enabled ? "ON" : "OFF"}, skip a branch once its queue reaches ${applied.hours}h.`
+        );
+      } catch (error) {
+        logError(`Failed to update troop queue cap: ${error.message || error}`);
+      }
+
+      continue;
+    }
+
     if (input === "U") {
       await runTroopPlansMenu(rl, settings, runtimeControls, runtimeControls.troopPlanHooks || {});
       continue;
@@ -5331,7 +5378,47 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
       .filter((item) => item.inputName);
   }, TROOP_ROW_SELECTOR);
 
-  return { page, building: kind, rows, missingBuilding: false };
+  const queueTotalMs = await readTrainerQueueTotalMs(page);
+
+  return { page, building: kind, rows, missingBuilding: false, queueTotalMs };
+}
+
+/**
+ * Total remaining duration (ms) of everything already queued in this trainer's
+ * #troopQueueContainer, or 0 if the queue is empty.
+ *
+ * - 2+ batches queued: the game renders a `tr.total` summary row whose
+ *   `span[data-t-ms]` already holds the combined remaining time for the whole
+ *   queue — use that directly.
+ * - Exactly 1 batch queued: there is no `tr.total` row (the game only adds it
+ *   once a second batch exists). The single data row IS the queue, so its own
+ *   `data-t-ms` (in the "Duration" column, the live countdown) is the total.
+ * - Empty queue: no data rows at all → 0.
+ */
+async function readTrainerQueueTotalMs(page) {
+  return page
+    .evaluate(() => {
+      const container = document.querySelector("#troopQueueContainer");
+      if (!container) {
+        return 0;
+      }
+      const totalRow = container.querySelector("tr.total");
+      if (totalRow) {
+        const span = totalRow.querySelector("span[data-t-ms]");
+        const ms = span ? Number(span.getAttribute("data-t-ms")) : NaN;
+        return Number.isFinite(ms) ? ms : 0;
+      }
+      const dataRows = Array.from(container.querySelectorAll("table.under_progress tbody tr")).filter(
+        (tr) => !tr.classList.contains("next") && !tr.classList.contains("total")
+      );
+      if (!dataRows.length) {
+        return 0;
+      }
+      const span = dataRows[0].querySelector("td.dur span[data-t-ms]");
+      const ms = span ? Number(span.getAttribute("data-t-ms")) : NaN;
+      return Number.isFinite(ms) ? ms : 0;
+    })
+    .catch(() => 0);
 }
 
 /** List the unit names currently visible in a village's Barracks or Stable (used by the plan editor). */
@@ -5359,7 +5446,7 @@ async function trainPlanBranch(getPage, settings, villageId, options = {}) {
     return { status: "no_unit_configured", building, buildingLabel, queued: 0 };
   }
 
-  const { page, rows, missingBuilding } = await openTrainerAndReadRows(
+  const { page, rows, missingBuilding, queueTotalMs } = await openTrainerAndReadRows(
     getPage,
     settings,
     villageId,
@@ -5368,6 +5455,26 @@ async function trainPlanBranch(getPage, settings, villageId, options = {}) {
 
   if (missingBuilding) {
     return { status: "missing_building", building, buildingLabel, unitName, queued: 0 };
+  }
+
+  // Even out troop training across branches: when this building's own queue
+  // already runs at/above the configured cap, skip it this tick instead of
+  // pouring every spare resource into whichever branch happens to run first —
+  // the classic symptom being "only one queue ever fills, the rest starve".
+  const queueCapHours = Number(settings.troopQueueCapHours) || 0;
+  if (settings.troopQueueCapEnabled && queueCapHours > 0) {
+    const capMs = queueCapHours * 60 * 60 * 1000;
+    if (Number.isFinite(queueTotalMs) && queueTotalMs >= capMs) {
+      return {
+        status: "queue_cap_reached",
+        building,
+        buildingLabel,
+        unitName,
+        queued: 0,
+        queueHours: queueTotalMs / (60 * 60 * 1000),
+        queueCapHours
+      };
+    }
   }
 
   const needle = unitName.toLowerCase();
@@ -9173,6 +9280,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           break;
         case "no_resources":
           logInfo(`[Troop Auto] ${where}: not enough resources for ${result.unitName} (${result.buildingLabel}).`);
+          break;
+        case "queue_cap_reached":
+          logInfo(
+            `[Troop Auto] ${where}: skipping ${result.buildingLabel} this tick — queue already at ` +
+              `${result.queueHours.toFixed(1)}h (cap ${result.queueCapHours}h), giving other branches a turn.`
+          );
           break;
         case "unit_not_found":
           logWarn(

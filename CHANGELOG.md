@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.90] — 2026-08-26
+
+### Added
+
+- **New: troop training queue cap, to spread training evenly across branches.** Reported: "Sometimes we see only one queue creates since not enough resources left for other troops in plan" — a village with, say, Barracks + Stable both configured could end up with one branch's queue growing for hours while the other stayed empty, because whichever branch trained first each tick simply took whatever resources existed, leaving nothing for the rest of the plan.
+
+  `trainPlanBranch()` now reads the trainer's own existing queue before training into it (`readTrainerQueueTotalMs()`, added to `openTrainerAndReadRows()`), using the real `#troopQueueContainer` markup: the `tr.total` summary row's `data-t-ms` when 2+ batches are queued, or the single row's own `data-t-ms` when exactly 1 batch is queued (the game only adds a `tr.total` row once a second batch exists). When the new setting is ON and a branch's queue already runs at or beyond the configured hour cap, that branch is skipped for the tick (logged as `queue_cap_reached`) instead of training into it — letting round-robin move on to branches that still have room, which is what produces the even distribution across 6/12/18/24h-style thresholds.
+
+  New setting, off by default so existing installs are unaffected until opted in: `TROOP_QUEUE_CAP_ENABLED` (bool) + `TROOP_QUEUE_CAP_HOURS` (numeric, default 12). Togglable live from the terminal without editing `.env`: main menu → **T** → **[QC]** (prompts Y/N/Enter-keep, then the hour threshold), mirroring the existing Builder Loop (`BL`) and Troop RR Loop (`T`) toggle pattern — persists to `.env` the same way.
+
 ## [1.8.89] — 2026-08-24
 
 ### Fixed
