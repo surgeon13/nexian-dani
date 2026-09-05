@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.94] — 2026-09-05
+
+### Changed
+
+- **Trainer building resolution now gives up in 20s instead of 90s.** Follow-up on v1.8.92's fix: live logs showed `[Troop Auto] Great Stable not found via map/cache — probing inner building slots...` recurring on essentially every training cycle for that branch (every 2-3 minutes, per that village's plan interval) while Builder Loop queued behind it. The 90s budget added in v1.8.92 already made this bounded and visible instead of silently indefinite, but a branch that isn't going to resolve was still holding the shared action lock for up to 90s on *every single cycle*. Per direct ask ("if not found, move on!"), lowered `TRAINER_RESOLVE_BUDGET_MS` to 20s — still enough room for the map-candidates/configured-URL/cache fallbacks plus a meaningful chunk of the up-to-22-slot probe, but gives the lock back to Builder Loop / dashboard commands much sooner on a cycle that was never going to find the building anyway. If a specific branch's building is confirmed present on the village map but this keeps recurring for it, that points at a detection bug for that building type specifically — worth reporting with the real village-map markup for that building so it can be root-caused rather than just budgeted around.
+
 ## [1.8.93] — 2026-09-05
 
 ### Changed
