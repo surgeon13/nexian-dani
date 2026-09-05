@@ -7572,8 +7572,16 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     // Lowest allowed loop interval (minutes). Loops accept fractional
     // minutes (e.g. 0.5 = 30s); this floor just guards against 0/negative
-    // misconfig causing a runaway tight loop.
-    const MIN_LOOP_MINUTES = 0.1;
+    // misconfig causing a runaway tight loop. Was 0.1 (6s) — raised
+    // complaint from a x1000-speed server where building/training finishes
+    // in a few seconds, so even the old floor left real idle time on the
+    // table. 1s still keeps a real floor (each tick still costs at least
+    // one full page navigation, so this never becomes a literal
+    // zero-delay spin) while letting every loop (Builder, Farmlist, Troop
+    // RR, Cranny, ...) be configured down to "practically immediate" for
+    // very fast servers. Keep in sync with the matching constant in
+    // login.js (duplicated because each runs in a separate closure).
+    const MIN_LOOP_MINUTES = 1 / 60;
 
     const normalizeMinuteRange = (minValue, maxValue, fallbackMin, fallbackMax) => {
       let min = Number.isFinite(minValue) ? minValue : fallbackMin;
@@ -8441,7 +8449,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       farmlistResumeWaitLogged = false;
       farmlistShortRetriesLeft = 2;
       nextFarmlistRunAt = Date.now() + minutes * 60 * 1000;
-      logInfo(`[Farmlist Loop] Next auto-send in ${minutes} minute(s).`);
+      logInfo(`[Farmlist Loop] Next auto-send in ${formatDelayMs(minutes * 60 * 1000)}.`);
 
       const scheduleFarmlistShortRetry = (reason) => {
         const delayMs = FARMLIST_SHORT_RETRY_MS;
@@ -8731,7 +8739,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         ? "resource→village"
         : activePlan.short;
       logInfo(
-        `[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${Number(minutes.toFixed(2))} minute(s).`
+        `[Builder Loop] Next auto-build (${schedulePlanLabel}) in ${formatDelayMs(minutes * 60 * 1000)}.`
       );
 
       const runBuilderScheduledTick = async () => {
@@ -9797,7 +9805,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       settings.crannyDefenseLoopMaxMinutes = normalized.max;
       const minutes = pickNextCrannyDefenseDelayMinutes(normalized.min, normalized.max);
       nextCrannyDefenseRunAt = Date.now() + minutes * 60 * 1000;
-      logInfo(`[Cranny defense RR] Next run in ${minutes} minute(s).`);
+      logInfo(`[Cranny defense RR] Next run in ${formatDelayMs(minutes * 60 * 1000)}.`);
 
       const runCrannyDefenseScheduledTick = async () => {
         if (done || !settings.crannyDefenseRoundRobinEnabled) {
@@ -10034,7 +10042,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const delayMinutes = pickNextNpcCropConvertDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
         logInfo(
-          `[NPC Crop] Next granary check in ${delayMinutes} minute(s). (threshold ${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`
+          `[NPC Crop] Next granary check in ${formatDelayMs(delayMs)}. (threshold ${Math.round((settings.npcCropConvertGranaryRatio || 0.95) * 100)}%)`
         );
       }
       nextNpcCropConvertRunAt = Date.now() + delayMs;
@@ -10279,7 +10287,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const delayMinutes = pickNextOverflowGuardDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
         logInfo(
-          `[Overflow Guard] Next check in ${delayMinutes} minute(s). (≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%, max ${settings.resourceOverflowMaxDistance || 10}sq → capital/pivot)`
+          `[Overflow Guard] Next check in ${formatDelayMs(delayMs)}. (≥${Math.round((settings.resourceOverflowTriggerRatio || 0.9) * 100)}%, max ${settings.resourceOverflowMaxDistance || 10}sq → capital/pivot)`
         );
       }
       nextOverflowGuardRunAt = Date.now() + delayMs;
@@ -10399,7 +10407,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         const delayMinutes = pickNextCelebrationsDelayMinutes(min, max);
         delayMs = delayMinutes * 60 * 1000;
         logInfo(
-          `[Celebrations] Next Town Hall check in ${delayMinutes} minute(s). (type ${settings.celebrationsType || "auto"}, queue ${settings.celebrationsQueueDepth === 2 ? 2 : 1})`
+          `[Celebrations] Next Town Hall check in ${formatDelayMs(delayMs)}. (type ${settings.celebrationsType || "auto"}, queue ${settings.celebrationsQueueDepth === 2 ? 2 : 1})`
         );
       }
       nextCelebrationsRunAt = Date.now() + delayMs;
@@ -10628,7 +10636,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       activitySimulationResumeWaitLogged = false;
       nextActivitySimulationRunAt = Date.now() + minutes * 60 * 1000;
       logInfo(
-        `[Activity Sim] Next browse in ${minutes} minute(s). (${activitySimulationCompletedCount} event(s) completed this session.)`
+        `[Activity Sim] Next browse in ${formatDelayMs(minutes * 60 * 1000)}. (${activitySimulationCompletedCount} event(s) completed this session.)`
       );
 
       const runActivitySimulationScheduledTick = async () => {

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.93] — 2026-09-05
+
+### Changed
+
+- **Loop intervals can now go below 6 seconds, for very fast (e.g. x1000) speed servers.** Asked: on a x1000-speed server, building/training finishes in a few seconds, and every loop (Builder, Farmlist, Troop RR, Cranny, NPC Crop Convert, Overflow Guard, Celebrations, Activity Sim) shared one hardcoded floor of `0.1` minutes (6s) — meant only as a guard against a `0`/misconfigured interval, not as a deliberate speed limit, but it left real idle time on the table on a server where 6 seconds can be most of a build.
+
+  Lowered the shared `MIN_LOOP_MINUTES` floor to `1/60` (1 second) in both `login.js` and `terminalMenu.js` — still a real floor (a `0`/negative misconfig still gets clamped up, and every tick costs at least one real page navigation regardless), just 6x lower, so e.g. `BUILDER_LOOP_MIN_MINUTES=0.02` (~1.2s) is now honored instead of being silently raised to 6s. Also switched every affected loop's "Next run in..." log line (Builder, Farmlist, Cranny, NPC Crop Convert, Overflow Guard, Celebrations, Activity Sim) from raw `X minute(s)` text to the existing `formatDelayMs()` helper, so a sub-minute interval prints as a clean `"2s"`/`"1m 30s"` instead of a raw float like `"0.016666666666666666 minute(s)"`.
+
+  The per-action random human-like delay (`RANDOM_DELAY_MIN_MS`/`RANDOM_DELAY_MAX_MS`) was already uncapped and configurable down to `0` — no change needed there, just worth knowing it's the other lever for a very fast server.
+
 ## [1.8.92] — 2026-09-05
 
 ### Fixed

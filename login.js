@@ -504,8 +504,14 @@ syncSettingsFromProxyStore(settings);
 
 // Lowest allowed loop interval (minutes). Loops accept fractional minutes
 // (e.g. 0.5 = 30s); this floor just guards against 0/negative misconfig
-// causing a runaway tight loop.
-const MIN_LOOP_MINUTES = 0.1;
+// causing a runaway tight loop. Was 0.1 (6s) — raised complaint from a
+// x1000-speed server where building/training finishes in a few seconds, so
+// even the old floor left real idle time on the table. 1s still keeps a
+// real floor (each tick still costs at least one full page navigation, so
+// this never becomes a literal zero-delay spin) while letting every loop
+// (Builder, Farmlist, Troop RR, Cranny, ...) be configured down to
+// "practically immediate" for very fast servers.
+const MIN_LOOP_MINUTES = 1 / 60;
 
 function normalizeRange(minValue, maxValue, fallbackMin, fallbackMax) {
   let min = Number.isFinite(minValue) ? minValue : fallbackMin;
