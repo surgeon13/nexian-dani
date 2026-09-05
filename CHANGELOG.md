@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.92] — 2026-09-05
+
+### Fixed
+
+- **Troop Auto could look permanently stuck between branches, blocking Builder Loop and dashboard commands indefinitely.** Reported live: `[Troop Auto] ... queued 20 Theutates Thunder (Stable)` succeeded, then `Delaying Auto Troop Trainer by 678ms...` for the next branch — then total silence while `[Builder Loop] Still waiting (Ns)…` and a manual dashboard command both queued behind it with no resolution, even after 30+ seconds and counting.
+
+  Root cause: `openTrainerAndReadRows()` locates a branch's building by trying, in order, village-map candidates, a configured URL, a cached slot, and — as a last resort — probing up to 22 inner building slots directly, each a full page navigation with its own bounded retry/timeout (up to ~60s × several retries). Individually bounded, but nothing capped the *combined* time across candidates/probes, and the whole call runs inside the shared `auto-troop-trainer` action lock — so a village with a cold slot cache and several slow-but-technically-working navigations could chain into many minutes with **zero log output** in between, looking indistinguishable from a true hang and blocking every other action that needs the lock.
+
+  Added `TRAINER_RESOLVE_BUDGET_MS` (90s): a wall-clock budget checked before every map candidate, the configured-URL fallback, the cache fallback, and each probe slot. Once exceeded, resolution stops immediately and reports `missingBuilding` — which the existing caller logic already handles correctly (still on the map → retry next cycle with no penalty; genuinely not found → the existing ~12h mute). Also added a log line (`probing inner building slots (this can take a bit)...`) when the expensive last-resort probe actually kicks in, and a warning naming how many slots it managed before the budget cut it off — so a slow cycle is now visibly working instead of silent, and can never again hold the shared lock for more than one bounded worst case instead of compounding indefinitely.
+
 ## [1.8.91] — 2026-08-26
 
 ### Fixed
