@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.91** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.92** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -513,6 +513,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
+- **Troop Auto looks stuck between branches (Builder Loop / dashboard commands also "Still waiting" with no resolution):** locating a branch's building can fall back to probing up to 22 inner slots if it's not on the village map, in the configured URL, or already cached — as of **v1.8.92** this is capped to a 90s budget (was previously unbounded when navigations were individually slow) and logs `probing inner building slots...` so it's visible instead of silent. Upgrade if you still see this.
 - **Bot crashed / dashboard dead:** run `npm run cursor:ensure` (or `npm run start:24-7`). Check `keep-alive.log` for `restarting bot (...)`, then `bot-output.log` for the actual error/stack trace from the crashed run — `keep-alive.log` only says *that* it exited, not why.
 - **Bot keeps crash-looping under the keep-alive watchdog (repeated restarts, dashboard tab reopening every time):** the tab reopening on every restart is expected (`DASHBOARD_OPEN_BROWSER=false` to stop it) — but the real problem is whatever's making it crash. Check `bot-output.log` for the actual failure.
 - **Wrong egress IP / stuck on old proxy:** `POST /api/proxy-settings` with `{"action":"next"}` (or **Apply**). Confirm `account.publicAddress` matches the new proxy host after `automation.reason` is `online`.

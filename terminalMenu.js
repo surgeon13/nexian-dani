@@ -5221,11 +5221,29 @@ async function loadTrainerPageWithRows(page, url, kind) {
   return trainerPageMatchesBuilding(page, kind);
 }
 
+// Overall wall-clock budget for locating+opening a branch's trainer building
+// (map candidates -> configured URL -> cache -> up to 22-slot probe). Each
+// individual navigation already has its own bounded retry/timeout, but they
+// compound: a village with several map candidates plus a cold cache can chain
+// multiple slow-but-"working" navigations into several minutes with zero
+// output in between — and this whole call runs inside the shared
+// "auto-troop-trainer" action lock, so Builder Loop / dashboard commands /
+// everything else queues behind it the entire time. A real user hit exactly
+// this: one branch trained fine, the next then looked hung indefinitely.
+// Once this budget is exceeded, give up and report missingBuilding (the
+// caller already treats that as "exists on map, retry next cycle" vs.
+// "genuinely not found, mute ~12h" via its own separate, fast map check —
+// so a slow network blip here doesn't get mistaken for a verified absence).
+const TRAINER_RESOLVE_BUDGET_MS = 90000;
+
 async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   const page = getPage();
   const kind = normalizeTrainerBuilding(building);
+  const buildingLabel = TRAINER_BUILDING_LABELS[kind] || kind;
   let loaded = false;
   const expectedGid = TRAINER_BUILDING_GID[kind];
+  const resolveStartedAt = Date.now();
+  const overBudget = () => Date.now() - resolveStartedAt >= TRAINER_RESOLVE_BUDGET_MS;
 
   const mapRows = await surveyVillageMapTrainerSlots(getPage, settings, villageId);
   const mapCandidates = mapRows.filter(
@@ -5233,6 +5251,9 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   );
 
   for (const row of mapCandidates) {
+    if (overBudget()) {
+      break;
+    }
     let candidateUrl = null;
     if (row.href) {
       candidateUrl = withVillageId(new URL(row.href, page.url()).toString(), villageId);
@@ -5245,7 +5266,7 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
     }
   }
 
-  if (!loaded && (kind === "barracks" || kind === "stable")) {
+  if (!loaded && !overBudget() && (kind === "barracks" || kind === "stable")) {
     const configuredTrainer =
       kind === "stable" ? settings.troopStableTrainerUrl : settings.troopTrainerUrl;
     const targetTrainerUrl = withVillageId(configuredTrainer, villageId);
@@ -5255,7 +5276,7 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   // A slot this village already proved holds the building — skip straight to it
   // instead of re-probing (the probe below costs one page load per slot tried).
   const cacheKey = trainerSlotCacheKey(villageId, kind);
-  if (!loaded && trainerSlotCache.has(cacheKey)) {
+  if (!loaded && !overBudget() && trainerSlotCache.has(cacheKey)) {
     const cachedUrl = withVillageId(
       new URL(`build.php?id=${trainerSlotCache.get(cacheKey)}`, page.url()).toString(),
       villageId
@@ -5274,12 +5295,23 @@ async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   // siege units never trained. loadTrainerPageWithRows is the ideal probe
   // predicate here since it already verifies both "this page has troop rows"
   // and "this page is actually the right building".
-  if (!loaded) {
+  if (!loaded && !overBudget()) {
+    logInfo(
+      `[Troop Auto] ${buildingLabel} not found via map/cache — probing inner building slots (this can take a bit)...`
+    );
+    let probed = 0;
     for (const slot of trainerProbeSlotOrder(kind)) {
+      if (overBudget()) {
+        logWarn(
+          `[Troop Auto] ${buildingLabel} slot probe hit its ${Math.round(TRAINER_RESOLVE_BUDGET_MS / 1000)}s budget after ${probed} slot(s) — giving up for this cycle.`
+        );
+        break;
+      }
       const probeUrl = withVillageId(
         new URL(`build.php?id=${slot}`, page.url()).toString(),
         villageId
       );
+      probed += 1;
       if (await loadTrainerPageWithRows(page, probeUrl, kind)) {
         trainerSlotCache.set(cacheKey, slot);
         loaded = true;
