@@ -25,30 +25,30 @@
     {
       "name": "Stage 2 - Place Sawmill",
       "steps": [
-        { "slot": 31, "building": "Sawmill", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 30, "building": "Sawmill", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ],
       "notes": "Requires Woodcutter level 10 and Main Building level 5."
     },
     {
       "name": "Stage 3 - Place Brickyard",
       "steps": [
-        { "slot": 27, "building": "Brickyard", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 29, "building": "Brickyard", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ],
       "notes": "Requires Clay Pit level 10 and Main Building level 5."
     },
     {
       "name": "Stage 4 - Place Iron Foundry",
       "steps": [
-        { "slot": 23, "building": "Iron Foundry", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 25, "building": "Iron Foundry", "target_level": 1, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ],
       "notes": "Requires Iron Mine level 10 and Main Building level 5."
     },
     {
       "name": "Stage 5 - Upgrade bonus buildings to 3",
       "steps": [
-        { "slot": 31, "building": "Sawmill", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 27, "building": "Brickyard", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 23, "building": "Iron Foundry", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 30, "building": "Sawmill", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 29, "building": "Brickyard", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 25, "building": "Iron Foundry", "target_level": 3, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ]
     },
     {
@@ -64,9 +64,9 @@
       { "slot": 5, "building": "Clay Pit", "min_level": 10 },
       { "slot": 9, "building": "Iron Mine", "min_level": 10 },
       { "slot": 13, "building": "Cropland", "min_level": 10 },
-      { "slot": 31, "building": "Sawmill", "min_level": 3 },
-      { "slot": 27, "building": "Brickyard", "min_level": 3 },
-      { "slot": 23, "building": "Iron Foundry", "min_level": 3 },
+      { "slot": 30, "building": "Sawmill", "min_level": 3 },
+      { "slot": 29, "building": "Brickyard", "min_level": 3 },
+      { "slot": 25, "building": "Iron Foundry", "min_level": 3 },
       { "slot": 20, "building": "Grain Mill", "min_level": 5 }
     ]
   }

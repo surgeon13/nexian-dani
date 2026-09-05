@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.95] — 2026-09-05
+
+### Changed
+
+- **Sawmill/Brickyard/Iron Foundry now placed at slots 30/29/25 instead of 31/27/23.** Requested slot placement change for all future villages. Updated `templates/resource_fields_03.json` (initial placement + upgrade-to-3 stages) and `templates/resource_fields_04.json` (upgrade-to-5 stage), including both templates' `end_state` slot checks. `villageBuilder.js` itself never hardcodes these slot numbers — it resolves a bonus building's slot from the template JSON and by name (`findTemplateSlotForBuilding`, `isBonusBuildingName`), so no code changes were needed, only the two template files.
+
+  Note: this only changes where **new** placements go — an already-built Sawmill/Brickyard/Iron Foundry in a village that already passed this stage on the old slots is not relocated (the bot doesn't demolish/move existing buildings). It applies to any village that reaches this stage from here on, including all future new villages.
+
 ## [1.8.94] — 2026-09-05
 
 ### Changed

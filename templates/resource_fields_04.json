@@ -23,9 +23,9 @@
       "name": "Stage 2 - All bonus buildings to 5",
       "steps": [
         { "slot": 21, "building": "Bakery", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 31, "building": "Sawmill", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 27, "building": "Brickyard", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 23, "building": "Iron Foundry", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 30, "building": "Sawmill", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 29, "building": "Brickyard", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
+        { "slot": 25, "building": "Iron Foundry", "target_level": 5, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
       ],
       "notes": "Grain Mill already at 5 from resource_fields_03."
     },
@@ -71,9 +71,9 @@
   "end_state": {
     "slots": [
       { "slot": 21, "building": "Bakery", "min_level": 5 },
-      { "slot": 31, "building": "Sawmill", "min_level": 5 },
-      { "slot": 27, "building": "Brickyard", "min_level": 5 },
-      { "slot": 23, "building": "Iron Foundry", "min_level": 5 },
+      { "slot": 30, "building": "Sawmill", "min_level": 5 },
+      { "slot": 29, "building": "Brickyard", "min_level": 5 },
+      { "slot": 25, "building": "Iron Foundry", "min_level": 5 },
       { "slot": 1, "building": "Woodcutter", "min_level": 10 },
       { "slot": 2, "building": "Woodcutter", "min_level": 10 },
       { "slot": 3, "building": "Woodcutter", "min_level": 10 },
