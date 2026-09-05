@@ -5234,7 +5234,13 @@ async function loadTrainerPageWithRows(page, url, kind) {
 // caller already treats that as "exists on map, retry next cycle" vs.
 // "genuinely not found, mute ~12h" via its own separate, fast map check —
 // so a slow network blip here doesn't get mistaken for a verified absence).
-const TRAINER_RESOLVE_BUDGET_MS = 90000;
+// Was 90s — a follow-up report showed this recurring every single training
+// cycle (every 2-3 minutes per that village's plan interval) for a branch
+// the map survey/cache never seem to resolve for; per explicit ask ("if not
+// found, move on!"), tightened to 20s so a cycle that isn't going to find it
+// gives the shared lock back much sooner instead of grinding the full 90s
+// every time.
+const TRAINER_RESOLVE_BUDGET_MS = 20000;
 
 async function openTrainerAndReadRows(getPage, settings, villageId, building) {
   const page = getPage();
