@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.96] — 2026-09-05
+
+### Fixed
+
+- **Village-stage buildings (Warehouse, Granary, Main Building, ...) never got built — the resource→village pipeline was silently dead on arrival.** Reported: "why isnt our bot building villages? we want our village buildings to be built as well, warehouse, granary and all that." Root cause: two settings that both default to `true` — `BUILDER_RR_RESOURCE_THEN_VILLAGE` ("after resource fields are done, continue automatically into the village-stage plan") and `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` ("once a village's resource plan is done, take it out of Round Robin") — were checked in the wrong order in both places that decide a village's next plan (`resolveBuilderPlanModeForVillage` and the in-tick "resource just finished" follow-up). Auto-exclude was checked *first* and won unconditionally whenever it was on, so under the shipped default combination (both `true`), a village's resource-fields chain finishing immediately excluded it from Round Robin — the "continue to village stage" branch right below it was dead code, never reached. Warehouse, Granary, and every other village-stage building never got a chance to build, on any village, ever, under default settings.
+
+  Swapped the priority: continuing into the village-stage plan (when the pipeline is active and village-stage isn't complete yet) now wins over auto-exclude. Auto-exclude still does its job once there's genuinely nothing left (both resource and village-stage complete), and keeps its original, narrower meaning — "resource-only, no village follow-up" — for anyone who explicitly sets `BUILDER_RR_RESOURCE_THEN_VILLAGE=false`.
+
+  **If you were already hit by this**, any village that logged `[Builder Loop] ... Resource fields complete ... — excluded from Builder RR` before this fix is sitting in `BUILDER_RR_EXCLUDED_VILLAGE_IDS` and will stay excluded even after upgrading — this fix only prevents it from happening to villages going forward. Check terminal menu → Settings → **[X] Builder RR Exclusion** and remove any village that should still be working on its village-stage plan.
+
 ## [1.8.95] — 2026-09-05
 
 ### Changed
