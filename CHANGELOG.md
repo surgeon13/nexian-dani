@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.98] — 2026-09-06
+
+### Changed
+
+- **New Cranny placements now prefer slot 34.** Requested slot for Cranny defense builds. `runCrannyDefenseStep()` previously placed a new Cranny on whichever empty, Cranny-buildable inner slot had the lowest slot id. It now prefers slot 34 specifically when it's empty and buildable there, falling back to the previous lowest-id behavior otherwise (e.g. something else already occupies 34, or a village's layout doesn't allow a Cranny there) — never hard-fails just because the preferred slot isn't available.
+
+  Only affects **new** Cranny placements going forward — an already-built Cranny sitting on a different slot is not relocated (the bot doesn't demolish/move existing buildings). Cranny *upgrades* (stacking existing crannies below level 10) are unaffected either way; this only changes where a brand-new one gets placed.
+
 ## [1.8.97] — 2026-09-06
 
 ### Added
