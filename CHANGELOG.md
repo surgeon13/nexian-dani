@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.97] — 2026-09-06
+
+### Added
+
+- **New: Speed Build — one-click resource-field upgrades via the in-game "Upgrade mode" toggle.** Requested for x1000-speed servers: "we should be able to use a toggle in our settings to set the speed build setting. then auto-change village that is built to this mode and keep on working according to plans." Nexian's `village1.php` has an "Upgrade mode" toggle (`<a class="build-mode-toggle" href="village1.php?bmode=0">`) that, when on, turns each resource field into a one-click upgrade handled by the page's own Alpine.js + background AJAX — no navigation into `build.php`, no page reload.
+
+  New opt-in setting `BUILDER_SPEED_BUILD_ENABLED` (default off — unverified against a live game from this dev environment, see below). When on: before the classic per-building flow runs each Builder Loop tick, a new fast-path pass (`runSpeedBuildQuickPass()`) navigates to `village1.php`, auto-enables Upgrade mode for that village if it's off, and clicks through up to 6 resource-field slots (1–18) the village's *currently active template* actually targets — skipping any already at/above target level, stopping early if the game reports an error (insufficient resources, storage full, etc.). Togglable live: terminal menu → Settings → **[SB]**.
+
+  Deliberately **never touches `templates/progress.json` or any step/stage tracking** — it only fires real upgrade clicks (the identical action a human clicking that button performs). `runBuilderStep()` already re-reads live page state before deciding what to do next, so it simply sees the higher level on its next pass and proceeds normally, exactly as if a human had clicked ahead of it. This means the fast path can only add extra upgrades, never desync the classic flow's own tracking, because that tracking is never written here.
+
+  **Scope for this release: resource fields only** (slots 1–18, `village1.php`'s hex-map layout). Inner buildings — Warehouse, Granary, Sawmill, Brickyard, Iron Foundry, Main Building, Barracks, etc. (slots 19–40, on `village2.php`) — are not yet covered; those still go through the classic flow unchanged. Extending this to inner buildings is planned as a follow-up once their `village2.php` markup (with Upgrade mode on) is available to verify against.
+
+  **Verification:** this sandbox can't reach a live game (confirmed earlier this project), so `runSpeedBuildQuickPass()` was verified end-to-end against a real Chromium page via Playwright, with `village1.php` navigation intercepted and served from a fixture reproducing `window.__v1Boot.payload` (the page's own embedded state) and the `<map name="rx">` field grid — exercising the actual shipped function, not a re-implementation. Covered: auto-enabling Upgrade mode when off, clicking distinct fields up to the configured cap, skipping fields already at/above the active template's target level, doing nothing at all for a "village"-mode plan (no field steps, no navigation even attempted), and stopping cleanly (without over-counting) the moment the game reports an error after a click. All scenarios passed. This is **new, real-account-unverified territory** despite that — please report back what you see running it live, same as every other fix this project.
+
 ## [1.8.96] — 2026-09-05
 
 ### Fixed

@@ -2508,6 +2508,9 @@ function printSettingsMenu(settings, villageState) {
     `  ${opt("M")}  Master Builder      ${dim("[")}${onOff(settings.builderMasterBuilderEnabled)}${dim("]")}`
   );
   console.log(
+    `  ${opt("SB")}  Speed Build         ${dim("[")}${onOff(settings.builderSpeedBuildEnabled)}${dim("]")}  ${tag("via", "village1 Upgrade mode, fields only")}`
+  );
+  console.log(
     `  ${opt("R")}  Resource Circulation ${dim("[")}${onOff(settings.resourceCirculationEnabled)}${dim("]")}`
   );
   console.log(
@@ -4352,6 +4355,22 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
       }
       logSuccess(
         `Builder master builder usage: ${settings.builderMasterBuilderEnabled ? "ON" : "OFF"}`
+      );
+      continue;
+    }
+
+    if (input === "SB") {
+      settings.builderSpeedBuildEnabled = !settings.builderSpeedBuildEnabled;
+      if (runtimeControls.persistSettings) {
+        await runtimeControls.persistSettings([
+          "BUILDER_SPEED_BUILD_ENABLED"
+        ]);
+      }
+      logSuccess(
+        `Speed Build (village1 Upgrade mode): ${settings.builderSpeedBuildEnabled ? "ON" : "OFF"}` +
+          (settings.builderSpeedBuildEnabled
+            ? " — resource fields only for now; auto-enables in-game Upgrade mode per village."
+            : "")
       );
       continue;
     }
@@ -8982,6 +9001,31 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             builderEfficiencyWindow.attempts += 1;
             await ensureVillageBrowserContext(targetVillage, "Builder Loop");
             logInfo(`[Builder Loop] Auto-build (${loopPlan.short}) starting for ${villageDisplayName(targetVillage)}...`);
+
+            // Speed Build (opt-in): squeeze in extra resource-field upgrades
+            // via village1.php's one-click Upgrade mode before the normal
+            // per-building flow below. Never touches progress tracking —
+            // see runSpeedBuildQuickPass()'s own doc comment — so a failure
+            // or no-op here changes nothing about what follows.
+            if (settings.builderSpeedBuildEnabled) {
+              const speedBuildResult = await builder.runSpeedBuildQuickPass(
+                getPage,
+                settings,
+                targetVillage,
+                { planMode: loopPlan.key }
+              );
+              if (speedBuildResult.buildModeEnabledNow) {
+                logInfo(
+                  `[Builder Loop] Enabled in-game Upgrade mode for ${villageDisplayName(targetVillage)}.`
+                );
+              }
+              if (speedBuildResult.upgraded > 0) {
+                logSuccess(
+                  `[Speed Build] ${villageDisplayName(targetVillage)}: ${speedBuildResult.upgraded}/${speedBuildResult.attempted} resource field upgrade(s) via Upgrade mode.`
+                );
+              }
+            }
+
             const result = await runWithRandomDelay(
               settings,
               `Auto Builder (${loopPlan.short})`,

@@ -309,6 +309,13 @@ const settings = {
   builderGoldCompleteMax: numberEnv("BUILDER_GOLD_COMPLETE_MAX", 3),
   builderMasterBuilderEnabled:
     String(process.env.BUILDER_MASTER_BUILDER_ENABLED || "false").toLowerCase() === "true",
+  // "Upgrade mode" fast path (village1.php one-click resource-field
+  // upgrades, no build.php navigation). Off by default: unverified against
+  // a live game from this codebase's dev environment, and not every server
+  // exposes the toggle the same way. When on, also auto-enables the
+  // in-game "Upgrade mode" toggle for a village being worked if it's off.
+  builderSpeedBuildEnabled:
+    String(process.env.BUILDER_SPEED_BUILD_ENABLED || "false").toLowerCase() === "true",
   raidEvacuationEnabled:
     String(process.env.RAID_EVACUATION_ENABLED || "true").toLowerCase() === "true",
   raidEvacuationTroopsEnabled:
@@ -601,6 +608,7 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_GOLD_COMPLETE_ENABLED: settings.builderGoldCompleteEnabled ? "true" : "false",
     BUILDER_GOLD_COMPLETE_MAX: String(settings.builderGoldCompleteMax),
     BUILDER_MASTER_BUILDER_ENABLED: settings.builderMasterBuilderEnabled ? "true" : "false",
+    BUILDER_SPEED_BUILD_ENABLED: settings.builderSpeedBuildEnabled ? "true" : "false",
     RAID_EVACUATION_ENABLED: settings.raidEvacuationEnabled ? "true" : "false",
     RAID_EVACUATION_TROOPS_ENABLED: settings.raidEvacuationTroopsEnabled ? "true" : "false",
     RAID_EVACUATION_TROOP_RECALL_SECONDS: String(settings.raidEvacuationTroopRecallSeconds || 60),
