@@ -7449,24 +7449,38 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         if (!isBuilderPlanFullyComplete(village, "resource")) {
           return "resource";
         }
-        // Resource plan is already complete. If auto-exclude-on-complete is
-        // on, this village has no more RR work regardless of village-stage
-        // status — it should have been excluded the tick resource finished,
-        // but a village that was ALREADY resource-complete before this
-        // setting took effect (or any other timing gap) would otherwise
-        // fall through to "village" here and keep building forever, never
-        // hitting the loopPlan.key === "resource" check that actually
-        // excludes it. Bug a real user hit: builder kept "counting through
-        // all templates" instead of stopping.
-        if (settings.builderRrAutoExcludeOnResourceComplete) {
-          return null;
-        }
+        // Resource plan is complete. The entire point of "resource then
+        // village" is to continue automatically into the village-stage plan
+        // (Warehouse, Granary, Main Building, ...) — do that before ever
+        // treating this village as "done". This used to check
+        // BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE first and exclude
+        // unconditionally when it was on, which silently made
+        // BUILDER_RR_RESOURCE_THEN_VILLAGE a no-op under the combination
+        // both default to (true + true): a real user hit exactly this —
+        // resource fields finished, and Warehouse/Granary/village-stage
+        // simply never ran, forever.
         if (!isBuilderPlanFullyComplete(village, "village")) {
           return "village";
         }
+        // Both resource and village plans are complete now — genuinely
+        // nothing left for this village either way.
         return null;
       }
-      return normalizeBuilderPlanMode(activeBuilderPlanMode);
+      // Not using the resource->village pipeline (disabled, or the default
+      // plan mode isn't "resource"). If the active mode is resource-only,
+      // BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE still does its original
+      // job here: retire a village once its resource plan alone is done
+      // instead of leaving it in the rotation to be re-checked (and
+      // re-skipped) every tick forever.
+      const fallbackPlanMode = normalizeBuilderPlanMode(activeBuilderPlanMode);
+      if (
+        fallbackPlanMode === "resource" &&
+        settings.builderRrAutoExcludeOnResourceComplete &&
+        isBuilderPlanFullyComplete(village, "resource")
+      ) {
+        return null;
+      }
+      return fallbackPlanMode;
     };
 
     const villageHasPendingBuilderWork = (village) =>
@@ -9001,11 +9015,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               }
 
               if (finalResult && finalResult.status === "all_complete" && loopPlan.key === "resource") {
-                if (settings.builderRrAutoExcludeOnResourceComplete) {
-                  await excludeVillageFromBuilderRR(targetVillage, "Resource fields complete");
-                  break;
-                }
-
+                // Continuing the resource->village pipeline takes priority
+                // over auto-exclude: checking auto-exclude first (as this
+                // used to) unconditionally retired the village the instant
+                // resource finished, making BUILDER_RR_RESOURCE_THEN_VILLAGE
+                // a no-op under the (true + true) default combination — a
+                // real user hit exactly this, Warehouse/Granary/village
+                // stage never ran. Only fall through to auto-exclude once
+                // there's genuinely no village-stage follow-up left to do.
                 if (
                   builderRrUsesResourceThenVillagePipeline() &&
                   !isBuilderPlanFullyComplete(targetVillage, "village")
@@ -9023,6 +9040,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                   });
                   followupAttempt += 1;
                   continue;
+                }
+
+                if (settings.builderRrAutoExcludeOnResourceComplete) {
+                  await excludeVillageFromBuilderRR(targetVillage, "Resource fields complete");
+                  break;
                 }
               }
 

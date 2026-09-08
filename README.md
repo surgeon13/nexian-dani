@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.95** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.96** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -511,6 +511,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
 - **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow. If the action doesn't actually stop (a background loop can be mid network-call when you press it), you'll see `(press Ctrl+C again to force quit)` — press it again and the process force-exits within ~1-2s regardless of what's stuck (v1.8.91+).
 - **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
+- **Village-stage buildings (Warehouse, Granary, Main Building, ...) never build, only resource fields do:** fixed in **v1.8.96** — `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` and `BUILDER_RR_RESOURCE_THEN_VILLAGE` (both default `true`) were checked in the wrong order, so a village's resource-fields chain finishing immediately excluded it from Round Robin before village-stage ever got a turn. Upgrade, then check terminal menu → Settings → **[X] Builder RR Exclusion** — any village already excluded with reason "Resource fields complete" from before the fix needs to be manually removed from that list to resume.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.
 - **Playing on a very fast (e.g. x1000) speed server — loop intervals feel too slow:** every loop's min/max minutes (`BUILDER_LOOP_MIN_MINUTES`, `FARMLIST_LOOP_MIN_MINUTES`, `TROOP_TRAINING_LOOP_MIN_MINUTES`, `CRANNY_DEFENSE_LOOP_MIN_MINUTES`, `NPC_CROP_CONVERT_MIN_MINUTES`, `RESOURCE_OVERFLOW_LOOP_MIN_MINUTES`, `CELEBRATIONS_LOOP_MIN_MINUTES`, `ACTIVITY_SIMULATION_LOOP_MIN_MINUTES`) accepts fractional minutes down to `1/60` (1 second) as of **v1.8.93** — e.g. `BUILDER_LOOP_MIN_MINUTES=0.02` (~1.2s). Same via the terminal toggles (`[BL]`, `[T]`, etc. — Enter keeps the current value, or type a new one). The per-action random delay (`RANDOM_DELAY_MIN_MS`/`RANDOM_DELAY_MAX_MS`) has no floor at all and can go to `0`.
 - **Troop auto “no Stable” on a village that has one:** upgrade to **v1.8.5+** and restart; Stable is resolved from the village map. If a branch truly does not exist yet, v1.8.4+ skips it until built.
