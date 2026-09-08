@@ -3361,6 +3361,12 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
 }
 
 const CRANNY_DEFENSE_TARGET_LEVEL = 10;
+// Preferred slot for a NEW Cranny placement, when it's empty and buildable
+// there. Falls back to the lowest-id eligible empty slot otherwise (e.g.
+// something else already occupies 34, or this village's layout doesn't
+// allow a Cranny there) -- never hard-fails just because the preferred
+// slot isn't available.
+const CRANNY_DEFENSE_PREFERRED_NEW_SLOT = 34;
 const CRANNY_DEFENSE_BUILDING = "Cranny";
 
 function isConstructionPlaceholderBuildingName(name) {
@@ -3442,7 +3448,10 @@ async function runCrannyDefenseStep(getPage, settings, village, options = {}) {
   if (crannyBelowMax.length) {
     chosen = { kind: "upgrade", slotId: crannyBelowMax[0].slotId };
   } else if (emptyForNewCranny.length) {
-    chosen = { kind: "new", slotId: emptyForNewCranny[0].slotId };
+    const preferred = emptyForNewCranny.find(
+      (c) => c.slotId === CRANNY_DEFENSE_PREFERRED_NEW_SLOT
+    );
+    chosen = { kind: "new", slotId: (preferred || emptyForNewCranny[0]).slotId };
   } else {
     return {
       status: "idle_saturated",
