@@ -1560,6 +1560,276 @@ function areAllResourceFieldsAtLevel(fieldRows, targetLevel = 10) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Speed build (opt-in): village1.php's "Upgrade mode" toggle turns each
+// resource-field <area> into a one-click upgrade (Alpine.js intercepts the
+// click and fires a background AJAX call, no build.php navigation, no page
+// reload) instead of a link into the field's detail page. Only covers
+// resource fields (slots 1-18, rendered on village1.php as a <map><area>
+// hex grid) -- inner buildings (slots 19-40: Warehouse, Granary, Sawmill,
+// Main Building, ...) live on village2.php with a different layout and are
+// not yet supported here; those still go through the classic per-building
+// flow untouched.
+// ---------------------------------------------------------------------------
+
+const SPEED_BUILD_MAX_CLICKS_PER_PASS = 6;
+
+function buildVillage1Url(baseUrl, villageId, bmode) {
+  try {
+    const parsed = new URL(baseUrl);
+    const url = new URL(`${parsed.origin}/village1.php`);
+    if (villageId) {
+      url.searchParams.set("vid", String(villageId));
+    }
+    if (bmode !== undefined && bmode !== null) {
+      url.searchParams.set("bmode", bmode ? "1" : "0");
+    }
+    return url.toString();
+  } catch (_error) {
+    const base = baseUrl.replace(/\/[^/]*$/, "");
+    let url = `${base}/village1.php`;
+    const params = [];
+    if (villageId) {
+      params.push(`vid=${encodeURIComponent(String(villageId))}`);
+    }
+    if (bmode !== undefined && bmode !== null) {
+      params.push(`bmode=${bmode ? "1" : "0"}`);
+    }
+    if (params.length) {
+      url += `?${params.join("&")}`;
+    }
+    return url;
+  }
+}
+
+/**
+ * Read village1.php's "Upgrade mode" state + live resource-field data
+ * straight from the page's own embedded JSON (window.__v1Boot.payload) --
+ * the same data its Alpine.js UI is driven by, far cheaper and more
+ * reliable than parsing rendered DOM/img classes. Returns null if the page
+ * doesn't have this payload (navigation landed somewhere unexpected).
+ */
+async function readVillage1BuildModeState(page) {
+  return page
+    .evaluate(() => {
+      const boot = window.__v1Boot;
+      const payload = boot && boot.payload;
+      if (!payload) {
+        return null;
+      }
+      return {
+        buildMode: Boolean(payload.buildMode),
+        fields: payload.fields || {},
+        buildQueueLength: Array.isArray(payload.buildQueue) ? payload.buildQueue.length : 0
+      };
+    })
+    .catch(() => null);
+}
+
+/**
+ * Click a single resource field's <area> element on village1.php (id
+ * 1-18) -- the same element a human clicks. With Upgrade mode on, the
+ * page's own Alpine.js handler intercepts the click and fires the upgrade
+ * as a background AJAX call instead of navigating into build.php. Matched
+ * by position within <map name="rx"> (fields render in stable id order),
+ * not by href/title text, since those are live Alpine bindings that can
+ * differ from the page's initial static markup once hydrated.
+ */
+async function clickResourceFieldAreaQuickUpgrade(page, fieldId) {
+  const clicked = await page
+    .evaluate((id) => {
+      const areas = document.querySelectorAll('map[name="rx"] area');
+      const area = areas && areas[id - 1];
+      if (!area) {
+        return false;
+      }
+      area.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      return true;
+    }, fieldId)
+    .catch(() => false);
+
+  if (!clicked) {
+    return { clicked: false };
+  }
+
+  await safePageWait(page, 900).catch(() => {});
+
+  const errorMsg = await page
+    .evaluate(() => {
+      const el = document.querySelector(".build-error-msg");
+      if (!el) {
+        return null;
+      }
+      const text = String(el.textContent || "").trim();
+      const hidden = !text || getComputedStyle(el).display === "none";
+      return hidden ? null : text;
+    })
+    .catch(() => null);
+
+  return { clicked: true, errorMsg };
+}
+
+/**
+ * Speed-build fast path (opt-in via BUILDER_SPEED_BUILD_ENABLED): squeezes
+ * in extra resource-field upgrades via village1.php's one-click Upgrade
+ * mode before the normal per-building build.php navigation ever runs.
+ *
+ * Deliberately never touches templates/progress.json or any step/stage
+ * index -- it only fires real upgrade clicks (the exact action a human
+ * clicking that button performs) against whichever resource-field slots
+ * the CURRENTLY ACTIVE template cares about. runBuilderStep() already
+ * treats the live page as ground truth (it re-reads each slot's level
+ * itself before deciding what to do next), so it will simply see the
+ * higher level next time it looks and proceed accordingly, exactly as if
+ * a human had clicked ahead of it. This can only add extra upgrades, never
+ * desync tracking, because tracking is never written here.
+ *
+ * Also auto-enables Upgrade mode for the village if it's currently off
+ * (BUILDER_SPEED_BUILD_ENABLED implies "keep this village in Upgrade mode
+ * while working its plan").
+ */
+async function runSpeedBuildQuickPass(getPage, settings, village, options = {}) {
+  const planMode = normalizePlanMode(options.planMode);
+  const maxClicks = Number.isFinite(Number(options.maxClicks))
+    ? Math.max(1, Number(options.maxClicks))
+    : SPEED_BUILD_MAX_CLICKS_PER_PASS;
+  const result = { status: "not_applicable", attempted: 0, upgraded: 0, buildModeEnabledNow: false };
+
+  try {
+    const page = getPage();
+    if (!page || page.isClosed()) {
+      return result;
+    }
+
+    const index = loadIndex();
+    const defaultTemplateKey = resolveDefaultTemplateForPlan(index, planMode);
+    if (!defaultTemplateKey) {
+      return result;
+    }
+
+    const villageProgress = getVillageProgress(village, { planMode });
+    const activeTemplateKey =
+      villageProgress &&
+      villageProgress.active_template &&
+      templateMatchesPlan(villageProgress.active_template, planMode)
+        ? villageProgress.active_template
+        : defaultTemplateKey;
+
+    let template;
+    try {
+      template = loadTemplate(activeTemplateKey);
+    } catch (_error) {
+      return result;
+    }
+
+    // Collect every resource-field slot (1-18) this template cares about,
+    // and the highest target_level any of its steps ask for that slot.
+    const slotTargets = new Map();
+    for (const stage of Array.isArray(template.stages) ? template.stages : []) {
+      for (const step of Array.isArray(stage.steps) ? stage.steps : []) {
+        const slot = Number(step.slot);
+        if (!isResourceFieldSlot(slot)) {
+          continue;
+        }
+        const target = Number(step.target_level);
+        if (!Number.isFinite(target)) {
+          continue;
+        }
+        const prior = slotTargets.get(slot);
+        if (!Number.isFinite(prior) || target > prior) {
+          slotTargets.set(slot, target);
+        }
+      }
+    }
+
+    if (!slotTargets.size) {
+      return result; // this template doesn't touch resource fields (e.g. the "village" plan)
+    }
+
+    const baseUrl = settings.villageBuilderUrl || "https://nexian.world/village2.php";
+    await safeGotoWithRetry(
+      page,
+      buildVillage1Url(baseUrl, village.id),
+      { waitUntil: "domcontentloaded", timeout: 60000 },
+      2
+    );
+
+    let state = await readVillage1BuildModeState(page);
+    if (!state) {
+      return result; // page didn't render the expected payload -- bail quietly, classic flow still runs
+    }
+
+    if (!state.buildMode) {
+      await safeGotoWithRetry(
+        page,
+        buildVillage1Url(baseUrl, village.id, true),
+        { waitUntil: "domcontentloaded", timeout: 60000 },
+        2
+      );
+      state = await readVillage1BuildModeState(page);
+      if (!state || !state.buildMode) {
+        return result; // couldn't confirm it turned on -- don't attempt clicks blind
+      }
+      result.buildModeEnabledNow = true;
+    }
+
+    result.status = "ok";
+
+    for (const [slot, targetLevel] of slotTargets) {
+      if (result.attempted >= maxClicks) {
+        break;
+      }
+      const field = state.fields && state.fields[String(slot)];
+      if (!field) {
+        continue;
+      }
+      const currentLevel = Number(field.l);
+      if (!Number.isFinite(currentLevel) || currentLevel >= targetLevel || field.max) {
+        continue;
+      }
+
+      result.attempted += 1;
+      const beforeQueueLength = state.buildQueueLength;
+      const clickResult = await clickResourceFieldAreaQuickUpgrade(page, slot);
+      if (!clickResult.clicked) {
+        continue;
+      }
+      if (clickResult.errorMsg) {
+        // Insufficient resources / storage / queue full, etc. -- stop this
+        // pass rather than hammering through further failures.
+        break;
+      }
+
+      const refreshed = await readVillage1BuildModeState(page);
+      if (!refreshed) {
+        // Can't confirm we're still looking at village1.php's live state --
+        // e.g. the click caused an unexpected navigation away instead of
+        // being intercepted client-side. Clicking blind against a page we
+        // can no longer verify is unsafe (subsequent "clicks" could land on
+        // the wrong element entirely), so stop this pass rather than guess.
+        break;
+      }
+      const refreshedField = refreshed.fields && refreshed.fields[String(slot)];
+      const refreshedLevel = refreshedField ? Number(refreshedField.l) : NaN;
+      if (
+        (Number.isFinite(refreshedLevel) && refreshedLevel > currentLevel) ||
+        refreshed.buildQueueLength > beforeQueueLength
+      ) {
+        result.upgraded += 1;
+      }
+      state = refreshed;
+
+      if (result.attempted < maxClicks) {
+        await safePageWait(page, 400 + Math.floor(Math.random() * 400)).catch(() => {});
+      }
+    }
+
+    return result;
+  } catch (_error) {
+    return result;
+  }
+}
+
 function resolveBonusBuildingSlotFromSurvey(rows, buildingName) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return null;
@@ -3624,6 +3894,7 @@ module.exports = {
   getNewBuildingGamePrerequisite,
   resolveNextStep,
   runBuilderStep,
+  runSpeedBuildQuickPass,
   runCrannyDefenseStep,
   previewPlan,
   resetVillageProgress,
