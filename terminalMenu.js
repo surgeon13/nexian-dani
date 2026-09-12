@@ -1597,7 +1597,7 @@ async function sendFarmlists(getPage, settings, options = {}) {
     }
     throw new Error(
       `Could not find a farmlist send button on page: ${page.url()} ` +
-        `(this village may have no Rally Point — set FARMLIST_VILLAGE_ID in .env to a village that has one, ` +
+        `(this village may have no Rally Point — set FARMLIST_VILLAGE_ID in templates/settings.json to a village that has one, ` +
         `or set FARMLIST_SEND_BUTTON_SELECTOR if the UI uses a non-standard control).`
     );
   }
@@ -1661,7 +1661,7 @@ async function sendFarmlists(getPage, settings, options = {}) {
     }
     if (sendState.noListsConfigured) {
       throw new Error(
-        `${sendState.message}${villageHint} Set FARMLIST_VILLAGE_ID in .env to a village with Rally Point farmlists. URL: ${sendState.href || page.url()}`
+        `${sendState.message}${villageHint} Set FARMLIST_VILLAGE_ID in templates/settings.json to a village with Rally Point farmlists. URL: ${sendState.href || page.url()}`
       );
     }
     if (sendState.enabledLists === 0) {

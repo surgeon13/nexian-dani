@@ -42,6 +42,7 @@ function shouldSkip(name, relPath) {
   if (relPath === path.join("templates", "troop_plans.json")) return true;
   if (relPath === path.join("templates", "proxy_list.json")) return true;
   if (relPath === path.join("templates", "troop_village_preferences.json")) return true;
+  if (relPath === path.join("templates", "settings.json")) return true;
   if (/^(npm-debug\.log|yarn-error\.log|pnpm-debug\.log)$/i.test(name)) return true;
   return false;
 }

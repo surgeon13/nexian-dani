@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.103] — 2026-09-12
+
+### Changed
+
+- **`.env` now holds ONLY `NEXIAN_USERNAME`, `NEXIAN_PASSWORD`, and `GAME_HOST` — every other setting moved to `templates/settings.json`.** Context: this session's `.env`-related bugs (v1.8.99–v1.8.102) were all real and all fixed, yet a user still couldn't get a stable login — the actual root cause turned out to be multiple `.env` files / project folders on their machine, with edits repeatedly landing in a copy that wasn't the one `npm run login` actually reads. A ~90-line file makes that kind of mistake very easy to miss; a 3-line file makes it obvious at a glance. Explicit ask: *"split most of the settings from this place and leave only username password and server address."*
+
+  - `.env.example` trimmed from ~90 lines to just the three identity/realm keys plus a commented, opt-in `NEXIAN_URL` (unchanged advanced override — still off by default).
+  - New `templates/settings.example.json` (tracked) ships every other setting's default value as flat JSON (loops, thresholds, proxy, dashboard, builder, trainer, cranny, celebrations, raid evacuation, resource circulation/overflow, NPC crop convert, top10 tracking, activity simulation, logging — 97 keys total). New `templates/settings.json` (gitignored, per-machine) is auto-created from it on first run, same pattern `.env` already used for `.env.example`.
+  - `login.js` loads `.env` first (as before, `override: true`), then merges `templates/settings.json` into `process.env` for any key `.env` didn't already set — so every existing `process.env.KEY` / `numberEnv("KEY", ...)` read elsewhere keeps working completely unchanged, regardless of which of the two files a value actually came from.
+  - The terminal Settings menu and web dashboard now persist changes to `templates/settings.json` (`persistJsonSettings()`) instead of rewriting `.env` (`persistEnvValues()`, removed). `.env` is never written to except for its three identity/realm keys.
+  - If `templates/settings.json` is missing or contains invalid JSON, the bot logs a warning, falls back to built-in defaults for every setting, and **still logs in** — a broken settings file can no longer block login the way a broken `.env` used to.
+  - `export.js` excludes `templates/settings.json` from exported zips (same treatment as `templates/progress.json` / `troop_plans.json` / `proxy_list.json`), and `.gitignore` updated to match.
+  - **Not automatically migrated:** if you had custom values in an older `.env`, copy them into `templates/settings.json` by hand (as JSON: `"BUILDER_LOOP_ENABLED": true`, not `BUILDER_LOOP_ENABLED=true`) or re-set them via the terminal Settings menu — see README's Troubleshooting section.
+  - `NEXIAN_URL` remains intentionally outside both auto-managed scaffolds (it was the biggest single source of "GAME_HOST change had no effect" reports in v1.8.101) — it still works as a manual, undocumented-by-default override in `.env` for anyone who explicitly adds it back.
+
+### Verification
+
+Cross-checked every `process.env.X` / `numberEnv("X", ...)` read site in `login.js` (extracted via script) against `templates/settings.example.json`'s 97 keys: no setting that's supposed to have a shipped default is missing from the template; the handful of keys read but intentionally left out (`FARMLIST_VILLAGE_ID`, `TOP10_TRACKING_PLAYER_NAME`, `TROOP_STABLE_TRAINER_URL`, `VILLAGE_SWITCH_DELAY_MS`, URL/selector overrides) are the same ones that were commented-out/blank optional overrides in the old `.env.example`, not active defaults. Verified `templates/settings.example.json` parses as valid JSON. Verified `ensureSettingsJsonFile()` / `loadJsonSettingsIntoEnv()` / `persistJsonSettings()` in isolation (`scripts/test-settings-json.js`, run via `npm test`): first-run copy from the example template, missing-template fallback to `{}`, `.env`-set keys always win over JSON keys, corrupt JSON degrades to a warning + defaults instead of crashing, and `persistJsonSettings()` merges into (rather than replacing) an existing file and survives a pre-existing corrupt file. `node --check` passes on `login.js` and `export.js`.
+
 ## [1.8.102] — 2026-09-12
 
 ### Fixed

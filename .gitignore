@@ -1,11 +1,10 @@
 # Dependencies
 node_modules/
 
-# Secrets and local env (keep .env.example / .env.termux.example tracked)
+# Secrets and local env (keep .env.example tracked)
 .env
 .env.*
 !.env.example
-!.env.termux.example
 
 # Playwright session and logs (regenerated locally)
 storageState.json
@@ -23,6 +22,10 @@ templates/progress.json
 templates/troop_village_preferences.json
 templates/troop_plans.json
 templates/proxy_list.json
+
+# Runtime settings (everything except identity/realm, which stays in .env) --
+# keep templates/settings.example.json tracked as the shipped-defaults template
+templates/settings.json
 
 # OS / editor noise
 .DS_Store
