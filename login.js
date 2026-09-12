@@ -134,7 +134,14 @@ function ensureEnvFile(envPath) {
       const minimal = [
         "NEXIAN_URL=https://nexian.world/",
         "NEXIAN_USERNAME=your_username_here",
-        "NEXIAN_PASSWORD=your_password_here"
+        "NEXIAN_PASSWORD=your_password_here",
+        "",
+        "# Set this to your actual realm once you know it (log in manually once",
+        "# in a normal browser and check the address bar after entering the",
+        "# game — e.g. https://s1.nexian.world, https://s2.nexian.world, or a",
+        "# named realm like https://test.nexian.world). Left commented out, the",
+        "# portal's own realm-selection flow is used instead.",
+        "# GAME_HOST=https://s1.nexian.world"
       ].join("\n");
       fs.writeFileSync(envPath, `${minimal}\n`, "utf8");
       console.log(`Created ${path.basename(envPath)} with minimal defaults`);

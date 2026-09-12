@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.100] — 2026-09-12
+
+### Changed
+
+- **Clarified GAME_HOST guidance after a real support case: wrong realm configured ("s2" vs. the account's actual "test" server) produced a confusing `Login did not reach the game after Enter Realm` failure.** Worth being explicit about what already exists vs. what changed here:
+
+  - `login.js` already auto-creates `.env` if it's missing at all (`ensureEnvFile()`, runs before every login attempt) — from `.env.example` when present, or a built-in minimal fallback otherwise — and already refuses to even attempt a login with placeholder `NEXIAN_USERNAME`/`NEXIAN_PASSWORD`, exiting with a clear message instead of failing deep inside browser automation. That part was not broken.
+  - What **was** missing: nothing validates or explains `GAME_HOST` the same way, and a wrong-but-syntactically-valid realm (any `s<N>` or a named realm like `test`) can't be auto-detected — only the account owner knows which realm their villages are actually on. Added a "how to find your real realm" tip to `GAME_HOST`'s comment in `.env.example`/`.env.termux.example` (log in manually once, read it off the address bar once you're actually in the game, not the portal), and added the same tip as a commented-out `GAME_HOST` line to `ensureEnvFile()`'s minimal last-resort fallback (used only when both `.env` and `.env.example` are missing) — left commented out so it doesn't override the working "unset → smart portal default" behavior for anyone who doesn't need it.
+
+  Verified the updated minimal-fallback content still parses cleanly and `GAME_HOST` stays unset (not silently forced to an invalid placeholder) when left commented.
+
 ## [1.8.99] — 2026-09-12
 
 ### Fixed
