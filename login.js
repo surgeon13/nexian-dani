@@ -1,8 +1,25 @@
-const { chromium } = require("playwright");
+// Hardened first run: a completely fresh checkout that never had
+// `npm install` run (dependencies were skipped, or `npm run setup:pc`
+// itself failed partway through) used to crash right here with Node's raw
+// "Cannot find module 'playwright'" — accurate, but not actionable unless
+// you already know that error class means "run npm install". Fail with a
+// clear, specific instruction instead.
+let chromium;
+try {
+  ({ chromium } = require("playwright"));
+} catch (_error) {
+  console.error(
+    "\nMissing dependencies (couldn't load the 'playwright' package).\n" +
+      "Run `npm install` (or `npm run setup:pc` for a full first-time setup — installs\n" +
+      "dependencies AND the Chromium browser in one step), then try again.\n"
+  );
+  process.exit(1);
+}
 const dotenv = require("dotenv");
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
+const { execSync } = require("child_process");
 const { runTerminalMenu } = require("./terminalMenu");
 const { createDashboardBridge } = require("./dashboardBridge");
 const {
@@ -111,7 +128,16 @@ function upsertEnvKeys(envPath, defaults) {
   let changed = !exists;
 
   Object.entries(defaults).forEach(([key, value]) => {
-    const pattern = new RegExp(`^\\s*${key}\\s*=`);
+    // Match a commented-out line (# KEY=...) too, not just an active one.
+    // NEXIAN_URL is deliberately commented out in .env.example (the
+    // recommended default, so GAME_HOST's smart URL is used) -- without
+    // this, the old active-only pattern treated "commented out" as "key
+    // missing" and appended a live NEXIAN_URL=https://nexian.world/ on
+    // every single run, which then silently overrode GAME_HOST/realm
+    // targeting for good (LOGIN_URL prefers NEXIAN_URL whenever it's set
+    // at all) -- exactly the kind of "I changed GAME_HOST and it still
+    // picks the wrong realm" symptom a real user hit.
+    const pattern = new RegExp(`^\\s*#?\\s*${key}\\s*=`);
     const hasKey = lines.some((line) => pattern.test(line));
     if (!hasKey) {
       lines.push(`${key}=${value}`);
@@ -890,6 +916,36 @@ function isHeadlessLaunchError(error) {
   );
 }
 
+// Only "Executable doesn't exist" means the browser binary genuinely isn't
+// installed (worth auto-installing); the other isHeadlessLaunchError cases
+// are different flavors of "this specific launch mode doesn't work here,"
+// where installing anything again would just repeat the same failure.
+function isMissingBrowserBinaryError(error) {
+  return String((error && error.message) || error || "").includes("Executable doesn't exist");
+}
+
+// A user who only ran `npm run login` (skipping the separate `npm run
+// setup:pc` step that installs Playwright's browser) used to hit a raw,
+// uncaught "Executable doesn't exist ... npx playwright install" error and
+// had to go run that command manually themselves. Hardened first run: try
+// it automatically, once, right here -- exactly what setup:pc would have
+// done -- so `npm run login` alone is enough on a completely fresh machine.
+function tryAutoInstallChromium() {
+  console.log(
+    "\n  Chromium browser not found — installing it now (one-time, this can take a minute or two)..."
+  );
+  try {
+    execSync("npx playwright install chromium", { stdio: "inherit", cwd: __dirname });
+    return true;
+  } catch (_error) {
+    console.error(
+      "  Automatic install failed. Run `npm run playwright:install` " +
+        "(or `npx playwright install chromium`) manually, then try again."
+    );
+    return false;
+  }
+}
+
 function waitForEnter(message) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({
@@ -1387,7 +1443,14 @@ async function createSession(headless) {
   const proxyLaunchOptions = playwrightProxy ? { proxy: playwrightProxy } : {};
 
   if (!effectiveHeadless) {
-    browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
+    try {
+      browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
+    } catch (error) {
+      if (!isMissingBrowserBinaryError(error) || !tryAutoInstallChromium()) {
+        throw error;
+      }
+      browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
+    }
   } else {
     try {
       browser = await launchChromium({ headless: true, ...proxyLaunchOptions });
@@ -1400,9 +1463,24 @@ async function createSession(headless) {
         browser = await launchChromium({ channel: "chrome", headless: true, ...proxyLaunchOptions });
         browserLabel = "headless (chrome channel)";
       } catch (chromeError) {
-        effectiveHeadless = false;
-        browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
-        browserLabel = "headed (fallback)";
+        // Neither Playwright's bundled Chromium nor a usable system Chrome
+        // worked. If the bundled one is simply not installed (a user who
+        // only ran `npm run login`, skipping `npm run setup:pc`), install
+        // it now and retry once before giving up to a headed fallback.
+        if (isMissingBrowserBinaryError(error) && tryAutoInstallChromium()) {
+          try {
+            browser = await launchChromium({ headless: true, ...proxyLaunchOptions });
+            browserLabel = "headless (auto-installed)";
+          } catch (retryError) {
+            effectiveHeadless = false;
+            browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
+            browserLabel = "headed (fallback)";
+          }
+        } else {
+          effectiveHeadless = false;
+          browser = await launchChromium({ headless: false, ...proxyLaunchOptions });
+          browserLabel = "headed (fallback)";
+        }
       }
     }
   }

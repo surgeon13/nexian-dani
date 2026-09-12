@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.100** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.101** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -415,7 +415,7 @@ bash scripts/termux-proot-setup.sh   # one-time: installs proot-distro + Ubuntu,
                                       # the chroot, npm install, Playwright + deps
 ```
 
-Setup also creates `.env.termux` from **`.env.termux.example`** — same as `.env.example` but with several loop intervals relaxed (mostly 2-4x longer: builder loop, celebrations, NPC crop convert, overflow guard, Top 10 tracking, session rest) to cut how often Chromium wakes up and does real work through `proot`'s overhead. Fill in real credentials there (the setup script prints a copy-paste command that merges them in from your Termux-side `.env` without clobbering the relaxed intervals — the chroot copy of the repo is a separate filesystem), then run it:
+Setup also creates `.env.termux` — from a `.env.termux.example` template if the repo has one at the time (same as `.env.example` but with several loop intervals relaxed, mostly 2-4x longer: builder loop, celebrations, NPC crop convert, overflow guard, Top 10 tracking, session rest, to cut how often Chromium wakes up and does real work through `proot`'s overhead), otherwise from the generic `.env.example`. Fill in real credentials there (the setup script prints a copy-paste command that merges them in from your Termux-side `.env` without clobbering any relaxed intervals — the chroot copy of the repo is a separate filesystem), then run it:
 
 ```bash
 bash scripts/termux-proot-run.sh             # node login.js — uses .env.termux automatically when present
@@ -511,6 +511,8 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **No `.env.example` after unzipping an exported zip:** fixed in **v1.8.99** — `npm run export` was accidentally stripping `.env.example`/`.env.termux.example` out of every export along with the real `.env` files it's meant to exclude. Re-export after pulling this update, or grab `.env.example` directly from the repo in the meantime.
 - **No `.env` at all — will it just fail?** No: `login.js` auto-creates one on every run if it's missing (from `.env.example` if present, otherwise a built-in minimal fallback), and refuses to attempt a login with placeholder `NEXIAN_USERNAME`/`NEXIAN_PASSWORD`, printing `Missing credentials. Set real NEXIAN_USERNAME and NEXIAN_PASSWORD in .env.` and exiting cleanly instead of failing deep inside browser automation.
 - **Login fails with `Login did not reach the game after Enter Realm (still at https://nexian.world/). Expected realm sN (...)`:** `GAME_HOST` is set to the wrong realm — the error already tells you which realm it tried. This isn't guessable by the software; only you know which realm your account is actually on. Log in manually once in a normal browser and read the realm off the address bar **after** you're actually in the game (not on the `nexian.world` portal) — it'll be `s1`, `s2`, etc., or occasionally a named realm like `test`. Set `GAME_HOST` to match exactly (e.g. `https://test.nexian.world`), save `.env`, and rerun.
+- **Changed `GAME_HOST` but the realm it targets doesn't seem to change:** fixed in **v1.8.101** — check `.env` for an active `NEXIAN_URL=https://nexian.world/` line. A bug in the `.env` auto-repair could silently add one on first run even though `.env.example` ships it commented out, and once present it permanently overrides `GAME_HOST` for login purposes (`NEXIAN_URL` wins whenever it's set at all). Comment it out or delete that line, save, and rerun.
+- **`npm run login` fails with `Executable doesn't exist ... npx playwright install`:** fixed in **v1.8.101** — it now installs the browser itself automatically the first time this happens (a few extra minutes on that one run), instead of requiring `npm run setup:pc` to have been run first. If automatic install fails too (e.g. no network), run `npm run playwright:install` manually.
 - **`npm run setup:pc` fails with `ENOENT ... Could not read package.json`:** you're one folder too shallow — a GitHub zip (or `npm run export`'s output) extracts into a subfolder (e.g. `nexian-dani-main` or `nexian-vX.Y.Z-...`), not directly into the folder you unzipped to. Run `dir` (Windows) / `ls` (macOS/Linux) to find that subfolder, `cd` into it, and confirm `package.json` is listed before rerunning setup.
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
 - **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow. If the action doesn't actually stop (a background loop can be mid network-call when you press it), you'll see `(press Ctrl+C again to force quit)` — press it again and the process force-exits within ~1-2s regardless of what's stuck (v1.8.91+).

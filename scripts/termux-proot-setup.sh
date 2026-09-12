@@ -145,9 +145,18 @@ proot-distro login "$DISTRO" -- bash -lc "
   echo '[inside $DISTRO] npx playwright install-deps chromium (apt system libs Chromium needs)'
   npx playwright install-deps chromium
 
-  if [ ! -f '$GUEST_PROJECT_DIR/.env.termux' ] && [ -f '$GUEST_PROJECT_DIR/.env.termux.example' ]; then
-    echo '[inside $DISTRO] creating .env.termux from the phone-friendly .env.termux.example template'
-    cp '$GUEST_PROJECT_DIR/.env.termux.example' '$GUEST_PROJECT_DIR/.env.termux'
+  if [ ! -f '$GUEST_PROJECT_DIR/.env.termux' ]; then
+    if [ -f '$GUEST_PROJECT_DIR/.env.termux.example' ]; then
+      echo '[inside $DISTRO] creating .env.termux from the phone-friendly .env.termux.example template'
+      cp '$GUEST_PROJECT_DIR/.env.termux.example' '$GUEST_PROJECT_DIR/.env.termux'
+    elif [ -f '$GUEST_PROJECT_DIR/.env.example' ]; then
+      # .env.termux.example was removed from the repo -- fall back to the
+      # generic template rather than silently leaving .env.termux missing
+      # (the exact failure the comment above this function documents: a
+      # missing template meant .env.termux was never created at all).
+      echo '[inside $DISTRO] no .env.termux.example found -- creating .env.termux from the generic .env.example instead'
+      cp '$GUEST_PROJECT_DIR/.env.example' '$GUEST_PROJECT_DIR/.env.termux'
+    fi
   fi
 " || die "Provisioning inside the $DISTRO chroot failed — see the [inside $DISTRO] output above for which step broke. If it failed at 'npx playwright install chromium' with 'Unsupported platform: android' again, that means proot is still leaking Termux's own node onto \$PATH even with PATH forced above — run 'proot-distro login $DISTRO -- bash -lc \"command -v node; node -p process.platform\"' by hand to see what it resolves to."
 
@@ -156,10 +165,11 @@ echo
 log "Next steps:"
 cat <<EOF
 
-1) A phone-friendly '$GUEST_PROJECT_DIR/.env.termux' was created from
-   .env.termux.example — same as .env.example but with several loop
-   intervals relaxed (mostly 2-4x longer) to cut how often Chromium wakes
-   up through proot's overhead. It still has PLACEHOLDER credentials.
+1) '$GUEST_PROJECT_DIR/.env.termux' was created — from the phone-friendly
+   .env.termux.example template if the repo has one (same as .env.example
+   but with several loop intervals relaxed, mostly 2-4x longer, to cut how
+   often Chromium wakes up through proot's overhead), otherwise from the
+   generic .env.example. It still has PLACEHOLDER credentials.
    Fill in real NEXIAN_USERNAME / NEXIAN_PASSWORD / GAME_HOST by pulling
    them from your Termux-side .env (a SEPARATE filesystem from the chroot
    copy — edits to one do not affect the other), without clobbering the
