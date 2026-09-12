@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.105] — 2026-09-12
+
+### Fixed
+
+- **The stale `NEXIAN_URL` problem from v1.8.104 is now fixed automatically instead of just logged.** A second live report hit the exact same login timeout (`https://nexian.world/?journey=true`, waiting on `input[placeholder="Enter your username"]`) even after v1.8.104 shipped its diagnostic log line — the underlying leftover `NEXIAN_URL=https://nexian.world/` line in `.env` was still there; a log line alone still depends on someone reading it, finding the right `.env` file (this session's recurring problem), and editing it correctly.
+
+  `login.js` now recognizes this one specific value — the exact literal bare-portal URL the since-fixed v1.8.101 bug used to silently inject, with or without a trailing slash, case-insensitively — and ignores it outright, falling back to the `GAME_HOST`-based smart login URL on its own. There is no real scenario where a user genuinely wants exactly this value on purpose: it is strictly worse than the smart URL it would otherwise replace (it skips straight to the fragile "Play Now" + realm-card click-through instead of opening the login modal pre-targeted at the right realm). The fix now takes effect on the very next run with zero `.env` editing required. A startup log still explains what happened: `Ignoring NEXIAN_URL=... in .env — this is the exact bare-portal value a since-fixed auto-repair bug (v1.8.101) used to silently inject...`. A genuinely custom `NEXIAN_URL` (anything other than this exact bare value) is completely unaffected and still overrides `GAME_HOST` exactly as before.
+
+### Verification
+
+Verified the URL-selection logic in isolation (6/6 cases): bare value with/without trailing slash and mixed case all fall through to the `GAME_HOST`-based smart URL; a genuinely custom `NEXIAN_URL` (e.g. `.../?login=1&world=s5`) is preserved untouched; no override falls through to the smart URL or the bare `?setlang=en` fallback exactly as before. `node --check` passes on `login.js`.
+
 ## [1.8.104] — 2026-09-12
 
 ### Added
