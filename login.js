@@ -318,25 +318,50 @@ const PORTAL_SERVER_ID = portalServerIdFromGameHost();
 //
 // Falls back to the bare portal URL when GAME_HOST doesn't name a specific
 // realm (nothing to preselect). NEXIAN_URL still overrides both.
+// The exact literal value a since-fixed .env auto-repair bug (v1.8.101,
+// upsertEnvKeys() not recognizing a commented-out line as "present") used to
+// silently inject as an ACTIVE line into people's .env files. It's strictly
+// worse than the GAME_HOST-based smart URL below (skips straight to the
+// fragile "Play Now" + realm-card click-through instead of opening the
+// login modal pre-targeted at the right realm) -- there's no real scenario
+// where a user genuinely wants exactly this value on purpose. Two separate
+// live reports hit login timeouts traced back to this exact leftover value
+// still being active well after upgrading past v1.8.101/v1.8.103, because
+// nothing removes a key from .env once it's there and nobody thought to look
+// for it. Auto-ignoring it (not just warning about it) means the fix takes
+// effect immediately on the next run, with no dependence on finding and
+// editing the right .env file by hand.
+function isStaleAutoInjectedNexianUrl(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+  return normalized === "https://nexian.world";
+}
+
+const nexianUrlOverride = process.env.NEXIAN_URL;
+const nexianUrlIsStaleArtifact = Boolean(nexianUrlOverride) && isStaleAutoInjectedNexianUrl(nexianUrlOverride);
+
 const LOGIN_URL =
-  process.env.NEXIAN_URL ||
+  (nexianUrlIsStaleArtifact ? "" : nexianUrlOverride) ||
   (PORTAL_SERVER_ID
     ? `https://nexian.world/?login=1&world=${PORTAL_SERVER_ID}&setlang=en`
     : "https://nexian.world/?setlang=en");
 
-// A stray active NEXIAN_URL left over from before it was dropped from the
-// managed .env scaffold (v1.8.103) silently wins over GAME_HOST here with no
-// visible sign why -- the only symptom is landing on the bare portal home
-// page (no login modal auto-opened) instead of the realm-specific smart URL,
-// which then depends on openNexianPortalLoginForm()'s "Play Now" + realm-card
-// fallback chain actually working against whatever the portal's current
-// markup looks like. Calling this out explicitly turns a silent, confusing
-// override into a one-line, self-diagnosing startup message.
-if (process.env.NEXIAN_URL) {
-  console.log(
-    `  Using NEXIAN_URL override: ${process.env.NEXIAN_URL} (ignoring the GAME_HOST-based smart login URL). ` +
-      "If that's not intentional, remove the NEXIAN_URL line from .env."
-  );
+if (nexianUrlOverride) {
+  if (nexianUrlIsStaleArtifact) {
+    console.log(
+      `  Ignoring NEXIAN_URL=${nexianUrlOverride} in .env — this is the exact bare-portal value a since-fixed ` +
+        "auto-repair bug (v1.8.101) used to silently inject, and it's strictly worse than the GAME_HOST-based " +
+        "smart login URL. Using the smart URL instead. Delete the NEXIAN_URL line from .env to skip this " +
+        "check on every future run (harmless either way)."
+    );
+  } else {
+    console.log(
+      `  Using NEXIAN_URL override: ${nexianUrlOverride} (ignoring the GAME_HOST-based smart login URL). ` +
+        "If that's not intentional, remove the NEXIAN_URL line from .env."
+    );
+  }
 }
 
 const USERNAME = process.env.NEXIAN_USERNAME;
