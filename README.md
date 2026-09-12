@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.99** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.100** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -509,6 +509,8 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 
 - **PowerShell blocks `npm`:** use `npm.cmd`, or adjust execution policy (`RemoteSigned` for CurrentUser), or run `node login.js` directly.
 - **No `.env.example` after unzipping an exported zip:** fixed in **v1.8.99** — `npm run export` was accidentally stripping `.env.example`/`.env.termux.example` out of every export along with the real `.env` files it's meant to exclude. Re-export after pulling this update, or grab `.env.example` directly from the repo in the meantime.
+- **No `.env` at all — will it just fail?** No: `login.js` auto-creates one on every run if it's missing (from `.env.example` if present, otherwise a built-in minimal fallback), and refuses to attempt a login with placeholder `NEXIAN_USERNAME`/`NEXIAN_PASSWORD`, printing `Missing credentials. Set real NEXIAN_USERNAME and NEXIAN_PASSWORD in .env.` and exiting cleanly instead of failing deep inside browser automation.
+- **Login fails with `Login did not reach the game after Enter Realm (still at https://nexian.world/). Expected realm sN (...)`:** `GAME_HOST` is set to the wrong realm — the error already tells you which realm it tried. This isn't guessable by the software; only you know which realm your account is actually on. Log in manually once in a normal browser and read the realm off the address bar **after** you're actually in the game (not on the `nexian.world` portal) — it'll be `s1`, `s2`, etc., or occasionally a named realm like `test`. Set `GAME_HOST` to match exactly (e.g. `https://test.nexian.world`), save `.env`, and rerun.
 - **`npm run setup:pc` fails with `ENOENT ... Could not read package.json`:** you're one folder too shallow — a GitHub zip (or `npm run export`'s output) extracts into a subfolder (e.g. `nexian-dani-main` or `nexian-vX.Y.Z-...`), not directly into the folder you unzipped to. Run `dir` (Windows) / `ls` (macOS/Linux) to find that subfolder, `cd` into it, and confirm `package.json` is listed before rerunning setup.
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
 - **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow. If the action doesn't actually stop (a background loop can be mid network-call when you press it), you'll see `(press Ctrl+C again to force quit)` — press it again and the process force-exits within ~1-2s regardless of what's stuck (v1.8.91+).
