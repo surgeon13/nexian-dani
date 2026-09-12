@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.99] — 2026-09-12
+
+### Fixed
+
+- **`npm run export` never included `.env.example`, leaving every exported zip with no way to create a `.env` from.** Reported: a user working entirely from an exported zip (not a `git clone`) had no `.env.example` to copy at all after unzipping — first-run setup was stuck before it could even start. Root cause: `export.js`'s exclusion rule for real per-machine env files, `name.startsWith(".env.")`, also matched `.env.example` and `.env.termux.example` — the exact opposite of what should happen, since those `.example` files are the credential-free templates a fresh machine is *supposed* to copy from. They were being stripped out of every export alongside real secrets like `.env.nexian`.
+
+  Fixed the exclusion to keep anything ending in `.example` while still excluding real overrides (`.env.nexian`, `.env.local`, etc.) and the bare `.env` (unchanged, still excluded). Verified against the exact filenames involved: `.env`/`.env.nexian`/`.env.local` still excluded, `.env.example`/`.env.termux.example` now included.
+
+  If you're working from a zip exported before this fix and don't have `.env.example`: grab it from the repo directly (`https://github.com/surgeon13/nexian-dani/blob/main/.env.example`) or re-export with `npm run export` after pulling this update.
+
 ## [1.8.98] — 2026-09-06
 
 ### Changed
