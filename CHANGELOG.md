@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.104] — 2026-09-12
+
+### Added
+
+- **Startup now calls out an active `NEXIAN_URL` override by name.** A user hit a login timeout (`locator.waitFor: Timeout 30000ms exceeded` waiting for `input[placeholder="Enter your username"]`, failure URL `https://nexian.world/?journey=true`) that traced back to the startup log printing `Opening https://nexian.world/ ...` — the bare portal URL, with none of the `?login=1&world=<realm>&setlang=en` query params `LOGIN_URL` normally builds from `GAME_HOST`. The only way to get that exact bare URL is an active `NEXIAN_URL=https://nexian.world/` line in `.env`, silently outranking `GAME_HOST` (as documented, but easy to forget is even present) — almost certainly a leftover from the `upsertEnvKeys()` bug fixed in v1.8.101, which is not auto-removed by anything (deliberately: `NEXIAN_URL` remains a valid, intentional override for anyone who explicitly wants it, per v1.8.103). Without the smart URL's params, login depends entirely on `openNexianPortalLoginForm()`'s "Play Now" + realm-card fallback chain succeeding against the portal's current front-end, which is more fragile and was exactly what timed out here.
+
+  Added a one-line startup log — `Using NEXIAN_URL override: <value> (ignoring the GAME_HOST-based smart login URL). If that's not intentional, remove the NEXIAN_URL line from .env.` — printed whenever `NEXIAN_URL` is set at all, so this no longer requires opening `.env` blind or asking for a diagnostic dump to notice. No behavior change — `NEXIAN_URL` still overrides `GAME_HOST` exactly as before when genuinely intended.
+
+### Verification
+
+`node --check` passes on `login.js`. Confirmed by inspection that the new log line fires only when `process.env.NEXIAN_URL` is truthy (matching `LOGIN_URL`'s own existing precedence check) and does not otherwise change `LOGIN_URL`'s value or control flow.
+
 ## [1.8.103] — 2026-09-12
 
 ### Changed
