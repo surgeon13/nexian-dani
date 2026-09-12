@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.101] — 2026-09-12
+
+### Fixed
+
+- **Found a real bug while chasing the "GAME_HOST change doesn't seem to take effect" report: `.env`'s auto-repair could silently force the bare portal URL forever.** `ensureEnvFile()` backfills a few required keys (`NEXIAN_URL`, `NEXIAN_USERNAME`, `NEXIAN_PASSWORD`) into `.env` on every run if they're missing — but its "is this key already present" check only matched an *active* `KEY=value` line, not a commented-out one. `.env.example` deliberately ships `NEXIAN_URL` commented out (so `GAME_HOST`'s smarter, realm-specific login URL gets used instead) — but that commented line was invisible to the check, so on literally the first run, an **active** `NEXIAN_URL=https://nexian.world/` got silently appended to the file. From then on, every future run used that forced bare-portal URL instead of the realm-specific one (`LOGIN_URL` prefers `NEXIAN_URL` whenever it's set at all) — so changing `GAME_HOST` afterward had no visible effect on which realm got targeted. Fixed the regex to also recognize the commented form as "already present," so it's left alone. **If your `.env` already picked up a stray active `NEXIAN_URL=https://nexian.world/` line from a prior run, comment it out or delete it** to let `GAME_HOST` drive the login URL again.
+
+### Added
+
+- **Hardened first run: `npm run login` now installs the Chromium browser itself if it's missing**, instead of requiring the separate `npm run setup:pc` step to have been run first (or failing with a raw Playwright "Executable doesn't exist ... npx playwright install" error). Applies to both headless and headed launches; headless additionally still tries a system Chrome install first, only auto-installing Playwright's own Chromium if that also isn't available.
+- **A missing `node_modules` (never ran `npm install`) now fails with a clear, actionable message** (`Missing dependencies ... Run npm install`) instead of Node's raw "Cannot find module 'playwright'".
+- `.env.termux.example` removed from the repo (was a phone-tuned template for the now-deprioritized Termux path). Termux setups (`scripts/termux-proot-setup.sh`) now fall back to the generic `.env.example` when creating `.env.termux`, matching the fallback `login.js` itself already used — no functional break, Termux users just get generic loop intervals instead of phone-tuned ones going forward.
+
+### Verification
+
+Re-implemented and verified both fixes against the exact shipped logic: the `upsertEnvKeys` regex against active/commented/absent/indented/false-positive cases (5/5 passed), and the headless-launch auto-install control flow against mocked launch/install functions covering the missing-binary-install-succeeds, install-fails-falls-back-to-headed, and non-missing-binary-error-skips-install-entirely cases (9/9 passed). `node --check` passes on `login.js` and `export.js`; `bash -n` passes on `scripts/termux-proot-setup.sh`.
+
 ## [1.8.100] — 2026-09-12
 
 ### Changed

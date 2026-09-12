@@ -33,10 +33,10 @@ const exclude = new Set([
 function shouldSkip(name, relPath) {
   if (exclude.has(name)) return true;
   // Exclude real per-machine env overrides (.env.nexian, .env.local, ...)
-  // but keep the credential-free .example templates (.env.example,
-  // .env.termux.example) -- those are exactly what a fresh machine needs
-  // to copy from, and excluding them left every exported zip with no
-  // starting point to create a .env from at all.
+  // but keep the credential-free .example templates (.env.example and any
+  // other "<flavor>.env.example" that might exist) -- those are exactly
+  // what a fresh machine needs to copy from, and excluding them left every
+  // exported zip with no starting point to create a .env from at all.
   if (name.startsWith(".env.") && !name.endsWith(".example")) return true;
   if (relPath === path.join("templates", "progress.json")) return true;
   if (relPath === path.join("templates", "troop_plans.json")) return true;
