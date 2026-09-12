@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.102** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.103** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -21,7 +21,7 @@ Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, vi
 
 ### Automation modules
 
-- **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`R`, `V`) or `.env` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
+- **Resource circulation** — Optional marketplace-style transfers when the builder is blocked on resources or for settlement prep. Toggle in **Settings** (`R`, `V`) or `templates/settings.json` (`RESOURCE_CIRCULATION_*`). When disabled or insufficient, ship resources manually in-game.
 - **Overflow guard** — Complements circulation: near-full warehouse/granary surplus goes to the capital/pivot **only within** max map distance (default 10 squares). Checks every non-pivot village each tick by default (`RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`), not just one per round-robin turn. Far overflows never send — logged in **red** in the terminal so a stuck village is easy to spot. Settings **OG** / `RESOURCE_OVERFLOW_*`.
 - **Troop plans** — Named plans with unit + qty per building (Barracks, Great Barracks, Stable, Great Stable, Workshop). Assign villages in terminal **T**; auto-train loop runs per village on its plan timer. Workshop trains last in the cycle so siege never eats into cavalry/infantry's resources that tick. Unit names must match the game exactly — use **T → [U]** to list a village's real trainable unit names (this server's siege building is *Siege Workshop*, training **Ram** and **Trebuchet**). A branch with no unit set is skipped silently, so the plan list flags it as `not set (won't train)`. Stored in `templates/troop_plans.json`.
 - **Proxy pool** — Route Playwright through HTTP/SOCKS proxies. Paste a list in terminal **y** / Settings **Y** or dashboard **Settings → Proxy pool**. Rotate live via **Next** / `POST /api/proxy-settings` `{"action":"next"}`. Optional rotation on session-loop re-login (`PROXY_ROTATE_ON_SESSION_REST`).
@@ -63,7 +63,7 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 
 | File / folder | Role |
 |---------------|------|
-| `login.js` | Entry: env, browser lifecycle, proxy, persists selected settings keys to `.env`. |
+| `login.js` | Entry: env, browser lifecycle, proxy, persists selected settings keys to `templates/settings.json`. |
 | `terminalMenu.js` | Menus, village list, timers, raid guard hook, audit logging helpers, compact terminal UI. |
 | `troopPlans.js` | Troop plan + village assignment store (`templates/troop_plans.json`). |
 | `proxyPool.js` / `proxyConfig.js` | Proxy list parsing, pool file, dashboard/settings sync. |
@@ -89,7 +89,9 @@ See [CHANGELOG.md](CHANGELOG.md) (**1.6.0**–**1.8.9**) for full release notes.
 | `templates/troop_plans.json` | Troop plans and village assignments (gitignored; created at runtime). |
 | `templates/proxy_list.json` | Saved proxy pool (gitignored). |
 | `templates/settlement_targets.json` | Planned expansion coordinates (JSON array of `{ "x", "y" }`; start with `[]` and add your own). |
-| `.env.example` | Commented baseline for copying to `.env`. |
+| `templates/settings.json` | **Everything except identity/realm** — every loop, threshold, proxy, dashboard, builder, trainer, etc. setting (gitignored; auto-created from `templates/settings.example.json` on first run; safe to hand-edit or delete/regenerate). |
+| `templates/settings.example.json` | Tracked template of every `templates/settings.json` key with its shipped default value. |
+| `.env.example` | Commented baseline for copying to `.env` — as of v1.8.103, just `NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`. |
 | `setup.js`, `*.cmd` | Install deps/browser and quick Windows launchers. |
 | `export.js` | Zips project for copying to another machine (excludes `.env`, `node_modules`). |
 
@@ -115,6 +117,8 @@ GAME_HOST=https://s1.nexian.world
 
 `GAME_HOST` must point at your **realm** (e.g. `s1.nexian.world`), not the `nexian.world` portal — otherwise farmlists, builder, and trainers navigate to the wrong host.
 
+As of **v1.8.103**, `.env` holds *only* those three keys. Every other setting (loops, thresholds, proxy, dashboard, builder, trainer, celebrations, raid evacuation, logging, ...) lives in `templates/settings.json` instead, auto-created from `templates/settings.example.json` on first run — see [Configuration](#configuration-templatessettingsjson) below. You never need to touch it to get logged in; it only matters once you want to change a default.
+
 3. **First browser run** (recommended headed):
 
 ```bash
@@ -125,7 +129,7 @@ node login.js --headed --keep-open
 
 For everyday runs after that, double-click **`start.cmd`** — it's the one-click Windows equivalent of `npm run login` (opens a console window, keeps its memory settings in sync with the npm script, and pauses on error so you can read what went wrong instead of the window vanishing).
 
-If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only. This applies to any `--nexian-env-file=` target, not just plain `.env`: a missing `--nexian-env-file=.env.termux` gets created from `.env.termux.example` if one exists next to it (falling back to the generic `.env.example` otherwise), so a fresh machine only ever needs its credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) edited in before the first real run — `login.js` refuses to proceed with placeholder credentials and tells you exactly which file to edit.
+If `.env` is missing, `login.js` creates it from `.env.example` when present, or writes a minimal `.env` with placeholder credentials only. This applies to any `--nexian-env-file=` target, not just plain `.env`: a missing `--nexian-env-file=.env.termux` gets created from `.env.termux.example` if one exists next to it (falling back to the generic `.env.example` otherwise), so a fresh machine only ever needs its credentials (`NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST`) edited in before the first real run — `login.js` refuses to proceed with placeholder credentials and tells you exactly which file to edit. `templates/settings.json` is created the same way, independently, from `templates/settings.example.json`.
 
 **Use `--nexian-env-file=`, not `--env-file=`.** Node.js itself (≥20.6) has a native `--env-file=<path>` CLI flag that intercepts that exact argument before `login.js` ever runs, and exits hard with `node: <path>: not found` if the target doesn't exist yet — bypassing the auto-creation above entirely. This project's alt-profile flag is deliberately named differently to avoid that collision.
 
@@ -267,8 +271,8 @@ Cursor Cloud agents are **ephemeral** — when the agent run ends, the VM dies a
 1. Install [Node.js LTS](https://nodejs.org/).
 2. Clone or unzip this repo, then either:
    - Double-click **`setup-pc.cmd`**, or run `npm run setup:pc`
-3. Copy `.env.example` → `.env` (if setup did not) and set `NEXIAN_USERNAME`, `NEXIAN_PASSWORD`, `GAME_HOST`, loops, etc.  
-   Or copy your working `.env` / `templates/proxy_list.json` / `templates/troop_plans.json` from the cloud VM.
+3. Copy `.env.example` → `.env` (if setup did not) and set `NEXIAN_USERNAME`, `NEXIAN_PASSWORD`, `GAME_HOST`. Loops and everything else live in `templates/settings.json` (auto-created from `templates/settings.example.json`) — edit that for anything beyond credentials/realm.  
+   Or copy your working `.env` / `templates/settings.json` / `templates/proxy_list.json` / `templates/troop_plans.json` from the cloud VM.
 4. Start:
    - Double-click **`start-24-7.cmd`**, or `npm run start:24-7:pc`
 5. Open **http://127.0.0.1:3847**
@@ -328,7 +332,7 @@ Heartbeats and restart reasons are appended to **`keep-alive.log`**. The bot chi
 Cloud Agent VMs die when the agent run ends. To stay online **inside Cursor**:
 
 1. **Environment** — `.cursor/environment.json` installs deps on Build and runs `scripts/cursor-cloud-start.sh` on every agent boot (materializes `.env` + `start:24-7`).
-2. **Secrets** — In [Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents), add **`NEXIAN_DOTENV`** = full contents of your local `.env` (preferred). Optional: `NEXIAN_TROOP_PLANS_JSON`, `NEXIAN_PROXY_LIST_JSON`.
+2. **Secrets** — In [Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents), add **`NEXIAN_DOTENV`** = full contents of your local `.env` (preferred). Optional: `NEXIAN_TROOP_PLANS_JSON`, `NEXIAN_PROXY_LIST_JSON`. Since `.env` is loaded with `override: true` before `templates/settings.json` fills in anything still unset, `NEXIAN_DOTENV` can still carry any non-identity key too (e.g. `DASHBOARD_ENABLED=true`) if you'd rather manage a fresh VM's whole config as one secret than commit to `templates/settings.json` living on that ephemeral disk — either works, they just take effect via different files.
 3. **Keep a run open** — Leave a Cloud Agent / Automation session running while you want the bot up (see `AGENTS.md`).
 4. **Hourly Automation** — At [cursor.com/automations](https://cursor.com/automations), schedule something like: *Ensure `bash ./scripts/cursor-cloud-ensure.sh` is healthy; stay alive and monitor `keep-alive.log`; do not end the session.* Point it at this repo so a fresh VM restarts the stack if the previous run died.
 
@@ -358,13 +362,17 @@ Stale `log_age` ≥ 20m in keep-alive while online → watchdog should restart. 
 
 Typical Waveshare / GPIO TFT panels are **480×320** landscape. The dashboard **compact view** is tuned for this size.
 
-### Recommended `.env` on the Pi
+### Recommended `templates/settings.json` on the Pi
 
-```env
-DASHBOARD_ENABLED=true
-DASHBOARD_COMPACT_VIEW=true
-DASHBOARD_OPEN_BROWSER=true
-BUILDER_DEFAULT_PLAN_MODE=resource
+These are all non-identity settings, so (as of v1.8.103) they belong in `templates/settings.json`, not `.env`:
+
+```json
+{
+  "DASHBOARD_ENABLED": true,
+  "DASHBOARD_COMPACT_VIEW": true,
+  "DASHBOARD_OPEN_BROWSER": true,
+  "BUILDER_DEFAULT_PLAN_MODE": "resource"
+}
 ```
 
 ### Run
@@ -447,27 +455,29 @@ Expansion **need_settlement_resources** behaves similarly: circulation may help 
 
 ---
 
-## Configuration (`/.env`)
+## Configuration (`templates/settings.json`)
 
-`.env.example` lists every knob with safe defaults.
+As of **v1.8.103**, `.env` holds only `NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST` (see [First setup](#first-setup)). Every setting below lives in `templates/settings.json` instead — gitignored, per-machine, auto-created from `templates/settings.example.json` (the tracked template listing every key with its shipped default) the first time you run the bot. Edit either file directly with any text/JSON editor, or use the terminal **Settings** menu / web dashboard, which both read and write `templates/settings.json` for you. A value already set in `.env` (only possible for the three identity/realm keys) always wins if a key genuinely exists in both, though in practice the two files own entirely separate keys.
+
+If `templates/settings.json` is ever missing or corrupt, the bot logs a warning, falls back to built-in defaults for every setting until it's fixed, and **still logs in fine** — unlike the old single-`.env` setup, a broken settings file can no longer block login.
 
 **High-signal variables**
 
 - **Loops:** `FARMLIST_LOOP_*`, `BUILDER_LOOP_*`, `SESSION_LOOP_*`, `TROOP_TRAINING_ROUND_ROBIN_ENABLED`, `TOP10_TRACKING_*`
-- **Realm / farmlist:** `GAME_HOST`, `FARMLIST_VILLAGE_ID` (pin rally-point village for auto-send)
+- **Realm / farmlist:** `GAME_HOST` (`.env`), `FARMLIST_VILLAGE_ID` (`templates/settings.json`, pin rally-point village for auto-send)
 - **Proxy:** `PROXY_SERVER`, `PROXY_USERNAME`, `PROXY_PASSWORD`, `PROXY_ROTATE_ON_SESSION_REST`
-- **24/7 keep-alive:** shell env `CHECK_SECONDS`, `STALE_MINUTES`, `DASH_URL` (see `.env.example` comments; not stored as bot `.env` keys)
+- **24/7 keep-alive:** shell env `CHECK_SECONDS`, `STALE_MINUTES`, `DASH_URL` — set before running `keep-alive.sh`/`keep-alive.js`; not read from `.env` or `templates/settings.json` at all
 - **Builder:** `BUILDER_GOLD_COMPLETE_*`, `BUILDER_MASTER_BUILDER_ENABLED`, `BUILDER_ROUND_ROBIN_ENABLED`, `BUILDER_DEFAULT_PLAN_MODE` (`resource` or `village`)
 - **Dashboard:** `DASHBOARD_ENABLED`, `DASHBOARD_PORT`, `DASHBOARD_COMPACT_VIEW`
-- **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `.env.example`)
+- **Resource circulation:** `RESOURCE_CIRCULATION_ENABLED`, `RESOURCE_CIRCULATION_EXPANSION_ENABLED`, and related `RESOURCE_CIRCULATION_*` caps (see `templates/settings.example.json`)
 - **Overflow guard:** `RESOURCE_OVERFLOW_GUARD_ENABLED`, `RESOURCE_OVERFLOW_TRIGGER_RATIO`, `RESOURCE_OVERFLOW_TARGET_RATIO`, `RESOURCE_OVERFLOW_MAX_DISTANCE`, `RESOURCE_OVERFLOW_CHECK_ALL_EACH_TICK`, `RESOURCE_OVERFLOW_LOOP_MIN_MINUTES`, `RESOURCE_OVERFLOW_LOOP_MAX_MINUTES`, `RESOURCE_OVERFLOW_PIVOT_VILLAGE_IDS`
 - **NPC crop convert:** `NPC_CROP_CONVERT_ENABLED`, `NPC_CROP_CONVERT_MIN_MINUTES`, `NPC_CROP_CONVERT_MAX_MINUTES`, `NPC_CROP_CONVERT_GRANARY_RATIO`, `NPC_CROP_CONVERT_MARKETPLACE_BUILDING_ID`, `NPC_CROP_CONVERT_EXCLUDED_VILLAGE_IDS`, `CAPITAL_GRANARY_WATCHER_ENABLED`, `CAPITAL_GRANARY_WATCHER_RATIO`
 - **Celebrations RR:** `CELEBRATIONS_ROUND_ROBIN_ENABLED`, `CELEBRATIONS_LOOP_MIN_MINUTES`, `CELEBRATIONS_LOOP_MAX_MINUTES`, `CELEBRATIONS_TYPE`, `CELEBRATIONS_QUEUE_DEPTH` (1 or 2, default 1), `CELEBRATIONS_INCLUDED_VILLAGE_IDS`, `CELEBRATIONS_EXCLUDED_VILLAGE_IDS`
-- **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `.env.example`)
+- **Raid evacuation:** `RAID_EVACUATION_ENABLED`, `RAID_EVACUATION_TRIGGER_MINUTES`, `RAID_EVACUATION_RESERVE_PER_RESOURCE`, `RAID_EVACUATION_PIVOT_VILLAGE_IDS`, … (see `templates/settings.example.json`)
 
-Settings changed from the **`S`** menu persist back into `.env` for the keys wired in `login.js` (`persistRuntimeSettings`).
+Settings changed from the **`S`** menu persist back into `templates/settings.json` (never `.env`, as of v1.8.103) for the keys wired in `login.js` (`persistRuntimeSettings`).
 
-Optional overrides: `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FILE`, selectors for farmlists, etc.
+Optional overrides not shipped in `templates/settings.example.json` by default (unset = built-in behavior; add them to `templates/settings.json` yourself if needed): `VILLAGE_BUILDER_URL`, `FARMLIST_URL`, `NEXIAN_ACTION_LOG_FILE`, selectors for farmlists, etc.
 
 ---
 
@@ -492,7 +502,7 @@ npm run export
 
 Produces a zip beside the project folder named like `nexian-v1.8.9-2026-08-03-14-30-00.zip` (package version + local date-time). Exclude private/runtime files manually if you assemble a zip yourself: `.env`, `.env.*` with secrets, `storageState.json`, `log.jsonl`, `top10.log`, `keep-alive.log`, `node_modules/`, optionally `templates/progress.json`.
 
-On the new machine: extract → `node setup.js` → fill `.env` → `node login.js --headed --keep-open`.
+On the new machine: extract → `node setup.js` → fill `.env` (username/password/realm only) → `node login.js --headed --keep-open` (creates `templates/settings.json` from its example on first run; edit it or the terminal Settings menu for everything else).
 
 Recommended zip contents align with whatever `export.js` includes (`villageExpansion.js`, `templates/`, `.env.example`, `README.md`, etc.)—see `export.js` `exclude` list.
 
@@ -514,11 +524,13 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Changed `GAME_HOST` (or any `.env` value) but it doesn't seem to take effect, no matter how many times you edit and rerun:** two separate things to check, both fixed by **v1.8.102**:
   1. Check `.env` for an active `NEXIAN_URL=https://nexian.world/` line (v1.8.101). A bug in the `.env` auto-repair could silently add one on first run even though `.env.example` ships it commented out, and once present it permanently overrides `GAME_HOST` for login purposes. Comment it out or delete that line.
   2. Check whether that variable is already set in your terminal/OS environment (v1.8.102) — run `echo %GAME_HOST%` (Windows cmd) or `echo $GAME_HOST` (macOS/Linux/PowerShell: `$env:GAME_HOST`) in the *same window* you run the bot from. If it prints an actual value, a leftover `set GAME_HOST=...` (or a system/user environment variable) is out-ranking `.env` — close that terminal window entirely and open a fresh one, or clear the variable. Before v1.8.102, `dotenv` was called without `override: true`, so anything already in the shell environment silently won over `.env`, however many times the file was edited.
+  3. Make sure you're editing the `.env` in the **same folder** you actually run `npm run login` / `node login.js` from — having more than one project folder or `.env` copy on disk (e.g. an old zip extract next to a fresh `git clone`) is the single most common cause of "I edited it and nothing changed." When unsure, run `node -e "console.log(process.cwd())"` in that exact terminal window right before running the bot, then confirm the `.env` you're editing lives at that exact path.
+- **`.env` kept ending up broken/duplicated/edited-in-the-wrong-copy (v1.8.103):** `.env` now holds **only** `NEXIAN_USERNAME` / `NEXIAN_PASSWORD` / `GAME_HOST` — 3 lines instead of ~90, so a bad copy is obvious at a glance. Everything else moved to `templates/settings.json` (auto-created from `templates/settings.example.json`), which the terminal Settings menu and dashboard now read/write instead of `.env`. If you're upgrading from an older version and had custom settings in `.env`, they're **not** migrated automatically — copy the values you cared about into `templates/settings.json` (matching keys, but as JSON: `"BUILDER_LOOP_ENABLED": true` not `BUILDER_LOOP_ENABLED=true`) or re-set them via the terminal menu.
 - **`npm run login` fails with `Executable doesn't exist ... npx playwright install`:** fixed in **v1.8.101** — it now installs the browser itself automatically the first time this happens (a few extra minutes on that one run), instead of requiring `npm run setup:pc` to have been run first. If automatic install fails too (e.g. no network), run `npm run playwright:install` manually.
 - **`npm run setup:pc` fails with `ENOENT ... Could not read package.json`:** you're one folder too shallow — a GitHub zip (or `npm run export`'s output) extracts into a subfolder (e.g. `nexian-dani-main` or `nexian-vX.Y.Z-...`), not directly into the folder you unzipped to. Run `dir` (Windows) / `ls` (macOS/Linux) to find that subfolder, `cd` into it, and confirm `package.json` is listed before rerunning setup.
 - **Headless Chromium errors:** launch headed once (`--headed`), or run `npm run playwright:install`.
 - **`Ctrl+C` during an action:** action is interrupted; browser may stay open per `KEEP_OPEN`/menu flow. If the action doesn't actually stop (a background loop can be mid network-call when you press it), you'll see `(press Ctrl+C again to force quit)` — press it again and the process force-exits within ~1-2s regardless of what's stuck (v1.8.91+).
-- **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED=true` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
+- **Builder stuck on resources:** enable **Settings [R]** or set `RESOURCE_CIRCULATION_ENABLED: true` in `templates/settings.json` so other villages (not under attack) can send toward the builder target, up to the configured share of warehouse/granary capacity; the builder loop waits for the estimated travel time before retrying.
 - **Village-stage buildings (Warehouse, Granary, Main Building, ...) never build, only resource fields do:** fixed in **v1.8.96** — `BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE` and `BUILDER_RR_RESOURCE_THEN_VILLAGE` (both default `true`) were checked in the wrong order, so a village's resource-fields chain finishing immediately excluded it from Round Robin before village-stage ever got a turn. Upgrade, then check terminal menu → Settings → **[X] Builder RR Exclusion** — any village already excluded with reason "Resource fields complete" from before the fix needs to be manually removed from that list to resume.
 - **Speed Build (`[SB]`, v1.8.97+):** opt-in fast path that upgrades resource fields (slots 1-18 only, not yet inner buildings) via `village1.php`'s "Upgrade mode" one-click toggle instead of navigating into each building. Auto-enables Upgrade mode in-game if it's off. Verified against a simulated page (not a live account) — if it doesn't seem to be firing, check for `[Speed Build] ...` / `Enabled in-game Upgrade mode for ...` lines in the log; report back what you see, this is new territory.
 - **Farmlist send fails / wrong village:** set `GAME_HOST` to your realm and `FARMLIST_VILLAGE_ID` to a village that has a Rally Point with farm lists.

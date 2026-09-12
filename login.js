@@ -150,6 +150,18 @@ function upsertEnvKeys(envPath, defaults) {
   }
 }
 
+// .env holds ONLY these three — identity + which realm to talk to. Every
+// other setting (loops, thresholds, proxy, dashboard, ...) lives in
+// templates/settings.json instead (see ensureSettingsJsonFile() below).
+// This is deliberate: .env kept growing to ~90 lines covering everything,
+// and real users repeatedly ended up with a broken/stray/duplicated .env
+// that silently misconfigured login itself (a stray NEXIAN_URL line, a
+// leftover shell env var, editing the wrong copy of the file) — all
+// findable and fixable in seconds when the file is 3 lines, much harder to
+// spot in 90. NEXIAN_URL is intentionally NOT part of this scaffold at all
+// any more (it was the biggest source of that exact class of confusion);
+// it still works as a manual, undocumented-by-default override for anyone
+// who explicitly adds it back.
 function ensureEnvFile(envPath) {
   if (!fs.existsSync(envPath)) {
     const source = resolveEnvExampleSource(envPath);
@@ -158,16 +170,14 @@ function ensureEnvFile(envPath) {
       console.log(`Created ${path.basename(envPath)} from ${path.basename(source)}`);
     } else {
       const minimal = [
-        "NEXIAN_URL=https://nexian.world/",
         "NEXIAN_USERNAME=your_username_here",
         "NEXIAN_PASSWORD=your_password_here",
         "",
-        "# Set this to your actual realm once you know it (log in manually once",
-        "# in a normal browser and check the address bar after entering the",
-        "# game — e.g. https://s1.nexian.world, https://s2.nexian.world, or a",
-        "# named realm like https://test.nexian.world). Left commented out, the",
-        "# portal's own realm-selection flow is used instead.",
-        "# GAME_HOST=https://s1.nexian.world"
+        "# Your realm's host -- log in manually once in a normal browser and read",
+        "# it off the address bar after actually entering the game (not the",
+        "# nexian.world portal): e.g. https://s1.nexian.world, https://s2.nexian.world,",
+        "# or a named realm like https://test.nexian.world.",
+        "GAME_HOST=https://s1.nexian.world"
       ].join("\n");
       fs.writeFileSync(envPath, `${minimal}\n`, "utf8");
       console.log(`Created ${path.basename(envPath)} with minimal defaults`);
@@ -175,10 +185,65 @@ function ensureEnvFile(envPath) {
   }
 
   upsertEnvKeys(envPath, {
-    NEXIAN_URL: "https://nexian.world/",
     NEXIAN_USERNAME: "your_username_here",
     NEXIAN_PASSWORD: "your_password_here"
   });
+}
+
+const SETTINGS_JSON_PATH = path.resolve(__dirname, "templates", "settings.json");
+const SETTINGS_JSON_EXAMPLE_PATH = path.resolve(__dirname, "templates", "settings.example.json");
+
+// Every setting that ISN'T identity/realm (NEXIAN_USERNAME/PASSWORD,
+// GAME_HOST, NEXIAN_URL) lives here instead of .env. Auto-created from
+// templates/settings.example.json on first run, same pattern as
+// ensureEnvFile() -- and just as safe to hand-edit or delete/regenerate.
+function ensureSettingsJsonFile() {
+  if (fs.existsSync(SETTINGS_JSON_PATH)) {
+    return;
+  }
+  if (fs.existsSync(SETTINGS_JSON_EXAMPLE_PATH)) {
+    fs.copyFileSync(SETTINGS_JSON_EXAMPLE_PATH, SETTINGS_JSON_PATH);
+    console.log(
+      `Created ${path.relative(__dirname, SETTINGS_JSON_PATH)} from ${path.basename(SETTINGS_JSON_EXAMPLE_PATH)}`
+    );
+    return;
+  }
+  fs.mkdirSync(path.dirname(SETTINGS_JSON_PATH), { recursive: true });
+  fs.writeFileSync(SETTINGS_JSON_PATH, "{}\n", "utf8");
+  console.log(`Created empty ${path.relative(__dirname, SETTINGS_JSON_PATH)} (no template found)`);
+}
+
+// Populates process.env from templates/settings.json for every key .env
+// itself doesn't already define — so every existing process.env.KEY /
+// numberEnv("KEY", ...) read elsewhere in this file keeps working completely
+// unchanged, regardless of which of the two files a given value actually
+// came from. .env (identity/realm) always wins if a key genuinely exists in
+// both, though in practice the two files own disjoint keys.
+function loadJsonSettingsIntoEnv() {
+  let raw;
+  try {
+    raw = fs.readFileSync(SETTINGS_JSON_PATH, "utf8");
+  } catch (_error) {
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (_error) {
+    console.warn(
+      `Warning: ${path.relative(__dirname, SETTINGS_JSON_PATH)} is not valid JSON -- ignoring it this run. ` +
+        "Every setting will fall back to its built-in default until this is fixed."
+    );
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return;
+  }
+  for (const [key, value] of Object.entries(parsed)) {
+    if (process.env[key] === undefined && value !== null && value !== undefined) {
+      process.env[key] = String(value);
+    }
+  }
 }
 
 function hasRealCredential(value, placeholder) {
@@ -199,6 +264,8 @@ ensureEnvFile(resolvedEnvPath);
 // appear to do nothing at all for whichever key already has a pre-existing
 // value from the shell -- a real user hit exactly this with GAME_HOST.
 dotenv.config({ path: resolvedEnvPath, quiet: true, override: true });
+ensureSettingsJsonFile();
+loadJsonSettingsIntoEnv();
 const actionLogFilePath = path.resolve(
   process.cwd(),
   process.env.NEXIAN_ACTION_LOG_FILE || "log.jsonl"
@@ -590,42 +657,35 @@ function waitMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function formatEnvValue(value) {
-  const str = String(value);
-  if (/\s|#/.test(str)) {
-    return `"${str.replace(/"/g, '\\"')}"`;
-  }
-  return str;
-}
-
-function persistEnvValues(updates) {
+// Everything persistRuntimeSettings() writes belongs in templates/settings.json
+// now, never .env -- .env only ever holds identity/realm (see ensureEnvFile()),
+// and nothing in this settings object is ever one of those three keys.
+function persistJsonSettings(updates) {
   const keys = Object.keys(updates);
   if (!keys.length) {
     return;
   }
 
-  const exists = fs.existsSync(resolvedEnvPath);
-  const current = exists ? fs.readFileSync(resolvedEnvPath, "utf8") : "";
-  const eol = current.includes("\r\n") ? "\r\n" : "\n";
-  const lines = current ? current.split(/\r?\n/) : [];
-
-  const remaining = new Set(keys);
-
-  for (let i = 0; i < lines.length; i += 1) {
-    for (const key of keys) {
-      const pattern = new RegExp(`^\\s*${key}\\s*=`);
-      if (pattern.test(lines[i])) {
-        lines[i] = `${key}=${formatEnvValue(updates[key])}`;
-        remaining.delete(key);
-      }
+  let current = {};
+  try {
+    const raw = fs.readFileSync(SETTINGS_JSON_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      current = parsed;
     }
+  } catch (_error) {
+    // Missing, unreadable, or corrupt -- start from an empty object rather
+    // than lose this write (or crash) over a pre-existing bad file. The next
+    // read already warns loudly if the file is invalid JSON.
+    current = {};
   }
 
-  for (const key of remaining) {
-    lines.push(`${key}=${formatEnvValue(updates[key])}`);
+  for (const key of keys) {
+    current[key] = updates[key];
   }
 
-  fs.writeFileSync(resolvedEnvPath, lines.join(eol), "utf8");
+  fs.mkdirSync(path.dirname(SETTINGS_JSON_PATH), { recursive: true });
+  fs.writeFileSync(SETTINGS_JSON_PATH, `${JSON.stringify(current, null, 2)}\n`, "utf8");
 }
 
 function persistRuntimeSettings(selectedKeys) {
@@ -736,7 +796,7 @@ function persistRuntimeSettings(selectedKeys) {
   };
 
   if (!selectedKeys || !selectedKeys.length) {
-    persistEnvValues(envValues);
+    persistJsonSettings(envValues);
     return;
   }
 
@@ -747,7 +807,7 @@ function persistRuntimeSettings(selectedKeys) {
     }
   });
 
-  persistEnvValues(filtered);
+  persistJsonSettings(filtered);
 }
 
 function applySessionLoopDefaults() {
