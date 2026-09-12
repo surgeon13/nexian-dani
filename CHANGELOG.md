@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.102] — 2026-09-12
+
+### Fixed
+
+- **`.env` edits could silently have no effect at all if the same-named variable already existed in the shell/OS environment.** Follow-up on v1.8.101's `NEXIAN_URL` fix: a user fixed that issue, confirmed `GAME_HOST=https://test.nexian.world/` in `.env`, and the bot *still* targeted realm `s2` — with no `NEXIAN_URL` override left in the file this time. Root cause: `dotenv.config()` was called without `override: true`, which is dotenv's default, safety-first behavior — it never overwrites a `process.env` value that already exists by the time it runs. If `GAME_HOST` (or any other key) was ever set directly in that terminal session or the wider Windows environment (a leftover `set GAME_HOST=...` from earlier testing, System/User environment variables, etc.), that value would silently and permanently out-rank `.env` — no error, no warning, `.env` just appears to do nothing for that one key, however many times it's edited.
+
+  Added `override: true` to the `dotenv.config()` call. `.env` is meant to be the single source of truth for this tool (the terminal menu itself writes settings back into it), so it should always win. Verified directly against the real `dotenv` package: a `GAME_HOST` pre-set in `process.env` (simulating the stray-shell-variable scenario) is now correctly overridden by `.env`'s value.
+
+  **If you're still seeing a stale value after pulling this**, one more thing to rule out: close every open terminal window running this project and open a fresh one — a `set VAR=...` from an earlier session only lives for that one window, and won't go away until the window itself is closed.
+
 ## [1.8.101] — 2026-09-12
 
 ### Fixed

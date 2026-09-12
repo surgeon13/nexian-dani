@@ -190,7 +190,15 @@ function hasRealCredential(value, placeholder) {
 }
 
 ensureEnvFile(resolvedEnvPath);
-dotenv.config({ path: resolvedEnvPath, quiet: true });
+// override: true -- .env is meant to be the single source of truth for this
+// tool (the terminal menu itself writes settings back into it), so a
+// leftover shell/session-level env var with the same name (e.g. a stray
+// `set GAME_HOST=...` from earlier testing, still active in that terminal
+// window) must never silently out-rank it. Without this, dotenv's default
+// "don't touch existing process.env values" behavior means editing .env can
+// appear to do nothing at all for whichever key already has a pre-existing
+// value from the shell -- a real user hit exactly this with GAME_HOST.
+dotenv.config({ path: resolvedEnvPath, quiet: true, override: true });
 const actionLogFilePath = path.resolve(
   process.cwd(),
   process.env.NEXIAN_ACTION_LOG_FILE || "log.jsonl"
