@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.105** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.106** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -542,7 +542,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Bot keeps crash-looping under the keep-alive watchdog (repeated restarts, dashboard tab reopening every time):** the tab reopening on every restart is expected (`DASHBOARD_OPEN_BROWSER=false` to stop it) — but the real problem is whatever's making it crash. Check `bot-output.log` for the actual failure.
 - **Wrong egress IP / stuck on old proxy:** `POST /api/proxy-settings` with `{"action":"next"}` (or **Apply**). Confirm `account.publicAddress` matches the new proxy host after `automation.reason` is `online`.
 - **Top 10 empty / no Δ:** need at least two successful snapshots in `top10.log`; confirm `TOP10_TRACKING_ENABLED` and that `/api/top10` returns `ok: true` categories.
-- **Login fails with a locator timeout (e.g. `waiting for locator('input[placeholder="Enter your username"]') to be visible`):** the bot saves a full-page screenshot + the failing URL to `debug/login-failure-<timestamp>.png` on any login failure — check it to see what the page actually looked like (portal redesign, cookie banner, maintenance page, slow load). Especially useful on headless/Termux setups where there's no window to look at directly. `debug/` is git-ignored; nothing in it gets committed.
+- **Login fails with a locator timeout (e.g. `waiting for locator('input[placeholder="Enter your username"]') to be visible`):** the bot saves a full-page screenshot + the failing URL to `debug/login-failure-<timestamp>.png` on any login failure — check it to see what the page actually looked like (portal redesign, cookie banner, maintenance page, slow load, or a page that rendered with no CSS/layout applied at all). As of **v1.8.106**, it also saves `debug/login-failure-<timestamp>.log` alongside it: every browser console message, uncaught JS error, failed network request, and non-OK (4xx/5xx) HTTP response from the whole page lifetime — a screenshot shows *what* the page looked like, this log explains *why* (a blocked/failed script, a 404 on a stylesheet, a JS exception that stopped the page's own framework from rendering, etc.). Especially useful on headless/Termux setups where there's no window to look at directly. `debug/` is git-ignored; nothing in it gets committed.
 
 ---
 

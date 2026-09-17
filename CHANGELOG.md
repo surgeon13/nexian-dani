@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.106] — 2026-09-17
+
+### Added
+
+- **Login failure diagnostics now include console errors, failed requests, and bad HTTP responses — not just a screenshot.** Chasing a headless-only login timeout (`waiting for locator('input[placeholder="Enter your username"]') to be visible`, landing on `https://nexian.world/?journey=true`) across two completely unrelated environments (Windows headless, Termux/proot-distro on Android) turned up a real screenshot: the page rendering with none of its CSS/layout applied at all — content collapsed into a narrow unstyled column against a mostly-empty canvas, exactly what a modern page looks like when its stylesheet or a runtime styling script fails. Disabling `BLOCK_MEDIA` (the prime suspect, since it withholds font/image downloads) made no difference, ruling that out — but a screenshot alone can't say *why* a page rendered broken, only *that* it did.
+
+  `login.js` now records every `console` message, uncaught `pageerror`, `requestfailed` event, and non-OK (4xx/5xx) `response` for the page's whole lifetime (capped at 200 entries each), and dumps them to a new `debug/login-failure-<timestamp>.log` alongside the existing `.png` screenshot on any login failure. This should make the *next* occurrence of this bug (or any future one) diagnosable from one pair of files instead of another multi-day back-and-forth over screenshots and DOM snippets.
+
+### Verification
+
+Verified end-to-end against a real Playwright browser (not a re-implementation): launched real headless Chromium against a local HTTP fixture serving an intentional uncaught JS error, a missing stylesheet (404), and a missing script (404), using the exact `attachPageDiagnosticsRecorder()` logic now shipped in `login.js`. Confirmed all four categories were captured correctly: the console error and page error messages, both 404s as non-OK responses, and both as failed/aborted requests. `node --check` passes on `login.js`.
+
 ## [1.8.105] — 2026-09-12
 
 ### Fixed
