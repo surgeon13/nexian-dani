@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.109] — 2026-09-17
+
+### Fixed
+
+- **Manual `[2]` Village Stage Builder silently ran resource-field steps instead, on any village whose resource plan wasn't fully complete yet.** Reported: "One village stage builder step — it didn't work so well, only resource field templates were upgrading." Root cause: the fix in 1.8.53 (`resolveBuilderPlanModeForVillage()`) was written to solve one specific conflict — pressing `[3]` (resource) on a village pinned to a standalone *village* template via `[B]` used to start a brand-new competing `resource_fields_01` plan alongside it. The fix that landed made manual `[2]`/`[3]` defer *entirely* to the same resolver the auto Round Robin loop uses for "resource before village" sequencing — which, under the shipped default combo (`BUILDER_DEFAULT_PLAN_MODE=resource` + `BUILDER_RR_RESOURCE_THEN_VILLAGE=true`), meant it always returned "resource" for any village not yet resource-complete, regardless of which key was actually pressed. `[2]` effectively stopped existing as a way to force a village-stage step early, for the common case of any village still mid-resource-fields.
+
+  New `resolveBuilderPlanModeForManualKey(village, requestedPlanMode)` keeps the original conflict protection (a village pinned to a standalone template outside either default chain still wins, logged explicitly when it overrides the keypress) but otherwise honors whichever key was actually pressed for that one step — running it if there's pending work in that mode, or reporting "nothing to do" if there genuinely isn't, instead of silently substituting the other mode. Applied to both the initial manual pick and the Round-Robin "hop to next village on a temporary block" path, which had the same bug.
+
+### Added
+
+- **`scripts/test-builder-manual-key-resolution.js`** (wired into `npm test`): verifies the new resolver against fake builder/settings collaborators — the exact reported bug (pressing `[2]` with resource incomplete now returns "village"), `[3]` unaffected, the pinned-standalone-template protection still overriding the keypress, a completed pinned template and a completed requested mode both reporting "nothing to do" rather than substituting, and the no-village-selected fallback. 6/6 passed.
+
+### Verification
+
+6/6 new test cases passed. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep (see 1.8.108) after this change — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.108] — 2026-09-17
 
 ### Fixed

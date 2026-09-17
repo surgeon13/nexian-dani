@@ -7422,6 +7422,40 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     const villageHasPendingBuilderWork = (village) =>
       resolveBuilderPlanModeForVillage(village) != null;
 
+    // Manual [2]/[3] keys need different resolution rules than the auto RR
+    // pipeline: 1.8.53 made them defer entirely to resolveBuilderPlanModeForVillage()
+    // to stop pressing 3 on a village pinned to a standalone village template
+    // from starting a competing resource_fields_01 plan alongside it (a real
+    // conflict, worth preventing) -- but that resolver's WHOLE point outside
+    // that one case is "resource before village, always," so under the
+    // shipped default combo (BUILDER_DEFAULT_PLAN_MODE=resource +
+    // BUILDER_RR_RESOURCE_THEN_VILLAGE=true) it silently turned every press
+    // of [2] Village Stage Builder into a resource-fields step instead,
+    // for any village whose resource plan wasn't finished yet -- normal for
+    // most villages most of the time. A real user hit exactly this: pressed
+    // 2 expecting one village-stage step (Warehouse, Granary, ...) and only
+    // ever got resource fields. "Manual keys 2/3 override for one step" (the
+    // documented behavior) was true only for villages already resource-complete.
+    //
+    // Keep the standalone-template protection (still a real conflict worth
+    // preventing), but otherwise honor the key actually pressed: run that
+    // plan if it has pending work, or say so if it doesn't, instead of
+    // silently substituting the other mode.
+    const resolveBuilderPlanModeForManualKey = (village, requestedPlanMode) => {
+      const requested = normalizeBuilderPlanMode(requestedPlanMode);
+      if (!village) {
+        return requested;
+      }
+
+      const villageModeProgress = builder.getVillageProgress(village, { planMode: "village" });
+      const pinnedTemplate = villageModeProgress && villageModeProgress.active_template;
+      if (pinnedTemplate && !builder.isTemplateInDefaultChain(pinnedTemplate, "village")) {
+        return isBuilderPlanFullyComplete(village, "village") ? null : "village";
+      }
+
+      return isBuilderPlanFullyComplete(village, requested) ? null : requested;
+    };
+
     const getRoundRobinPipelineProgress = (villages) => {
       const list = (Array.isArray(villages) ? villages : []).filter((v) => !v.isCapital);
       if (!list.length) {
@@ -11602,17 +11636,20 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             return;
           }
 
-          // Run whatever plan this village is actually on, exactly as the auto
-          // loop resolves it — including a standalone template assigned via [B].
-          // Previously the plan came straight from the keypress (2 = village,
-          // 3 = resource), so pressing 3 on a village assigned a standalone
-          // *village* template started a brand-new resource_fields_01 plan
-          // alongside it, recreating the very two-plans-per-village conflict
-          // [B] was changed to prevent. A real user hit exactly that.
-          const resolvedPlanKey = resolveBuilderPlanModeForVillage(selectedVillage);
+          // Honor the key actually pressed (2 = village, 3 = resource) for one
+          // step, unless the village is pinned to a standalone template (e.g.
+          // via [B]) that isn't part of either default chain — in that one
+          // case running the OTHER mode's default chain would recreate the
+          // two-plans-per-village conflict [B] was changed to prevent, so the
+          // pin still wins. See resolveBuilderPlanModeForManualKey().
+          const resolvedPlanKey = resolveBuilderPlanModeForManualKey(
+            selectedVillage,
+            input === "3" ? "resource" : "village"
+          );
           if (resolvedPlanKey == null) {
             logSuccess(
-              `[Builder Manual] ${villageDisplayName(selectedVillage)} has no pending builder work — nothing to do.`
+              `[Builder Manual] ${villageDisplayName(selectedVillage)} has no pending ` +
+                `${requestedPlan.short} builder work — nothing to do.`
             );
             return;
           }
@@ -11620,8 +11657,8 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           activeBuilderPlanMode = selectedPlan.key;
           if (selectedPlan.key !== requestedPlan.key) {
             logInfo(
-              `[Builder Manual] ${villageDisplayName(selectedVillage)} is on the ${selectedPlan.short} plan — ` +
-                `running that instead of ${requestedPlan.short} to stay aligned with the auto builder.`
+              `[Builder Manual] ${villageDisplayName(selectedVillage)} is pinned to a standalone ${selectedPlan.short} ` +
+                `template — running that instead of ${requestedPlan.short} to avoid starting a competing plan.`
             );
           }
           if (settings.builderRoundRobinEnabled && rrCandidateVillagesManual.length) {
@@ -11735,8 +11772,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               // Each village runs its own plan — re-resolve rather than reusing
               // the plan of the village we hopped away from, which could be a
               // different mode entirely (e.g. one village on a standalone
-              // template, the next on the default resource chain).
-              const hoppedPlanKey = resolveBuilderPlanModeForVillage(nextVillage);
+              // template, the next on the default resource chain). Same
+              // manual-key resolver as the initial pick, not the auto
+              // pipeline's — otherwise hopping past a blocked village would
+              // silently reintroduce the very "[2] ignored, ran resource
+              // anyway" bug this change fixes, just one hop later.
+              const hoppedPlanKey = resolveBuilderPlanModeForManualKey(
+                nextVillage,
+                input === "3" ? "resource" : "village"
+              );
               if (hoppedPlanKey == null) {
                 continue;
               }
