@@ -1615,23 +1615,83 @@ async function createSession(headless) {
   const context = await browser.newContext({ locale: "en-US" });
   await applyContextSpeedups(context);
   const page = await context.newPage();
+  const pageDiagnostics = attachPageDiagnosticsRecorder(page);
   try {
     await loginToPage(page, context);
   } catch (error) {
-    await captureLoginFailureDiagnostics(page, error).catch(() => {});
+    await captureLoginFailureDiagnostics(page, error, pageDiagnostics).catch(() => {});
     throw error;
   }
   return { browser, context, page, headless: effectiveHeadless };
 }
 
+// A screenshot alone stopped being enough evidence once the same login
+// timeout turned out to have a genuinely different cause each time it was
+// investigated (a stray NEXIAN_URL, then a headless-only browser-process
+// crash, then -- on real screenshots -- a page rendering with none of its
+// CSS/layout applied at all). None of that shows up in a static image:
+// console errors and failed sub-resource requests are what actually explain
+// *why* a page failed to render, so record them for the whole page
+// lifetime and dump them alongside the screenshot on failure. Capped at 200
+// entries each so a chatty page can't grow this unboundedly during a long
+// hang.
+const PAGE_DIAGNOSTICS_MAX_ENTRIES = 200;
+
+function attachPageDiagnosticsRecorder(page) {
+  const consoleEntries = [];
+  const pageErrors = [];
+  const failedRequests = [];
+  const badResponses = [];
+  const push = (arr, entry) => {
+    if (arr.length < PAGE_DIAGNOSTICS_MAX_ENTRIES) {
+      arr.push(entry);
+    }
+  };
+
+  page.on("console", (msg) => {
+    try {
+      push(consoleEntries, `[${msg.type()}] ${msg.text()}`);
+    } catch (_error) {
+      // ignore -- best effort
+    }
+  });
+  page.on("pageerror", (err) => {
+    push(pageErrors, err && err.message ? err.message : String(err));
+  });
+  page.on("requestfailed", (req) => {
+    try {
+      const failure = req.failure();
+      push(
+        failedRequests,
+        `${req.method()} ${req.url()} -- ${(failure && failure.errorText) || "failed"}`
+      );
+    } catch (_error) {
+      // ignore
+    }
+  });
+  page.on("response", (res) => {
+    try {
+      if (res.status() >= 400) {
+        push(badResponses, `${res.status()} ${res.url()}`);
+      }
+    } catch (_error) {
+      // ignore
+    }
+  });
+
+  return { consoleEntries, pageErrors, failedRequests, badResponses };
+}
+
 /**
  * Login failures are especially hard to diagnose headless (Termux/CI) — no
  * window to look at when e.g. a portal DOM change or a slow page load makes
- * a selector time out. Save a screenshot + the failing URL so the next
- * report has evidence to root-cause from, instead of just an error message
- * and a locator string.
+ * a selector time out. Save a screenshot + the failing URL, plus (as of
+ * v1.8.106) buffered console messages, uncaught page errors, failed
+ * requests, and non-OK responses for the whole page lifetime, so the next
+ * report has real evidence of *why* the page ended up in that state instead
+ * of just a screenshot of the result and a locator string.
  */
-async function captureLoginFailureDiagnostics(page, error) {
+async function captureLoginFailureDiagnostics(page, error, pageDiagnostics) {
   if (!page || page.isClosed()) {
     return;
   }
@@ -1655,6 +1715,24 @@ async function captureLoginFailureDiagnostics(page, error) {
     // ignore
   }
   console.error(`  [Login] Failure reason: ${error && error.message ? error.message : error}`);
+
+  if (pageDiagnostics) {
+    const logPath = path.join(dir, `login-failure-${stamp}.log`);
+    const section = (title, lines) =>
+      `--- ${title} (${lines.length}) ---\n${lines.length ? lines.join("\n") : "(none)"}\n`;
+    const body = [
+      section("Uncaught page errors", pageDiagnostics.pageErrors),
+      section("Failed requests", pageDiagnostics.failedRequests),
+      section("Non-OK responses (4xx/5xx)", pageDiagnostics.badResponses),
+      section("Console messages", pageDiagnostics.consoleEntries)
+    ].join("\n");
+    try {
+      fs.writeFileSync(logPath, body, "utf8");
+      console.error(`  [Login] Failure diagnostics saved: ${logPath}`);
+    } catch (_logError) {
+      // Best effort.
+    }
+  }
 }
 
 async function run() {
