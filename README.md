@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.107** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.108** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -552,6 +552,7 @@ Recommended zip contents align with whatever `export.js` includes (`villageExpan
 - **Wrong egress IP / stuck on old proxy:** `POST /api/proxy-settings` with `{"action":"next"}` (or **Apply**). Confirm `account.publicAddress` matches the new proxy host after `automation.reason` is `online`.
 - **Top 10 empty / no Δ:** need at least two successful snapshots in `top10.log`; confirm `TOP10_TRACKING_ENABLED` and that `/api/top10` returns `ok: true` categories.
 - **Login fails with a locator timeout (e.g. `waiting for locator('input[placeholder="Enter your username"]') to be visible`):** the bot saves a full-page screenshot + the failing URL to `debug/login-failure-<timestamp>.png` on any login failure — check it to see what the page actually looked like (portal redesign, cookie banner, maintenance page, slow load, or a page that rendered with no CSS/layout applied at all). As of **v1.8.106**, it also saves `debug/login-failure-<timestamp>.log` alongside it: every browser console message, uncaught JS error, failed network request, and non-OK (4xx/5xx) HTTP response from the whole page lifetime — a screenshot shows *what* the page looked like, this log explains *why* (a blocked/failed script, a 404 on a stylesheet, a JS exception that stopped the page's own framework from rendering, etc.). Especially useful on headless/Termux setups where there's no window to look at directly. `debug/` is git-ignored; nothing in it gets committed.
+- **Raid Evacuation never triggers even though a village is clearly under attack (defenders wiped in a battle report, no `[Raid Evacuation]` log lines around that time):** fixed in **v1.8.108** — the village-list "under attack" detection only checked for an `under-attack` row class, an `.attack-glow` element, or an `img.att1` icon; some themes/markup only signal it via `title="Under Attack!"` on the row's link instead, which none of those three caught. A village flagged only that way was invisible to Raid Evacuation (and everything else gated on `village.underAttack`) no matter how low `RAID_EVACUATION_TRIGGER_MINUTES` was set. Upgrade to pick this up automatically — no setting to change.
 
 ---
 

@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.108] — 2026-09-17
+
+### Fixed
+
+- **Raid Evacuation (and anything else gated on `village.underAttack`) could miss a real incoming attack entirely, depending on how the village list marks it.** Following a live incident where a village's entire defending garrison was wiped in a battle report with zero `[Raid Evacuation]` activity around it, found a real gap: the `#vlist` under-attack detection only checked for an `under-attack` row class, an `.attack-glow` element, or an `img.att1` icon — a fourth, real signal some themes/markup use instead (`title="Under Attack!"` on the row's link) was never checked, even though a dead, never-wired-in helper function (`readUnderAttackVillageIds()`, removed in this same change) already implemented exactly that check independently. Merged the missing `a[title*='Under Attack']` signal into the actual detection used by `refreshVillageState()` — purely additive (one more `||` condition), so it can only catch more real attacks than before, never fewer.
+
+### Removed
+
+- **Dead code cleanup**, found via a whole-repo cross-reference sweep (every top-level function/const-arrow checked for zero real uses anywhere in the codebase) rather than guesswork: 12 unused functions removed across `terminalMenu.js`, `villageBuilder.js`, `villageExpansion.js`, and `public/app.js` — abandoned/superseded helpers (an old manual settlement-target prompt, a whole unused manual rally-point settlement-dispatch flow, thin wrappers left behind by earlier refactors, etc.). No behavior change for anything still in use; re-ran the same sweep after removal and confirmed no new dead code was exposed by the cuts.
+
+### Added
+
+- **`scripts/test-under-attack-detection.js`** (wired into `npm test`): verifies the exact under-attack boolean expression now shipped in `terminalMenu.js` against a real page via Playwright — all four individual signals (row class, `.attack-glow`, `img.att1`, the new `a[title*='Under Attack']`), a row with no signal at all, and a row with an unrelated `title` attribute that must not false-positive. Skips cleanly (not a failure) if Chromium isn't installed yet, since this needs a real browser the same way the bot itself does.
+
+### Verification
+
+6/6 cases passed for the under-attack detection fix (see the new test above). Re-ran the dead-code sweep after every removal — 0 candidates left, and no new ones appeared as a result of the cuts (no cascading dead helpers). `node --check` passes on every `.js` file in the repo. `npm test` passes end-to-end.
+
 ## [1.8.107] — 2026-09-17
 
 ### Added

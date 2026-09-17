@@ -111,17 +111,6 @@ function isCompactView() {
   return document.body.classList.contains("compact-view");
 }
 
-function isMicroView() {
-  if (!isCompactView()) {
-    return false;
-  }
-  try {
-    return window.matchMedia("(max-width: 480px), (max-height: 400px)").matches;
-  } catch (_) {
-    return false;
-  }
-}
-
 let clientActionPending = false;
 let pendingClientActionLabel = "";
 let lastVillageRenderKey = "";
@@ -1509,10 +1498,6 @@ function bindTroopForm(form, { onDirty, onSubmit, config, defaults }) {
   bindTroopMatrix(form, defaults, onDirty);
 }
 
-function renderTroopLoopStatus(loop) {
-  renderTroopLoopPanel(loop);
-}
-
 async function saveTroopRrForm(event) {
   event.preventDefault();
   try {
@@ -2139,16 +2124,6 @@ function setupActivityForm() {
 }
 
 let proxyFormDirty = false;
-
-function proxyEntryToLine(entry) {
-  if (!entry || !entry.server) {
-    return "";
-  }
-  if (entry.username) {
-    return `${entry.username}:${entry.hasPassword ? "****" : ""}@${entry.server.replace(/^https?:\/\//, "")}`;
-  }
-  return entry.server;
-}
 
 function renderProxySettingsPanel(proxy) {
   if (!proxy || proxyFormDirty) {
