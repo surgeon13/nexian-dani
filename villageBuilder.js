@@ -142,10 +142,6 @@ function getTemplateChain(index, startKey) {
   return chain;
 }
 
-function getDefaultTemplateChain(index) {
-  return getTemplateChain(index, index.default_template);
-}
-
 /**
  * True if templateKey is reachable from the default chain for planMode
  * (village_stage_00 -> 01 -> 02, or resource_fields_01 -> ... -> 05) by

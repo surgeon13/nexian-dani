@@ -287,44 +287,6 @@ function normalizeExpansionSettlementSettings(settings) {
   settings.resourceCirculationReceiverMaxFillRatio = fill;
 }
 
-async function askSettlementTarget(rl) {
-  const pairInput = (
-    await askQuestion(rl, "Target coordinates X|Y (Enter to use separate prompts, C to cancel): ")
-  ).trim();
-  if (pairInput.toUpperCase() === "C") {
-    return null;
-  }
-
-  const pair = parseCoordinatePair(pairInput);
-  if (pair) {
-    return pair;
-  }
-
-  let attempts = 0;
-  while (attempts < 3) {
-    const targetXText = (await askQuestion(rl, "Target X coordinate (or C to cancel): ")).trim();
-    if (targetXText.toUpperCase() === "C") {
-      return null;
-    }
-
-    const targetYText = (await askQuestion(rl, "Target Y coordinate (or C to cancel): ")).trim();
-    if (targetYText.toUpperCase() === "C") {
-      return null;
-    }
-
-    const targetX = parseCoordinateValue(targetXText);
-    const targetY = parseCoordinateValue(targetYText);
-    if (targetX !== null && targetY !== null) {
-      return { x: targetX, y: targetY };
-    }
-
-    attempts += 1;
-    logWarn("Invalid coordinates. Use numbers like -18 and -26, or enter one line as -18|-26.");
-  }
-
-  return null;
-}
-
 function printDivider(title) {
   const line = "-".repeat(64);
   console.log("");
@@ -473,10 +435,6 @@ function getIncomingAttackAlerts(movements) {
     .sort((a, b) => a.etaSeconds - b.etaSeconds);
 
   return alerts;
-}
-
-function formatIsoClock(date) {
-  return new Date(date).toLocaleTimeString("en-GB", { hour12: false });
 }
 
 /** Human-readable countdown, e.g. 7m 12s or 45s. */
@@ -4877,13 +4835,6 @@ async function runSettingsMenu(rl, settings, runtimeControls) {
   }
 }
 
-async function openVillageBuilder(page, settings, selectedVillageId) {
-  await page.goto(withVillageId(settings.villageBuilderUrl, selectedVillageId), {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
-}
-
 async function navigateToVillageCenterMap(page, settings, selectedVillageId) {
   const villageMapUrl = withVillageId(settings.villageBuilderUrl, selectedVillageId);
 
@@ -6523,48 +6474,6 @@ async function evacuateTroopsToPivot(getPage, settings, sourceVillage, pivotVill
   };
 }
 
-async function readUnderAttackVillageIds(getPage, settings) {
-  const page = getPage();
-  const collect = async () => page.evaluate(() => {
-    const ids = new Set();
-
-    Array.from(document.querySelectorAll("#vlist tr.under-attack[data-vid]"))
-      .forEach((row) => {
-        const id = Number(row.getAttribute("data-vid"));
-        if (Number.isFinite(id)) {
-          ids.add(id);
-        }
-      });
-
-    // Fallback signal for templates where row class may not be present:
-    // attack icon/link title, e.g. <a title="Under Attack!"><img class="att1"></a>
-    Array.from(document.querySelectorAll(
-      "#vlist tr[data-vid] a[title*='Under Attack'], #vlist tr[data-vid] img.att1"
-    ))
-      .forEach((node) => {
-        const row = node.closest("tr[data-vid]");
-        if (!row) {
-          return;
-        }
-        const id = Number(row.getAttribute("data-vid"));
-        if (Number.isFinite(id)) {
-          ids.add(id);
-        }
-      });
-
-    return Array.from(ids);
-  });
-
-  let ids = await collect().catch(() => []);
-  if (ids.length > 0) {
-    return ids;
-  }
-
-  await safeGotoWithRetry(page, settings.villageStatusUrl).catch(() => null);
-  ids = await collect().catch(() => []);
-  return ids;
-}
-
 async function runTerminalMenu(getPage, settings, runtimeControls) {
   terminalUiSettings = settings;
   const dashboardMode = Boolean(runtimeControls.dashboardMode && runtimeControls.dashboardBridge);
@@ -6869,10 +6778,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               row.classList.contains("current"))
           );
 
+          // a[title*='Under Attack'] added alongside the pre-existing three checks:
+          // a dead sibling helper (readUnderAttackVillageIds(), removed in this same
+          // change) already checked this signal independently and was never wired
+          // into this -- the actual detection raid evacuation depends on -- meaning
+          // any village flagged only by that title text was silently invisible to
+          // raid evacuation this whole time. Purely additive (an extra OR
+          // condition), so this can only catch more real attacks, never fewer.
           const underAttack = Boolean(
             row.classList.contains("under-attack") ||
               row.querySelector(".attack-glow") ||
-              row.querySelector("img.att1")
+              row.querySelector("img.att1") ||
+              row.querySelector("a[title*='Under Attack']")
           );
 
           return {
