@@ -2,7 +2,7 @@
 
 Menu-driven Playwright automation for Nexian: login/session reuse, farmlists, village status, template-based builders, **troop plans** (Barracks / Great Barracks / Stable / Great Stable / Workshop), village expansion helpers, optional **proxy pool**, timed loops, and append-only action logging (`log.jsonl`).
 
-**Current version: 1.8.106** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+**Current version: 1.8.107** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
@@ -156,6 +156,7 @@ If `.env` is missing, `login.js` creates it from `.env.example` when present, or
 | `npm run cursor:start` | Materialize secrets + start 24/7 stack |
 | `npm run termux:setup` | **Android (Termux), experimental:** one-time `proot-distro` Ubuntu + Node + Playwright setup |
 | `npm run termux:run` | **Android (Termux), experimental:** launch inside the `proot-distro` chroot |
+| `npm run termux:fetch-debug` | **Android (Termux), experimental:** pulls the newest `debug/login-failure-*.{png,log}` pair out of the chroot into `~/storage/downloads/nexian-debug/` where Android can actually open/share them |
 | `npm run playwright:install` | Install Playwright Chromium only |
 | `npm run clean:runtime` | Removes `storageState.json`, `log.jsonl`, `top10.log`, `session-presence.json`, `templates/progress.json` |
 
@@ -432,12 +433,20 @@ bash scripts/termux-proot-run.sh --dashboard # node login.js --dashboard --keep-
 
 The chroot at `/root/nexian-dani` is a **separate git checkout** from the Termux-side one — pulling updates in Termux (e.g. to get a newer `termux-proot-run.sh`) does not update the chroot's copy of `login.js` on its own. To avoid the two silently drifting apart, `termux-proot-run.sh` fetches/checks-out/pulls the same branch as the Termux-side checkout inside the chroot before every launch. Pass `--no-sync` to skip that (faster restarts once you know both sides match, or if you're offline).
 
-(`npm run termux:setup` / `npm run termux:run` are the same two scripts.)
+**Getting a failed login's debug screenshot/log off the device:** `debug/login-failure-<timestamp>.{png,log}` (see [Troubleshooting](#troubleshooting)) are saved *inside the chroot*, which Android's own file tools (Files app, Gallery, share sheets) cannot see into at all — that's a proot limitation, not something this project does differently. Run this from plain Termux (not inside `proot-distro login`) to pull the newest pair out into somewhere you can actually open/share them:
+
+```bash
+bash scripts/termux-fetch-debug.sh   # (or: npm run termux:fetch-debug)
+```
+
+Lands them in `~/storage/downloads/nexian-debug/` (run `termux-setup-storage` once first if you haven't). Open Files/Downloads → `nexian-debug` from there.
+
+(`npm run termux:setup` / `npm run termux:run` / `npm run termux:fetch-debug` are the same three scripts.)
 
 **Read this before relying on it:**
 - Chromium runs through `proot`'s syscall-translation layer — slower and occasionally flakier than a native Linux host.
 - Android will still try to kill backgrounded apps to reclaim memory. `termux-wake-lock` (used automatically by `termux-proot-run.sh`) plus setting Termux's battery mode to **Unrestricted** (Settings → Apps → Termux → Battery) reduces but does not eliminate this.
-- `--headed` has nowhere to render unless you separately set up [termux-x11](https://github.com/termux/termux-x11).
+- `--headed` has nowhere to render unless you separately set up [termux-x11](https://github.com/termux/termux-x11) — **or** install a virtual display (`apt-get install -y xvfb` inside the chroot, then run `xvfb-run -a node login.js --headed ...`), which needs no real screen at all. Worth trying if headless logins fail for you but `--headed` works fine elsewhere (see [Troubleshooting](#troubleshooting)).
 - This whole combination is unofficial — neither Playwright nor `proot-distro` claims to support it. Treat it as experimental, not a replacement for the PC/VPS path above, which remains the recommended way to run this 24/7.
 
 ---

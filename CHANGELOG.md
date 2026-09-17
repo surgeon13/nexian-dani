@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.107] — 2026-09-17
+
+### Added
+
+- **`scripts/termux-fetch-debug.sh` (`npm run termux:fetch-debug`): pulls the newest login-failure screenshot + diagnostics log out of the Termux `proot-distro` chroot automatically.** `debug/` already lives exactly where it should — inside the project, next to `login.js` — but because the bot runs inside a proot chroot at `/root/nexian-dani`, Android's own file tools (Files app, Gallery, share sheets) can't see into that folder at all; a plain Termux-side `find` can't locate it either, since proot intercepts filesystem syscalls to present that chroot view rather than exposing it as an ordinary subdirectory. Getting a single file out previously took several hand-typed multi-line commands (list the chroot's debug folder, base64-encode the target file through `proot-distro login`, decode it back into a real file in shared storage) — easy to get wrong mid-troubleshooting, which is exactly what happened over several rounds of a live investigation this session.
+
+  The new script does the whole round trip in one command: finds the newest `login-failure-*.png`/`.log` pair inside the chroot, pipes both out through a running `proot-distro login` process's own stdout (sidestepping the chroot visibility problem entirely, with no need to know proot-distro's exact on-disk mount layout, which can vary by device/version), and writes them to `~/storage/downloads/nexian-debug/` — a normal Android folder any file manager or share sheet can reach.
+
+- **Documented `xvfb-run` as an alternative to `termux-x11` for `--headed` on Termux.** A live investigation found headed logins working reliably across every environment tried (Windows, Termux/proot) while headless logins hit the same failure every time — `xvfb-run` gives Chromium a virtual display with no real screen or `termux-x11` setup needed, letting `--headed` run invisibly/unattended the same way headless normally would.
+
+### Verification
+
+Verified the stamp-extraction and empty/missing-file guard logic from `termux-fetch-debug.sh` in isolation against simulated `ls -t` output (multi-line real match, and empty-input cases) — both passed. `bash -n` passes on the script.
+
 ## [1.8.106] — 2026-09-17
 
 ### Added
