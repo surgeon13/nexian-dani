@@ -6628,6 +6628,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
     let celebrationsRoundRobinIndex = 0;
     let builderResumeWaitLogged = false;
     let builderTemplateDeferredForCrannyLogged = false;
+    let builderRrCapitalFallbackLogged = false;
     let builderVillageWaitLastLogAt = null;
     let lastAutoFarmlistStatusPrintedAt = null;
     let activeBuilderPlanMode =
@@ -8775,7 +8776,32 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         let roundRobinAdvanceStep = 1;
         if (settings.builderRoundRobinEnabled && villageState.villages.length > 0) {
           const excludedVillageIds = parsePivotVillageIdSet(settings.builderRoundRobinExcludedVillageIds);
-          const nonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+          const allNonCapitalVillages = villageState.villages.filter((village) => !village.isCapital);
+          // Builder RR deliberately excludes the capital -- it's meant for
+          // round-robining newer off-villages while the capital is developed
+          // manually ([2]/[3]) or via the separate non-RR builder loop. That
+          // leaves single-village accounts (no expansion yet -- the normal
+          // state for a fresh server start) with literally zero RR
+          // candidates, so RR just sat idle every tick forever, logging "No
+          // non-capital villages available" with nothing ever getting built.
+          // A real user hit exactly this: "resources arent built for some
+          // reason" on an account with only its capital. Fall back to
+          // including the capital ONLY when it's the sole village -- any
+          // account with at least one real off-village keeps the original
+          // capital-excluded behavior completely unchanged.
+          const onlyHasCapital = allNonCapitalVillages.length === 0 && villageState.villages.length > 0;
+          if (onlyHasCapital) {
+            if (!builderRrCapitalFallbackLogged) {
+              builderRrCapitalFallbackLogged = true;
+              logInfo(
+                "[Builder Loop] Only the capital village exists — Round Robin will build it directly " +
+                  "until a second village appears (normally RR skips the capital)."
+              );
+            }
+          } else {
+            builderRrCapitalFallbackLogged = false;
+          }
+          const nonCapitalVillages = onlyHasCapital ? villageState.villages : allNonCapitalVillages;
 
           // Catch-up: a village with no builder work left should actually be
           // recorded in BUILDER_RR_EXCLUDED_VILLAGE_IDS, not just silently
@@ -8821,15 +8847,14 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               !excludedVillageIds.has(Number(village.id)) && villageHasPendingBuilderWork(village)
           );
           if (!rrCandidateVillages.length) {
-            if (nonCapitalVillages.length) {
-              logInfo(
-                builderRrUsesResourceThenVillagePipeline()
-                  ? "[Builder Loop] All non-capital villages finished resource fields + village stage plans."
-                  : `[Builder Loop] All non-capital villages are complete for ${getBuilderPlanMeta(activeBuilderPlanMode).short} plan. Waiting for next changes.`
-              );
-            } else {
-              logWarn("[Builder Loop] No non-capital villages available for template auto-build. Skipping.");
-            }
+            // nonCapitalVillages is never empty here: villageState.villages.length > 0
+            // is already guaranteed by the outer condition, and the capital
+            // fallback above ensures at least one candidate either way.
+            logInfo(
+              builderRrUsesResourceThenVillagePipeline()
+                ? "[Builder Loop] All non-capital villages finished resource fields + village stage plans."
+                : `[Builder Loop] All non-capital villages are complete for ${getBuilderPlanMeta(activeBuilderPlanMode).short} plan. Waiting for next changes.`
+            );
             scheduleBuilderLoop();
             return;
           }

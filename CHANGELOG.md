@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.110] — 2026-09-18
+
+### Fixed
+
+- **Builder Round Robin never built anything for single-village accounts, logging `[Builder Loop] No non-capital villages available for template auto-build. Skipping.` forever.** Reported: "resources arent built for some reason." Root cause: Builder RR deliberately excludes the capital from its candidate pool — it's meant for round-robining newer off-villages while the capital is developed manually (`[2]`/`[3]`) or via the separate non-RR builder loop. That's a reasonable design for an account with multiple villages, but it left any account with **only its capital** (the normal state right after a fresh server start, before the first settlement) with zero RR candidates ever, tick after tick, with nothing ever getting built despite `BUILDER_LOOP_ENABLED`/`BUILDER_ROUND_ROBIN_ENABLED` both being on.
+
+  RR now falls back to including the capital in its own candidate pool, but *only* when it's genuinely the sole village on the account — any account with at least one real off-village keeps the original capital-excluded behavior completely unchanged. Logs once when the fallback kicks in (`Only the capital village exists — Round Robin will build it directly...`) so it's visible rather than a silent behavior change. Also removed the now-unreachable "no non-capital villages" branch this fallback made dead code (the warning could only ever fire when the account had zero villages at all, a different, already-logged-elsewhere condition).
+
+### Added
+
+- **`scripts/test-builder-rr-capital-fallback.js`** (wired into `npm test`): verifies the fallback decision against synthetic village lists — a capital-only account falls back correctly, a multi-village account is unaffected, a single off-village (plus capital) doesn't trigger the fallback, and an empty village list never falsely triggers it. 4/4 passed.
+
+### Verification
+
+4/4 new test cases passed. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.109] — 2026-09-17
 
 ### Fixed
