@@ -522,14 +522,19 @@ const settings = {
   // its template's target level) before a single village-stage step
   // (Warehouse, Granary, Main Building, ...) ever runs — which for a fresh
   // village can be a very long time with no capacity/build-speed support
-  // from those buildings the whole way there. Off by default (unchanged
-  // behavior); when on, each RR turn alternates between one resource step
-  // and one village step instead of fully finishing one before the other,
-  // for any village where both still have pending work. Real request: "is
-  // there a way to enhance our building algorithm so templates of
-  // buildings and resources will go together when villages are built?"
+  // from those buildings the whole way there. When on (default true as of
+  // v1.8.113 — was opt-in false in v1.8.111), each RR turn alternates
+  // between one resource step and one village step instead of fully
+  // finishing one before the other, for any village where both still have
+  // pending work. Real request, twice: "is there a way to enhance our
+  // building algorithm so templates of buildings and resources will go
+  // together when villages are built?", then explicitly confirmed: "first
+  // stage must be what we wrote. then resources and village stages should
+  // continue. we want to be able to let it work and refine villages
+  // automatically with the templates." Set to "false" to restore the
+  // original strict resource-then-village sequencing.
   builderRrInterleaveResourceVillage:
-    String(process.env.BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE || "false").toLowerCase() === "true",
+    String(process.env.BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE || "true").toLowerCase() === "true",
   // Consecutive ticks a village may spend stuck on the same non-transient
   // blocked status before it is auto-excluded from Builder RR, so the
   // rotation stops spending turns on a village nothing can be built in.
