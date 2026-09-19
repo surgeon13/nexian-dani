@@ -6655,6 +6655,12 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
     const pendingMerchantArrivalByVillage = new Map();
     const builderVillageCooldownUntilByVillage = new Map();
+    // Which plan mode ("resource" | "village") a village last ran, used only
+    // when BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE is on to alternate turns
+    // instead of finishing one plan before the other ever starts. In-memory
+    // only (like the cooldown map above) -- resets on restart, which just
+    // means the alternation restarts from "resource" first; harmless.
+    const builderInterleaveLastModeByVillage = new Map();
     const builderEfficiencyWindow = {
       startedAt: Date.now(),
       attempts: 0,
@@ -7383,25 +7389,43 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
       }
 
       if (builderRrUsesResourceThenVillagePipeline()) {
-        if (!isBuilderPlanFullyComplete(village, "resource")) {
-          return "resource";
+        const resourceDone = isBuilderPlanFullyComplete(village, "resource");
+        const villageDone = isBuilderPlanFullyComplete(village, "village");
+
+        if (resourceDone && villageDone) {
+          // Nothing left for this village either way.
+          return null;
         }
-        // Resource plan is complete. The entire point of "resource then
-        // village" is to continue automatically into the village-stage plan
-        // (Warehouse, Granary, Main Building, ...) — do that before ever
-        // treating this village as "done". This used to check
-        // BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE first and exclude
-        // unconditionally when it was on, which silently made
-        // BUILDER_RR_RESOURCE_THEN_VILLAGE a no-op under the combination
-        // both default to (true + true): a real user hit exactly this —
-        // resource fields finished, and Warehouse/Granary/village-stage
-        // simply never ran, forever.
-        if (!isBuilderPlanFullyComplete(village, "village")) {
+        if (resourceDone) {
           return "village";
         }
-        // Both resource and village plans are complete now — genuinely
-        // nothing left for this village either way.
-        return null;
+        if (villageDone) {
+          return "resource";
+        }
+
+        // Both plans still have pending work. Default: finish resource
+        // fields entirely before ever starting village-stage buildings —
+        // the entire point of "resource then village" is to continue
+        // automatically into the village-stage plan (Warehouse, Granary,
+        // Main Building, ...) once resource is done, not skip it, but the
+        // ORDER is still strictly sequential unless interleaving is on.
+        if (!settings.builderRrInterleaveResourceVillage) {
+          return "resource";
+        }
+
+        // BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE: alternate turns instead of
+        // fully finishing one plan before the other ever starts, so
+        // Warehouse/Granary/Main Building get built alongside resource
+        // fields rather than only after every field is already maxed. Real
+        // request: "is there a way to enhance our building algorithm so
+        // templates of buildings and resources will go together when
+        // villages are built?" First turn for a village starts with
+        // "resource" (matches the non-interleaved default), then flips
+        // every turn after.
+        const lastMode = builderInterleaveLastModeByVillage.get(village.id);
+        const nextMode = lastMode === "resource" ? "village" : "resource";
+        builderInterleaveLastModeByVillage.set(village.id, nextMode);
+        return nextMode;
       }
       // Not using the resource->village pipeline (disabled, or the default
       // plan mode isn't "resource"). If the active mode is resource-only,

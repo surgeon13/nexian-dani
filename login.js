@@ -517,6 +517,19 @@ const settings = {
   builderRrAutoExcludeOnResourceComplete:
     String(process.env.BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE || "true").toLowerCase() ===
     "true",
+  // With BUILDER_RR_RESOURCE_THEN_VILLAGE on, a village's resource-fields
+  // plan normally has to be 100% complete (every field + bonus building at
+  // its template's target level) before a single village-stage step
+  // (Warehouse, Granary, Main Building, ...) ever runs — which for a fresh
+  // village can be a very long time with no capacity/build-speed support
+  // from those buildings the whole way there. Off by default (unchanged
+  // behavior); when on, each RR turn alternates between one resource step
+  // and one village step instead of fully finishing one before the other,
+  // for any village where both still have pending work. Real request: "is
+  // there a way to enhance our building algorithm so templates of
+  // buildings and resources will go together when villages are built?"
+  builderRrInterleaveResourceVillage:
+    String(process.env.BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE || "false").toLowerCase() === "true",
   // Consecutive ticks a village may spend stuck on the same non-transient
   // blocked status before it is auto-excluded from Builder RR, so the
   // rotation stops spending turns on a village nothing can be built in.
@@ -770,6 +783,9 @@ function persistRuntimeSettings(selectedKeys) {
     BUILDER_RR_EXCLUDED_VILLAGE_IDS: String(settings.builderRoundRobinExcludedVillageIds || ""),
     BUILDER_DEFAULT_PLAN_MODE: settings.builderDefaultPlanMode === "village" ? "village" : "resource",
     BUILDER_RR_RESOURCE_THEN_VILLAGE: settings.builderRrResourceThenVillage ? "true" : "false",
+    BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE: settings.builderRrInterleaveResourceVillage
+      ? "true"
+      : "false",
     BUILDER_RR_AUTO_EXCLUDE_ON_RESOURCE_COMPLETE: settings.builderRrAutoExcludeOnResourceComplete
       ? "true"
       : "false",

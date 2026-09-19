@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.111] — 2026-09-19
+
+### Added
+
+- **New opt-in `BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE` setting: alternate resource-field and village-stage builder turns instead of finishing resource entirely first.** Reported: "We do have templates for basic village stages but once we run the bot automatically it doesn't go through them. It only upgrades basic resources... is there a way to enhance our building algorithm so templates of buildings and resources will go together when villages are built?"
+
+  The default `BUILDER_RR_RESOURCE_THEN_VILLAGE` pipeline is strictly sequential: a village's resource-fields plan (all 18 basic fields + bonus buildings) has to reach 100% complete before a single village-stage step (Warehouse, Granary, Main Building, ...) ever runs — which can be a long stretch with no capacity/build-speed support from those buildings along the way. Turning on `BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE` (off by default; every existing install is unaffected unless this is set) makes each Builder RR turn alternate between one resource step and one village step instead, for any village where both plans still have pending work — so both templates progress together per village, the "go together" the report asked for, rather than one strictly gating the other. Once either plan finishes, the other runs every turn as normal (no pointless alternating against a plan with nothing left to do). Manual `[2]`/`[3]` keys are completely unaffected either way — they already run whichever mode is pressed (v1.8.109).
+
+- **`scripts/test-builder-interleave-resource-village.js`** (wired into `npm test`): verifies the alternation decision — off keeps the original resource-first-always behavior, on alternates turn by turn, either plan finishing stops the alternation and runs the other every turn, both complete reports nothing to do regardless of the setting, and alternation state is tracked independently per village (one village's turn count can't affect another's). 6/6 passed.
+
+### Verification
+
+6/6 new test cases passed. `node --check` passes on `login.js` and `terminalMenu.js`. Cross-checked `BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE` is both read via `process.env.X` in `login.js` and present in `templates/settings.example.json` (98 keys total now). Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.110] — 2026-09-18
 
 ### Fixed
