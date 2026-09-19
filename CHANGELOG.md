@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.113] — 2026-09-19
+
+### Changed
+
+- **`BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE` now defaults to `true`** (was opt-in `false` in v1.8.111). Explicitly confirmed: "first stage must be what we wrote. then resources and village stages should continue. we want to be able to let it work and refine villages automatically with the templates." With `BUILDER_ROUND_ROBIN_ENABLED` + `BUILDER_RR_RESOURCE_THEN_VILLAGE` both on (both already required for the combined pipeline to run at all, and both already in use for this account), Builder RR now alternates resource-field and village-stage turns by default instead of requiring an opt-in setting — matching v1.8.112's reordered `village_stage_00` (first stage exactly as requested) plus continued resource + village progression, working together automatically with no settings.json edit required on a fresh install. Set it to `false` to restore the original v1.8.110-and-earlier strict "finish resource entirely, then village" sequencing.
+
+  **Upgrading note:** a code-level default only takes effect for a `templates/settings.json` that doesn't already have the key. Anyone who already has this file from v1.8.111/1.8.112 with the key explicitly written as `false` keeps that value until it's edited — documented in README's Troubleshooting.
+
+### Verification
+
+Added two more assertions to `scripts/test-builder-interleave-resource-village.js` (8/8 now): the login.js default-resolution expression resolves to `true` when unset, and `templates/settings.example.json` ships the matching default. `node --check` passes on `login.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.112] — 2026-09-19
 
 ### Changed

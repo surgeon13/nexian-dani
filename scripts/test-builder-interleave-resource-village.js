@@ -8,6 +8,7 @@
 // If you change this logic in terminalMenu.js, mirror the change here too,
 // or this test silently stops verifying the real behavior.
 const assert = require("assert");
+const path = require("path");
 
 function makeResolver({ interleave }) {
   const lastModeByVillage = new Map();
@@ -99,5 +100,26 @@ console.log("PASS: both plans complete reports nothing to do, with or without in
   assert.strictEqual(resolve(2, false, false), "village");
 }
 console.log("PASS: alternation state is tracked independently per village");
+
+// 7. Default resolution (verbatim copy of login.js's settings-load
+// expression): with no env var and no settings.json override, interleaving
+// must default to ON as of v1.8.113 -- confirmed by explicit request ("we
+// want to be able to let it work and refine villages automatically with the
+// templates"), not just left opt-in.
+{
+  delete process.env.BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE;
+  const resolved = String(process.env.BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE || "true").toLowerCase() === "true";
+  assert.strictEqual(resolved, true, "interleaving must default to on when unset");
+}
+console.log("PASS: interleaving defaults to on when BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE is unset");
+
+// 8. The shipped example template must match that default, or a fresh
+// templates/settings.json (copied from it on first run) would silently
+// disagree with what login.js itself defaults to.
+{
+  const example = require(path.join(__dirname, "..", "templates", "settings.example.json"));
+  assert.strictEqual(example.BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE, true);
+}
+console.log("PASS: templates/settings.example.json ships the same default (true)");
 
 console.log("\nAll builder interleave (resource+village) tests passed.");
