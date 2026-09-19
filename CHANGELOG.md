@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.112] — 2026-09-19
+
+### Changed
+
+- **`templates/village_stage_00.json` (the default first village-stage template every new village starts on) reordered per explicit request**: "every basic village should start with main building to level 3, warehouse and granary to level 1, marketplace level 1, main building level 5, warehouse and granary to level 2." The template's early stages are now, in order: Main Building → 3, Warehouse → 1, Granary → 1, **Marketplace → 1** (new — Marketplace previously wasn't touched until `village_stage_01`), Main Building → 5, Warehouse → 2, Granary → 2. The template's original higher checkpoints (Main Building → 10 → 15 → 20, Warehouse → 3, Granary → 3) are preserved afterward, unchanged — this reorders/adds early checkpoints, it does not cap or regress the template's eventual targets. Chain integrity unchanged: `village_stage_00` still hands off to `village_stage_01` (whose own first stage, Marketplace → 1, is now a harmless no-op the first time it runs, since stage_00 already got there).
+
+  **Only affects new/fresh villages automatically.** A village already partway through the *old* `village_stage_00` has its position stored as a numeric `stage_index`/`step_index` in `templates/progress.json`, which isn't re-derived from live building levels when a template's content changes — only when the index is out of range entirely. Re-assign such a village to `village_stage_00` via terminal menu **`[B]` Builder Templates** to reset its progress pointer and pick up the new order cleanly (safe mid-progress: every step is `build_or_upgrade` to a target level, so an already-met target is a no-op).
+
+### Added
+
+- **`scripts/test-village-stage-00-template.js`** (wired into `npm test`): loads the real `templates/village_stage_00.json` through the actual `villageBuilder` module (not a re-implementation) and verifies the full step order matches the requested sequence with the original higher targets preserved, every step uses the correct building slot (26/19/24/33), chain integrity (`default_template`/`next_template`) is unchanged, and `previewPlan()` confirms Main Building → 3 as the first step for a completely fresh village.
+
+### Verification
+
+4/4 new test assertions passed against the real `villageBuilder` module (not a mock). `node --check` unaffected (JSON-only change plus a new test script). Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.111] — 2026-09-19
 
 ### Added
