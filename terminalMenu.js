@@ -9113,6 +9113,17 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             const maxFollowupAttempts = 200;
             const maxFollowupElapsedMs = 240000;
             let followupAttempt = 0;
+            // already_satisfied / skipped_* / template_complete are pure
+            // background catch-up -- the tracker fast-forwards past a step
+            // the live game already meets, no click happens. Logging every
+            // one of those flooded the terminal with lines for zero real
+            // build activity (reported live: ~10 consecutive
+            // "already_satisfied: ... already at level 10" lines for
+            // resource fields). They're counted here instead and summarized
+            // once after the loop ends. realigned_template/storage_relief/
+            // prerequisite_relief still log per-step -- those represent a
+            // real, alternate build click landing.
+            let silentCatchUpCount = 0;
             while (followupAttempt < maxFollowupAttempts) {
               if (Date.now() - startedAt > maxFollowupElapsedMs) {
                 logInfo("[Builder Loop] Follow-up retry budget reached for this tick. Continuing on next cycle.");
@@ -9224,9 +9235,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 break;
               }
 
-              const followupTag =
-                finalResult.status === "realigned_template" ? "realigned_template" : "progress_advanced";
-              logInfo(`[Builder Loop] ${followupTag}: ${finalResult.message} Retrying next step...`);
+              if (
+                finalResult.status === "realigned_template" ||
+                finalResult.status === "storage_relief" ||
+                finalResult.status === "prerequisite_relief"
+              ) {
+                logInfo(`[Builder Loop] ${finalResult.status}: ${finalResult.message} Retrying next step...`);
+              } else {
+                silentCatchUpCount += 1;
+              }
               await ensureVillageBrowserContext(targetVillage, "Builder Loop", { allowBuildPage: true });
               finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
                 goldCompleteEnabled: settings.builderGoldCompleteEnabled,
@@ -9235,6 +9252,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 planMode: loopPlan.key
               });
               followupAttempt += 1;
+            }
+
+            if (silentCatchUpCount > 0) {
+              logInfo(
+                `[Builder Loop] Caught up ${silentCatchUpCount} already-satisfied step(s) for ` +
+                  `${villageDisplayName(targetVillage)} (no build needed).`
+              );
             }
 
             if (finalResult.status === "realigned_template") {
@@ -11886,6 +11910,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           // means "progress moved, try the next step" belongs here. The
           // skipped_* and *_relief statuses were missing, so a manual run
           // stopped dead on cases the auto loop walks straight through.
+          // already_satisfied / skipped_* / template_complete never perform a
+          // real click, so they're muted and summarized once below instead of
+          // logged per step -- kept in step with the auto loop's copy of this.
+          let silentCatchUpCount = 0;
           while (
             finalResult &&
             (finalResult.status === "already_satisfied" ||
@@ -11901,7 +11929,15 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               logInfo("[Builder Manual] Follow-up retry budget reached for this run.");
               break;
             }
-            logInfo(`[Builder Manual] ${finalResult.status}: ${finalResult.message} Retrying next step...`);
+            if (
+              finalResult.status === "realigned_template" ||
+              finalResult.status === "storage_relief" ||
+              finalResult.status === "prerequisite_relief"
+            ) {
+              logInfo(`[Builder Manual] ${finalResult.status}: ${finalResult.message} Retrying next step...`);
+            } else {
+              silentCatchUpCount += 1;
+            }
             finalResult = await builder.runBuilderStep(getPage, settings, selectedVillage, {
               goldCompleteEnabled: settings.builderGoldCompleteEnabled,
               goldCompleteMax: settings.builderGoldCompleteMax,
@@ -11909,6 +11945,13 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
               planMode: selectedPlan.key
             });
             followupAttempt += 1;
+          }
+
+          if (silentCatchUpCount > 0) {
+            logInfo(
+              `[Builder Manual] Caught up ${silentCatchUpCount} already-satisfied step(s) for ` +
+                `${villageDisplayName(selectedVillage)} (no build needed).`
+            );
           }
 
           const isTemporaryBlockedBuilderStatus = (status) =>
