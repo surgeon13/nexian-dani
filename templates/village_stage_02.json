@@ -2,7 +2,7 @@
   "key": "village_stage_02",
   "name": "Village Stage 02 - Midgame Upgrades",
   "description": "Continue military, economy, and civic upgrades after Stage 01.",
-  "version": 1,
+  "version": 2,
   "sequence_mode": "strict",
   "identity_policy": "vid_and_coords",
   "tribes": ["roman", "teuton", "gaul"],
@@ -16,7 +16,7 @@
       "name": "Stage 1 - Town Hall to 10",
       "steps": [
         {
-          "slot": 30,
+          "slot": 23,
           "building": "Town Hall",
           "target_level": 10,
           "action": "build_or_upgrade",
@@ -87,7 +87,7 @@
   ],
   "end_state": {
     "slots": [
-      { "slot": 30, "building": "Town Hall", "min_level": 10 },
+      { "slot": 23, "building": "Town Hall", "min_level": 10 },
       { "slot": 32, "building": "Academy", "min_level": 15 },
       { "slot": 37, "building": "Barracks", "min_level": 10 },
       { "slot": 38, "building": "Stable", "min_level": 10 },

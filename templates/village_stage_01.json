@@ -2,7 +2,7 @@
   "key": "village_stage_01",
   "name": "Village Stage 01 - Core Military and Civic Baseline",
   "description": "After Stage 00, establish military and civic buildings in strict order.",
-  "version": 1,
+  "version": 2,
   "sequence_mode": "strict",
   "identity_policy": "vid_and_coords",
   "tribes": ["roman", "teuton", "gaul"],
@@ -76,7 +76,7 @@
       "name": "Stage 6 - Town Hall to 1",
       "steps": [
         {
-          "slot": 30,
+          "slot": 23,
           "building": "Town Hall",
           "target_level": 1,
           "action": "build_or_upgrade",
@@ -115,7 +115,7 @@
       { "slot": 39, "building": "Rally Point", "min_level": 1 },
       { "slot": 37, "building": "Barracks", "min_level": 3 },
       { "slot": 32, "building": "Academy", "min_level": 10 },
-      { "slot": 30, "building": "Town Hall", "min_level": 1 },
+      { "slot": 23, "building": "Town Hall", "min_level": 1 },
       { "slot": 28, "building": "Smithy", "min_level": 3 },
       { "slot": 38, "building": "Stable", "min_level": 3 }
     ]

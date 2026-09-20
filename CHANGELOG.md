@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.120] — 2026-09-20
+
+### Fixed
+
+- **`Slot 30 contains 'Sawmill', expected 'Town Hall'` still blocking after v1.8.119, on multiple real villages on the same account.** Direct report, immediately after v1.8.119 shipped: *"this is a mistake which does problems, our town hall slot is set to 23, sawmill is on 30 in our jsons. please fix this issue!"* — with fresh live logs from two separate villages (`vid=29798` and `vid=280`) both hitting the identical `blocked_mismatch` on the identical slot pair.
+
+  v1.8.119's live-map discovery fix is correct and still in place (confirmed: `isFlexibleMapBonusBuilding()` in `villageBuilder.js` treats Town Hall as flexible, and nothing else in the codebase hardcodes a separate slot check for it — `collectChainFieldRequirements()`'s end-state verification only ever looks at resource-field slots 1-18, never inner buildings). But `templates/village_stage_01.json` and `village_stage_02.json`'s Town Hall step still guessed the wrong starting slot (30), which is really where `templates/resource_fields_03.json`/`resource_fields_04.json` place Sawmill (`"slot": 30, "building": "Sawmill"` — confirmed by inspection, and matching the user's own report). Every affected village had already built Sawmill via the resource chain before the village-stage chain ever got around to Town Hall, so Town Hall consistently landed on the next available slot instead — slot 23, confirmed identically across both reported villages.
+
+  Corrected the Town Hall step's slot from `30` to `23` in both templates' step definitions and `end_state.slots` entries (no other template claims slot 23, so this doesn't reintroduce the same kind of collision elsewhere). This makes the very first slot read match Town Hall directly, without depending on the v1.8.119 discovery round-trip succeeding on every server/account. v1.8.119's discovery treatment is left in place as a fallback for any account whose actual layout still differs from 23.
+
+  **A live 24/7 bot process needs a restart to pick up either fix** — the v1.8.119 code change and this v1.8.120 template correction both require pulling the update and restarting the running process (`npm run cursor:ensure` / `npm run start:24-7`, or the PC equivalent); a long-running process doesn't hot-reload template/module files.
+
+### Added
+
+- **`scripts/test-town-hall-template-slot.js`** (wired into `npm test`): verifies both `village_stage_01.json` and `village_stage_02.json` use slot 23 for Town Hall in both their step definitions and `end_state.slots`, and that no template step claims slot 23 for anything other than Town Hall (guarding against reintroducing the same kind of collision this fix removes). 2/2 passed.
+
+### Verification
+
+2/2 new test cases passed (plus the existing 3/3 `test-builder-townhall-flexible-slot.js` re-verified unaffected). `node --check` passes on `villageBuilder.js`. Both templates validated as well-formed JSON. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 13 test scripts).
+
 ## [1.8.119] — 2026-09-20
 
 ### Fixed
