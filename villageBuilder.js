@@ -1172,7 +1172,18 @@ function isFlexibleMapBonusBuilding(name) {
     // isSameBuildingName already treats them as the same slot's mutually
     // exclusive alternates, so searching for one matches the other.
     c === "residence" ||
-    c === "palace"
+    c === "palace" ||
+    // Town Hall is not built as part of the earliest, always-in-the-same-
+    // order stage (Main Building/Warehouse/Granary/Marketplace) — by the
+    // time a village gets around to it, an earlier resource-bonus building
+    // discovered via this same map-survey path (or a manual build) may
+    // already occupy the template's guessed slot 30. Reported live:
+    // 'blocked_mismatch' stuck 8+ ticks straight on "Slot 30 contains
+    // 'Sawmill', expected 'Town Hall'." — the game itself reaches Town Hall
+    // by building type (build.php?gid=24), not by a fixed slot, same as
+    // celebrations.js already does; villageBuilder's slot-guess assumption
+    // just never accounted for it.
+    c === "townhall"
   );
 }
 

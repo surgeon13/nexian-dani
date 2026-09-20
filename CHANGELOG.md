@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.119] — 2026-09-20
+
+### Fixed
+
+- **`blocked_mismatch` stuck for many consecutive ticks on `[Builder Loop] repeated_blocked (8): 10-07 (99|97) (vid=29798) in village plan keeps hitting 'blocked_mismatch' ... Slot 30 contains 'Sawmill', expected 'Town Hall'. Will not click upgrade on a mismatched building.`** Reported live — 8 consecutive ticks, no upgrades landing.
+
+  `village_stage_01.json`/`village_stage_02.json` hardcode slot 30 for Town Hall, and `villageBuilder.js`'s builder-step check trusted that guess outright — unlike Sawmill, Brickyard, Iron Foundry, Grain Mill, Bakery, Residence, and Palace, which already get live-map slot discovery via `isFlexibleMapBonusBuilding()` because their inner-slot position varies by village/tribe/build order. Town Hall was missing from that list, but it has the exact same problem: Main Building/Warehouse/Granary/Marketplace are built first, in a fixed order, so their guessed slots are reliable — but Town Hall is built much later, by which point one of those already-flexible bonus buildings can have claimed slot 30 first. `celebrations.js` already reaches Town Hall the reliable way, by building type (`build.php?gid=24`), never by a guessed slot — this was the one place still assuming a fixed slot for it.
+
+  Added `townhall` to `isFlexibleMapBonusBuilding()`'s list in `villageBuilder.js`. When the guessed slot 30 doesn't hold Town Hall, `runBuilderStep()` now falls through to the same live-map survey + full inner-slot probe already used for the other flexible buildings, finds wherever Town Hall actually is, and upgrades it there — instead of blocking forever on a slot that happens to hold something else. Scoped to Town Hall only; Main Building/Warehouse/Granary/Marketplace/Rally Point/Barracks/Academy/Smithy/Stable keep trusting their template slot exactly as before, since there's no evidence (yet) that any of those drift the same way.
+
+### Added
+
+- **`scripts/test-builder-townhall-flexible-slot.js`** (wired into `npm test`): verifies Town Hall (in any case/spacing form) is now flexible, the seven pre-existing flexible buildings are unaffected, and the nine buildings with a genuinely fixed template slot (Main Building, Warehouse, Granary, Marketplace, Rally Point, Barracks, Academy, Smithy, Stable) are correctly left alone by this fix. 3/3 passed.
+
+### Verification
+
+3/3 new test cases passed. `node --check` passes on `villageBuilder.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 12 test scripts).
+
 ## [1.8.118] — 2026-09-20
 
 ### Changed
