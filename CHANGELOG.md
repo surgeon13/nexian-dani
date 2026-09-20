@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.121] — 2026-09-20
+
+### Fixed
+
+- **`blocked_master_builder_only` was misclassified as a persistent (genuinely-stuck) block, so a village that was simply busy building — the normal state for any account without Gold Club's second concurrent build slot — could accumulate enough consecutive hits to trip `BUILDER_RR_AUTO_EXCLUDE_BLOCKED_STREAK` (default 12) and get silently, permanently excluded from Builder RR.** Direct report: *"templates still getting stuck in some of the later stages, it doesnt finisy resource bonus buildings and doesnt keep pushing ineer buildings. please improve our algorithmics again."* — with live evidence: `[Builder Loop] repeated_blocked (4): 20-01 (130|-102) (vid=39199) in resource plan keeps hitting 'blocked_master_builder_only' ... Slot 20 has only a Master Builder upgrade button. Enable Master Builder in settings or upgrade manually.`
+
+  `blocked_master_builder_only` means the village's one free build queue slot is currently occupied by another build already in progress — structurally identical to `blocked_queue`/`idle_saturated` (confirmed by reading where `villageBuilder.js` returns it: only when the regular upgrade button is absent/disabled and a gold-completion rescue attempt, if any, didn't free it up). It self-clears the instant that in-progress build finishes, exactly like the other three transient statuses already in `isPersistentBuilderBlock()`'s exclusion list — but it wasn't in that list, so `terminalMenu.js` counted it toward permanent auto-exclusion anyway. Since RR excludes a village wholesale (`BUILDER_RR_EXCLUDED_VILLAGE_IDS`), one wrongly-tripped exclusion silently stopped *both* that village's resource-field/bonus-building progress and its village-stage/inner-building progress at once — exactly matching the report.
+
+  Added `blocked_master_builder_only` to `isPersistentBuilderBlock()`'s transient set in `terminalMenu.js`. It still waits out its existing 5-minute cooldown before the loop retries that village (unchanged), but can no longer trigger `BUILDER_RR_AUTO_EXCLUDE_BLOCKED_STREAK` on its own. Genuinely persistent statuses (`blocked_mismatch`, `blocked_prerequisite_building`, `click_failed`, etc.) are untouched — this narrows the fix to the one status that was wrongly classified, not a blanket change to the auto-exclude mechanism.
+
+  **Villages already excluded for this reason before upgrading are not reverted automatically** — check terminal menu → Settings → `[X]` Builder RR Exclusion and remove them manually; the original exclusion reason (`Stuck on 'blocked_master_builder_only' for N consecutive ticks`) is preserved in the log history for identifying which ones.
+
+### Added
+
+- **`scripts/test-builder-master-builder-transient.js`** (wired into `npm test`): verifies `blocked_master_builder_only` is now transient, the four pre-existing transient statuses are unaffected, and genuinely persistent statuses (`blocked_mismatch`, `blocked_prerequisite_building`, `blocked_target_unavailable`, `click_failed`) still trigger auto-exclusion as before. 3/3 passed.
+
+### Verification
+
+3/3 new test cases passed. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 14 test scripts).
+
 ## [1.8.120] — 2026-09-20
 
 ### Fixed
