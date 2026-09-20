@@ -7364,6 +7364,41 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
           normalizeBuilderPlanMode(settings.builderDefaultPlanMode) === "resource"
       );
 
+    // Read-only: what resolveBuilderPlanModeForVillage's interleave branch
+    // WOULD return right now, without touching builderInterleaveLastModeByVillage.
+    // Safe to call from anywhere that's just checking state (candidate
+    // filtering, villageHasPendingBuilderWork, hop-to-next-village-on-block)
+    // -- none of those represent a real turn actually being taken.
+    const peekBuilderInterleaveMode = (villageId) => {
+      const lastMode = builderInterleaveLastModeByVillage.get(villageId);
+      return lastMode === "resource" ? "village" : "resource";
+    };
+
+    // The ONLY place allowed to advance builderInterleaveLastModeByVillage.
+    // Call this exactly once, at the single point a real build action is
+    // about to be attempted for `village` in `mode` this tick -- never from
+    // a filtering/checking pass. Getting this wrong is exactly the bug fixed
+    // in v1.8.114: resolveBuilderPlanModeForVillage used to advance the
+    // counter itself, but it's called from villageHasPendingBuilderWork,
+    // which runs over EVERY non-excluded non-capital village on EVERY tick
+    // (twice: once in the catch-up-exclude loop, once in the RR candidate
+    // filter) just to check "does this village have pending work" -- not
+    // once per real turn. That flipped the alternation dozens of times per
+    // tick for villages that weren't even picked, completely decoupling it
+    // from actual completed builds. A brand-new village's resource plan
+    // (Iron Foundry needs Main Building >= 5, which only the village plan
+    // ever builds) could end up landing on "resource" turn after turn by
+    // coincidence of the noise, hitting the same "Iron Foundry is locked...
+    // no template step manages Main Building" block indefinitely while
+    // "village" mode -- the only thing that could actually fix it -- never
+    // got a real turn. Reported live: multiple brand-new villages stuck on
+    // that exact message, never reaching Main Building level 5.
+    const commitBuilderInterleaveMode = (villageId, mode) => {
+      if (mode === "resource" || mode === "village") {
+        builderInterleaveLastModeByVillage.set(villageId, mode);
+      }
+    };
+
     const resolveBuilderPlanModeForVillage = (village) => {
       if (!village) {
         return normalizeBuilderPlanMode(activeBuilderPlanMode);
@@ -7421,11 +7456,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         // templates of buildings and resources will go together when
         // villages are built?" First turn for a village starts with
         // "resource" (matches the non-interleaved default), then flips
-        // every turn after.
-        const lastMode = builderInterleaveLastModeByVillage.get(village.id);
-        const nextMode = lastMode === "resource" ? "village" : "resource";
-        builderInterleaveLastModeByVillage.set(village.id, nextMode);
-        return nextMode;
+        // every turn after -- READ ONLY here (see peekBuilderInterleaveMode).
+        // Advancing the counter happens exclusively in
+        // commitBuilderInterleaveMode(), called once per real executed turn.
+        return peekBuilderInterleaveMode(village.id);
       }
       // Not using the resource->village pipeline (disabled, or the default
       // plan mode isn't "resource"). If the active mode is resource-only,
@@ -8997,6 +9031,10 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             let loopPlan = getBuilderPlanMeta(
               resolveBuilderPlanModeForVillage(targetVillage) || activeBuilderPlanMode
             );
+            // The one real turn this tick commits to for targetVillage --
+            // see commitBuilderInterleaveMode()'s comment for why this must
+            // be the ONLY place that advances the alternation counter.
+            commitBuilderInterleaveMode(targetVillage.id, loopPlan.key);
 
             builderEfficiencyWindow.attempts += 1;
             await ensureVillageBrowserContext(targetVillage, "Builder Loop");
