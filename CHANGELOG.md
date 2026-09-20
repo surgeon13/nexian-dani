@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.118] — 2026-09-20
+
+### Changed
+
+- **Muted the per-step `[Builder Loop]`/`[Builder Manual]` catch-up log spam introduced by the v1.8.115 budget raise.** Reported live: a `[Builder Manual]` run showed ~10 consecutive `already_satisfied: ... Advancing. Retrying next step...` lines (Clay Pit, Iron Mine ×4, Cropland ×5, all "already at level 10 (target: 5)"). Direct request: *"we dont want to see all of that in our terminal output, the already satisfied is a background check and we can mute it for now. show the steps once they are implemented in village builds."*
+
+  Raising the follow-up retry budget from 20/120s to 200/240s (v1.8.115) fixed villages exhausting their catch-up budget before reaching real work, but it also meant a single tick could legitimately walk through far more no-op catch-up steps than before — and every one of them was logged individually, drowning out the terminal in lines representing zero real build activity.
+
+  Both follow-up while-loops (the auto RR loop and the manual `[2]`/`[3]` handler) now distinguish "pure background housekeeping, nothing clicked" from "a real, alternate build click landed": `already_satisfied`, `skipped_wrong_building_type`, `skipped_village_full`, and `template_complete` are counted instead of logged per-step, then summarized once the loop ends with a single `Caught up N already-satisfied step(s) for <village> (no build needed).` line — only printed when N > 0, so a fully quiet catch-up (nothing to skip) prints nothing at all. `realigned_template`, `storage_relief`, and `prerequisite_relief` still log every step, since each represents a genuine alternate build click actually landing, matching the user's own distinction ("show the steps once they are implemented"). A real `success` build step already logs on its own via `logSuccess`, unaffected by this change — that's the "steps ... implemented in village builds" line the user asked to keep seeing.
+
+### Added
+
+- **`scripts/test-builder-followup-logging.js`** (wired into `npm test`): verifies the four background statuses are muted per-iteration, the three real-click statuses still log per-iteration, a run of only muted statuses produces exactly one summary line with the correct count, a run with zero muted statuses prints no summary line at all, and a mixed run logs real steps inline while still appending exactly one trailing summary for the muted ones. 5/5 passed.
+
+### Verification
+
+5/5 new test cases passed. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 11 test scripts).
+
 ## [1.8.117] — 2026-09-20
 
 ### Added
