@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.114] — 2026-09-20
+
+### Fixed
+
+- **`BUILDER_RR_INTERLEAVE_RESOURCE_VILLAGE`'s turn alternation was silently decoupled from real turns, letting brand-new villages get permanently stuck.** Reported live from real terminal output: `[Builder Loop] Iron Foundry is locked until Main Building reaches level 5 (currently 0). No template step manages Main Building, and no affordable live upgrade is available for it right now.` followed by `Switching villages (RR) due to temporary block`, repeating indefinitely across multiple brand-new villages, none of them ever reaching Main Building level 5 or any later village-stage building.
+
+  Root cause: `resolveBuilderPlanModeForVillage()`'s interleave branch advanced `builderInterleaveLastModeByVillage` (the per-village "which mode ran last" counter) as a side effect of being *called*, not of a real turn being *taken*. But it's called from `villageHasPendingBuilderWork()`, which runs for every non-excluded non-capital village on every tick — twice over (once in the catch-up-exclude loop, once building the RR candidate list) — purely to check "does this village have pending work," regardless of whether that village is the one actually picked this tick. That flipped the alternation dozens of times per tick for villages nowhere near their real turn, turning it into noise with no real relationship to completed builds. A brand-new village's resource plan needs Main Building ≥ 5 for its Iron Foundry bonus building, but no resource-plan template step can build Main Building — only the village plan can. If the noisy counter happened to land on "resource" again and again whenever this village's *actual* turn came up, it would hit the identical immediate block every time, while "village" mode — the only thing that could fix it — never got picked for a real turn.
+
+  Split the responsibility: new `peekBuilderInterleaveMode()` is a pure read (used everywhere a village is merely being checked — filtering, exclusion, hop-on-block), and new `commitBuilderInterleaveMode()` is the only thing allowed to advance the counter, called exactly once, at the single point the auto builder loop actually commits to and executes a build step for the chosen village this tick. Alternation now cleanly flips resource/village turn by turn, tied to real completed turns only.
+
+### Verification
+
+Rewrote `scripts/test-builder-interleave-resource-village.js` around the peek/commit split (7/7 passed): repeated peeks with no commit never drift (the exact bug); only `commit()` advances the state, taking effect on the next peek; the reported real-world pattern (many non-committing filter-pass peeks between real turns) still alternates cleanly turn by turn; per-village independence; and the two default-value assertions carried over from v1.8.113. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.113] — 2026-09-19
 
 ### Changed
