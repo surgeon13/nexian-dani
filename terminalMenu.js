@@ -6687,8 +6687,18 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
      * repeating one is genuinely stuck rather than waiting. The transient ones
      * are excluded on purpose: blocked_resources clears once resources arrive
      * (and drives circulation), blocked_queue clears when the queue drains,
-     * blocked_storage is handled by storage relief, and idle_saturated means
-     * the queue is simply full right now.
+     * blocked_storage is handled by storage relief, idle_saturated means
+     * the queue is simply full right now, and blocked_master_builder_only
+     * means the village's one free build slot is currently occupied by
+     * something else -- it clears itself the moment that build finishes,
+     * exactly like blocked_queue/idle_saturated, just surfaced via a
+     * different UI signal (only a gold Master Builder button is offered).
+     * Without this, any village that's simply busy building (the normal
+     * state for any account without Gold Club's second concurrent slot) can
+     * rack up enough consecutive hits to trip BUILDER_RR_AUTO_EXCLUDE_BLOCKED_STREAK
+     * and get permanently excluded from Builder RR over something that was
+     * never actually stuck -- reported live: resource bonus buildings and
+     * inner buildings both stopped progressing on affected villages.
      */
     const isPersistentBuilderBlock = (status) => {
       const key = String(status || "");
@@ -6696,6 +6706,7 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
         "blocked_resources",
         "blocked_queue",
         "blocked_storage",
+        "blocked_master_builder_only",
         "idle_saturated"
       ]);
       if (transient.has(key)) {
