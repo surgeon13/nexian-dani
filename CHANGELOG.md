@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.116] — 2026-09-20
+
+### Fixed
+
+- **`blocked_prerequisite_building` (e.g. "Iron Foundry is locked until Main Building reaches level 5... No template step manages Main Building...") now switches to village mode for the same village immediately, instead of moving to a different village and waiting for RR to eventually cycle back.** Reported live: multiple villages in a row hitting the identical block message one after another (`10-04`, `10-05`, `10-06`, `10-07`, ...), each "Switching villages (RR) due to temporary block" without ever building anything.
+
+  v1.8.114 fixed a real bug in the interleave alternation counter, but this fresh evidence showed the deeper structural issue it was masking: a resource-plan bonus building (Iron Foundry, Sawmill, Brickyard) requiring Main Building ≥ 5 is something *only the village plan* can build — no resource template step manages Main Building at all. A village's very first resource-mode turn can hit this immediately (a brand-new village starts with Main Building at 0), and the existing response — "temporarily blocked, switch to a different village" — meant fixing it depended on RR eventually cycling back around to that same village's *next* turn, which with several new villages all hitting the identical wall could take a long time, each one burning its own "guaranteed blocked" first turn before any of them made real progress.
+
+  The auto builder loop's follow-up handling now recognizes this exact status and, when the combined resource+village pipeline is active and the village plan still has pending work, switches `loopPlan` to `"village"` and retries `runBuilderStep` for the *same* village on the *same* tick — mirroring the existing "resource complete → continue into village" pattern already used elsewhere in this same loop. Main Building gets its next real upgrade click right then, not on some future RR turn. Falls through to the original behavior (switch to a different village) when the combined pipeline isn't active, or when the village plan is already fully complete for that village.
+
+### Added
+
+- **`scripts/test-builder-prerequisite-village-switch.js`** (wired into `npm test`): verifies the switch fires correctly for `blocked_prerequisite_building` under the combined pipeline, that it does *not* fire when the pipeline is inactive (original behavior preserved) or the village plan is already complete, and that an unrelated block status (`blocked_resources`) never triggers it. 4/4 passed.
+
+### Verification
+
+4/4 new test cases passed. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.115] — 2026-09-20
 
 ### Fixed

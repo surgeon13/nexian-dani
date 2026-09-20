@@ -9161,6 +9161,41 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
                 break;
               }
 
+              // A resource-plan step needs a building only the village plan
+              // manages (e.g. Iron Foundry/Sawmill/Brickyard needing Main
+              // Building >= 5, but no resource template step builds Main
+              // Building) -- switch to village mode for the SAME village,
+              // SAME tick, instead of leaving it to whenever RR eventually
+              // cycles back around to a second turn for this village, which
+              // with many villages in rotation can take a long time and
+              // meanwhile every one of them hits this identical wall on
+              // their own first turn. Reported live: multiple villages in a
+              // row hitting "is locked until Main Building reaches level 5
+              // ... No template step manages Main Building", one after
+              // another, none of them progressing.
+              if (
+                finalResult &&
+                finalResult.status === "blocked_prerequisite_building" &&
+                loopPlan.key === "resource" &&
+                builderRrUsesResourceThenVillagePipeline() &&
+                !isBuilderPlanFullyComplete(targetVillage, "village")
+              ) {
+                loopPlan = getBuilderPlanMeta("village");
+                logInfo(
+                  `[Builder Loop] ${finalResult.message} Switching to village stage plan for ` +
+                    `${villageDisplayName(targetVillage)} to build it directly.`
+                );
+                await ensureVillageBrowserContext(targetVillage, "Builder Loop", { allowBuildPage: true });
+                finalResult = await builder.runBuilderStep(getPage, settings, targetVillage, {
+                  goldCompleteEnabled: settings.builderGoldCompleteEnabled,
+                  goldCompleteMax: settings.builderGoldCompleteMax,
+                  masterBuilderEnabled: settings.builderMasterBuilderEnabled,
+                  planMode: loopPlan.key
+                });
+                followupAttempt += 1;
+                continue;
+              }
+
               if (
                 !finalResult ||
                 !(
