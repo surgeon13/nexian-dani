@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.117] — 2026-09-20
+
+### Added
+
+- **`[E]` Exclude all in the Builder RR Exclusion menu** (terminal menu Settings → `[X]`), alongside the existing `[A]` Clear all exclusions. Direct request: "we should also have an option to exclude all!" Sets every currently-listed village as excluded from Builder Round Robin in one action instead of toggling each one individually — useful before a manual building pass, then `[A]` to resume all of them together afterward.
+
+### Verification
+
+New `scripts/test-builder-rr-exclude-all.js` (wired into `npm test`): a normal village list ends up fully excluded, an empty village list produces an empty set without crashing, and a village with a non-numeric or missing id is skipped rather than corrupting the persisted exclusion list with a `NaN` entry. 3/3 passed. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.116] — 2026-09-20
 
 ### Fixed

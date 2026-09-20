@@ -1962,6 +1962,7 @@ function printBuilderRrExclusionSheet(snapshot, excludedIdSet) {
 
   console.log("");
   console.log(`  ${color("A", ANSI.bold, ANSI.cyan)}  Clear all exclusions`);
+  console.log(`  ${color("E", ANSI.bold, ANSI.cyan)}  Exclude all`);
   console.log(`  ${color("M", ANSI.bold, ANSI.cyan)}  Set exclusions by CSV (row numbers / vids)`);
   console.log(`  ${color("B", ANSI.bold, ANSI.cyan)}  Back`);
 }
@@ -2778,7 +2779,7 @@ async function runBuilderRrExclusionMenu(rl, settings, runtimeControls) {
       logWarn("No villages detected.");
     }
 
-    const answer = (await askQuestion(rl, "Toggle village number, or A/M/B: ")).trim().toUpperCase();
+    const answer = (await askQuestion(rl, "Toggle village number, or A/E/M/B: ")).trim().toUpperCase();
     if (answer === "Q") {
       if (runtimeControls.menuSession) {
         runtimeControls.menuSession.quitRequested = true;
@@ -2794,6 +2795,18 @@ async function runBuilderRrExclusionMenu(rl, settings, runtimeControls) {
       excludedSet = new Set();
       await persistExcludedSet(excludedSet);
       logSuccess("Builder RR exclusions cleared.");
+      continue;
+    }
+    if (answer === "E") {
+      if (!villages.length) {
+        logWarn("No villages detected — nothing to exclude.");
+        continue;
+      }
+      excludedSet = new Set(
+        villages.map((village) => Number(village && village.id)).filter((vid) => Number.isFinite(vid))
+      );
+      await persistExcludedSet(excludedSet);
+      logSuccess(`All ${excludedSet.size} village(s) excluded from Builder RR.`);
       continue;
     }
     if (answer === "M") {
