@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.122] — 2026-09-20
+
+### Fixed
+
+- **`resource_fields_03`/`resource_fields_04` permanently stalled at placing Sawmill/Brickyard/Iron Foundry, so fields never progressed past roughly level 8-10 and villages never completed.** Direct report, with a screenshot of a village's resource-field ring stuck at 8/8/9/10 across the board: *"fields arent get upgraded beyond that level, recheck please"*, followed by *"we think resource_fields_03 never goes beyond that level and therefore villages arent being completed."* Confirmed with a real log for `vid=279`: `Iron Foundry is locked until Main Building reaches level 5 (currently 0). No template step manages Main Building, and no affordable live upgrade is available for it right now. Switching to village stage plan...` — followed immediately by `Caught up 59 already-satisfied step(s)` and a real click on `Marketplace slot 33 upgraded toward level 8`, proving the village's *actual* village-stage progress was already dozens of steps past Main Building's own construction stages. Main Building was never really at level 0.
+
+  `resource_fields_03` is `sequence_mode: "strict"`: place Sawmill → Brickyard → Iron Foundry (each needs Main Building ≥ 5) → upgrade all three to level 3 → Grain Mill to 5. Since it's strict, a block on any of those halts the whole template — and `resource_fields_04`, the template that upgrades the *other* 14 fields to level 10, can never start either. The block here was a false alarm: `readPrerequisiteBuildingLevel()` (used whenever a resource-plan step needs a building's live level that the resource template itself doesn't manage — here, Main Building) resolved that building's slot via `discoverInnerBuildingSlotFromMap()`, which relied solely on the village-map survey. That survey's markup isn't reliable on every server/tribe — the exact same weakness the v1.8.119 Town Hall fix already worked around, just hitting a different building through a different code path this time. When the survey failed to find Main Building, the level was silently reported as `0`, permanently blocking every subsequent placement attempt regardless of Main Building's true level.
+
+  `discoverInnerBuildingSlotFromMap()` now falls back to `probeInnerSlotsForBuilding()` — reading every inner slot (19-40) directly — when the survey comes up empty, mirroring the fallback flexible bonus buildings (`discoverBonusBuildingSlotFromMap()`) already had. The result is cached (reusing the same `flexibleBuildingSlotCache`/30-minute miss TTL infrastructure) so a village that genuinely doesn't have the building yet doesn't pay for a fresh ~22-page probe on every single tick. This also strengthens `attemptPrerequisiteBuildingRelief()` (same underlying discovery call) and `villageExpansion.js`'s Palace/Residence lookup, which both depend on the same function.
+
+### Added
+
+- **`scripts/test-inner-building-slot-discovery-fallback.js`** (wired into `npm test`): reimplements the exact shipped cache/survey/probe control flow with injectable stand-ins for the page-driving dependencies, verifying a successful survey skips probing, a failed survey falls back to the direct inner-slot probe, a discovered slot is cached and cheaply re-confirmed (not re-discovered) on reuse, a cached slot that no longer matches is dropped and rediscovered rather than trusted forever, a genuine miss is cached so it isn't re-probed within the TTL, and an expired miss is retried. 6/6 passed.
+
+### Verification
+
+6/6 new test cases passed. `node --check` passes on `villageBuilder.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 15 test scripts).
+
 ## [1.8.121] — 2026-09-20
 
 ### Fixed

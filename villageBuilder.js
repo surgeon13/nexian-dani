@@ -1944,9 +1944,48 @@ async function discoverInnerBuildingSlotFromMap(page, baseUrl, villageId, buildi
   if (!buildingName || !villageId) {
     return null;
   }
+
+  const cacheKey = flexibleSlotCacheKey(villageId, buildingName);
+  const cached = flexibleBuildingSlotCache.get(cacheKey);
+  if (cached && Number.isFinite(cached.slot)) {
+    const info = await readSlotPage(page, baseUrl, cached.slot, villageId).catch(() => null);
+    if (info && !info.isEmptySlot && isSameBuildingName(info.buildingName, buildingName)) {
+      return cached.slot;
+    }
+    flexibleBuildingSlotCache.delete(cacheKey);
+  } else if (cached && Number.isFinite(cached.missAt)) {
+    if (Date.now() - cached.missAt < FLEXIBLE_SLOT_MISS_TTL_MS) {
+      return null;
+    }
+    flexibleBuildingSlotCache.delete(cacheKey);
+  }
+
   const survey = await surveyInnerSlotsFromVillageMap(page, baseUrl, villageId);
   const match = survey.find((row) => isSameBuildingName(row.label, buildingName));
-  return match ? match.slotId : null;
+  if (match && Number.isFinite(Number(match.slotId))) {
+    return Number(match.slotId);
+  }
+
+  // The map survey is not reliable on every server/tribe (same weakness
+  // discoverBonusBuildingSlotFromMap already works around) -- fall back to
+  // reading every inner slot directly instead of concluding the building
+  // doesn't exist. This function backs readPrerequisiteBuildingLevel() /
+  // attemptPrerequisiteBuildingRelief(), which is how a resource-plan step
+  // (e.g. placing Iron Foundry) checks Main Building's level when Main
+  // Building isn't managed by the current template. A real user hit this
+  // directly: Main Building was reported as "currently 0" -- forever
+  // blocking Iron Foundry/Sawmill/Brickyard placement and, since
+  // resource_fields_03/04 is a strict-sequence chain, every field upgrade
+  // after it too -- while that same village's village-stage progress
+  // showed it was already dozens of steps past Main Building's own
+  // construction stages. The survey simply never found Main Building; it
+  // was never actually at level 0.
+  const probed = await probeInnerSlotsForBuilding(page, baseUrl, villageId, buildingName);
+  flexibleBuildingSlotCache.set(
+    cacheKey,
+    probed != null ? { slot: probed } : { missAt: Date.now() }
+  );
+  return probed;
 }
 
 function findTemplateSlotForBuilding(template, buildingName) {
