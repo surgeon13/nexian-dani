@@ -9078,8 +9078,27 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
             );
 
             let finalResult = result;
-            const maxFollowupAttempts = 20;
-            const maxFollowupElapsedMs = 120000;
+            // Every status this loop retries on (already_satisfied,
+            // realigned_template, skipped_*, *_relief) is a no-op catch-up
+            // step -- it never performs a real build click, it just
+            // fast-forwards the tracker past a step whose target the live
+            // game already meets. A genuine build action always exits this
+            // loop after one iteration (its status isn't in the retry list
+            // below), so raising this budget can only extend how many
+            // consecutive NO-OPS get skipped in one tick -- it cannot cause
+            // extra real actions. 20 was too low: a village whose fields
+            // outran its tracked template (e.g. via Speed Build, which
+            // deliberately clicks ahead of progress.json) can have an entire
+            // resource template's worth of already-satisfied steps (up to
+            // 18 fields, sometimes across more than one stale template in
+            // the chain) to walk through before reaching real work, and the
+            // budget exhausting mid-catch-up meant the tick ended with
+            // nothing actually built. Reported live: repeated
+            // "progress_advanced: ... already at level 10 (target: 8) ..."
+            // for slot after slot, then the RR loop moving on to a
+            // different village with nothing built.
+            const maxFollowupAttempts = 200;
+            const maxFollowupElapsedMs = 240000;
             let followupAttempt = 0;
             while (followupAttempt < maxFollowupAttempts) {
               if (Date.now() - startedAt > maxFollowupElapsedMs) {
@@ -11808,9 +11827,11 @@ async function runTerminalMenu(getPage, settings, runtimeControls) {
 
           // Match scheduled builder behavior: when a step is already satisfied or a template just
           // completed, keep progressing in the same manual run so we do not appear "stuck" on
-          // template boundaries.
-          const maxFollowupAttempts = 20;
-          const maxFollowupElapsedMs = 120000;
+          // template boundaries. Same reasoning as the auto loop's copy of this budget: every
+          // retried status here is a no-op catch-up step, never a real build click, so raising
+          // this can only extend how many already-satisfied steps get skipped in one run.
+          const maxFollowupAttempts = 200;
+          const maxFollowupElapsedMs = 240000;
           let followupAttempt = 0;
           const followupStartedAt = Date.now();
           // Kept in step with the auto loop's follow-up set: every status that

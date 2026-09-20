@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.115] — 2026-09-20
+
+### Fixed
+
+- **Builder follow-up retry budget (20 steps / 2 minutes per tick) was too low to catch up through a whole stale template, leaving ticks that built nothing.** Reported live from real terminal output: a long stream of `[Builder Loop] progress_advanced: ... already at level 10 (target: 8). Advancing. Retrying next step...` for slot after slot, then the RR loop moving on to a different village — "we get those messages but in the end nothing is built... we want to build!!!"
+
+  Every status this follow-up loop retries on (`already_satisfied`, `realigned_template`, `skipped_wrong_building_type`, `skipped_village_full`, `template_complete`, `storage_relief`, `prerequisite_relief`) is a no-op catch-up step — it fast-forwards the tracked progress past a step whose target the live game already meets, without clicking anything. This happens whenever a village's actual state has outrun its tracked template — most commonly `BUILDER_SPEED_BUILD_ENABLED`'s one-click upgrades (which deliberately race ahead of `templates/progress.json` by design), or after a template edit. A genuine build action always exits the loop after exactly one iteration (its status isn't in the retry list), so the 20-attempt/120-second budget was *only ever* being spent on housekeeping, never on real actions — but a village needing to catch up through an entire resource template's 18 field slots (sometimes stacked across more than one stale template in the chain) could exhaust that budget purely catching up, before ever reaching a real, buildable step. The tick would then end having built nothing at all, repeating every future tick until the catch-up finally finished on its own.
+
+  Raised to 200 steps / 4 minutes in both the auto builder loop and the manual `[2]`/`[3]` follow-up loop. Safe by construction: since a real action always stops the loop immediately, raising this budget can only let it catch up further through no-ops — it cannot cause extra real build actions to happen in one tick.
+
+### Added
+
+- **`scripts/test-builder-followup-budget.js`** (wired into `npm test`): reproduces the exact reported bug against the old budget (a 25-step catch-up sequence never reaches the real action with `maxFollowupAttempts=20`), confirms the new budget (200) resolves it, verifies a realistic 69-step multi-template worst case still completes, confirms a real action always stops the loop after exactly one iteration regardless of budget size, and confirms a genuinely pathological unresolved sequence still terminates (bounded, not infinite) at the new cap. 5/5 passed.
+
+### Verification
+
+5/5 new test cases passed, including one that reproduces the reported bug against the old value before confirming the fix. `node --check` passes on `terminalMenu.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end.
+
 ## [1.8.114] — 2026-09-20
 
 ### Fixed
