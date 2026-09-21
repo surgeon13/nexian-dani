@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.124] — 2026-09-21
+
+### Fixed
+
+- **A bonus building (Sawmill/Brickyard/Iron Foundry) the game *lists* as a buildable type but currently won't let us build was never checked for the "genuinely no room left in this village" case — only the "not listed at all" case was. Every village in Builder RR hit this on real accounts, so nothing built anywhere.** Reported live, immediately after v1.8.123 stopped the infinite realign loop and correctly started surfacing the real block instead: `[Builder Loop] repeated_blocked (7): ... 'blocked_target_locked' ... Target building 'Iron Foundry' is listed but not currently buildable for slot 25. Buildable now: Cranny, Embassy, Great Barracks, Great Stable, Hero's Mansion, Treasury.` and `Switching villages (RR) due to temporary block` on every single village in rotation, followed by *"now the builder is all broken, nothing is built at all only repeating loops."*
+
+  This was v1.8.123 doing exactly what it was supposed to — no longer masking the real problem behind an infinite no-op realign — but it exposed a second, previously-hidden gap: `isNewBuildingUnplaceable()` (reads the whole village map and confirms there's truly no empty inner site anywhere) was already used to correctly `skipped_village_full` a building that isn't listed as an option at all, but the "listed, just currently greyed out" branch — the one these mature, already-mostly-built villages (Treasury/Great Barracks/Great Stable/Hero's Mansion already occupying most inner slots) were actually hitting — fell straight through to `blocked_target_locked` (or the Stage-1 realign) with no such check. The game shows every possible building type as a listed option regardless of whether there's room for it, so "listed but locked" was structurally indistinguishable from "genuinely nowhere to place it" without this check.
+
+  `isNewBuildingUnplaceable()` is now also checked in the "listed but locked" branch, right after the resource-sufficiency and Main Building-prerequisite checks. A genuinely full village now correctly `skipped_village_full`s that one bonus-building step and continues with the rest of its resource-field progress, instead of blocking (or endlessly realigning) on a building that structurally has nowhere to go.
+
+### Added
+
+- **`scripts/test-listed-locked-village-full-skip.js`** (wired into `npm test`): verifies a genuinely full village (no free inner site anywhere) is skipped regardless of whether the resource_fields_03 bonus-prereq-stage realign would otherwise apply, and that with room still available, both the realign and `blocked_target_locked` behaviors are exactly unchanged. 4/4 passed.
+
+### Verification
+
+4/4 new test cases passed. `node --check` passes on `villageBuilder.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 17 test scripts).
+
 ## [1.8.123] — 2026-09-21
 
 ### Fixed

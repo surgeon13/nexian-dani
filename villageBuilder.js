@@ -3134,6 +3134,35 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
           return prereqRealign;
         }
 
+        // A building the game LISTS as an option but won't currently let us
+        // build can mean "genuinely no room left" just as much as "not
+        // listed at all" does -- the game still shows every building TYPE
+        // as an option, just greyed out, once every inner site is occupied
+        // by something else. Only the !targetOption branch above checked
+        // isNewBuildingUnplaceable(); this one fell straight through to
+        // blocked_target_locked/the Stage-1 realign forever instead.
+        // Reported live: mature villages already full of Treasury/Great
+        // Barracks/Great Stable/Hero's Mansion/Cranny/Embassy, with Iron
+        // Foundry/Sawmill/Brickyard never built and nowhere left to place
+        // them -- every village in Builder RR hit this identical wall,
+        // repeated_blocked climbing on each one, nothing ever building.
+        if (await isNewBuildingUnplaceable(page, baseUrl, village.id, step.building)) {
+          return advancePastStep(
+            village,
+            mode,
+            planLabel,
+            template,
+            activeTemplateKey,
+            stageIndex,
+            stepIndex,
+            isLast,
+            report,
+            "skipped_village_full",
+            `'${step.building}' cannot be placed — every inner building site in this village is ` +
+              "already occupied and it isn't one of them. Skipping to the next template step."
+          );
+        }
+
         if (shouldFallbackToBonusPrereqStage) {
           setVillageProgress(village, {
             active_template: activeTemplateKey,
