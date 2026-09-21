@@ -3017,11 +3017,26 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
         : [];
       const targetOption = options.find((opt) => isSameBuildingName(opt.name, step.building));
 
+      // Realigning to Stage 1 only helps the FIRST time -- if Stage 1's
+      // fields are already satisfied (the common case once resource_fields_03
+      // has run a while), the reset just walks straight back through them
+      // and arrives at this exact same blocked bonus-building step again,
+      // with nothing having changed. Without this guard that repeated
+      // forever: reported live, six consecutive identical
+      // "realigned_template: Target bonus building 'Sawmill' is locked on
+      // slot 30. Realigning to Stage 1..." lines, ~20s apart, no progress.
+      // Once a realign for THIS building already happened and didn't clear
+      // the block, fall through to the same blocked_target_unavailable /
+      // blocked_target_locked statuses every other template already gets
+      // for this exact situation -- so the normal blocked-streak/RR-hop/
+      // auto-exclude handling can actually respond, instead of the
+      // follow-up loop burning its whole retry budget on a no-op reset.
       const shouldFallbackToBonusPrereqStage =
         mode === PLAN_MODE_RESOURCE &&
         activeTemplateKey === "resource_fields_03" &&
         stageIndex > 0 &&
-        isBonusBuildingName(step.building);
+        isBonusBuildingName(step.building) &&
+        !(villageProgress && villageProgress.stalled_bonus_building === step.building);
 
       if (!targetOption) {
         const availableText = options.length > 0
@@ -3036,7 +3051,8 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
             stage_index: 0,
             step_index: 0,
             prereq_validated_template: null,
-            realigned_from_template: activeTemplateKey
+            realigned_from_template: activeTemplateKey,
+            stalled_bonus_building: step.building
           }, {
             planMode: mode
           });
@@ -3124,7 +3140,8 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
             stage_index: 0,
             step_index: 0,
             prereq_validated_template: null,
-            realigned_from_template: activeTemplateKey
+            realigned_from_template: activeTemplateKey,
+            stalled_bonus_building: step.building
           }, {
             planMode: mode
           });
