@@ -2,7 +2,7 @@
   "key": "resource_fields_03",
   "name": "Resource Fields 03 - Bonus Building Prerequisites + Placement",
   "description": "Upgrade one of each resource to 10 (prerequisite for bonus buildings), then place Sawmill, Brickyard, Iron Foundry and upgrade them to 3. Grain Mill to 5.",
-  "version": 1,
+  "version": 2,
   "sequence_mode": "strict",
   "identity_policy": "vid_and_coords",
   "tribes": ["roman", "teuton", "gaul"],
@@ -15,12 +15,12 @@
     {
       "name": "Stage 1 - One of each resource to 10 (bonus building prerequisites)",
       "steps": [
-        { "slot": 1, "building": "Woodcutter", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 5, "building": "Clay Pit", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 9, "building": "Iron Mine", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" },
-        { "slot": 13, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button" }
+        { "slot": 1, "building": "Woodcutter", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true },
+        { "slot": 5, "building": "Clay Pit", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true },
+        { "slot": 9, "building": "Iron Mine", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true },
+        { "slot": 13, "building": "Cropland", "target_level": 10, "action": "build_or_upgrade", "click_strategy": "open_slot_then_primary_build_button", "strict_match": true }
       ],
-      "notes": "Each bonus building requires at least one field of its resource type at level 10."
+      "notes": "Each bonus building requires a GENUINE field of its resource type at level 10 -- the game checks by real field type, not merely 'something at this slot is high enough'. strict_match disables the generic any-resource-field substitution these steps would otherwise get, so runBuilderStep() verifies (and, via discoverGenuineResourceFieldSlot(), discovers the real slot for) an actual matching field instead of silently trusting whichever field type the template guessed for this slot."
     },
     {
       "name": "Stage 2 - Place Sawmill",
