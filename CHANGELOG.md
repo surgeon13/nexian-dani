@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.123] — 2026-09-21
+
+### Fixed
+
+- **Placing a locked bonus building (Sawmill/Brickyard/Iron Foundry) in `resource_fields_03` reset progress back to Stage 1 unconditionally, every single time — an infinite no-progress loop when the block wasn't actually about Main Building's level.** Reported live, minutes after the v1.8.122 Main Building fix landed and was confirmed restarted: `[Builder Loop] realigned_template: Target bonus building 'Sawmill' is locked on slot 30. Realigning to Stage 1 prerequisite resource fields to continue progressing. Retrying next step...` repeating six times in a row, ~20-23 seconds apart. Then, on a different village: the identical pattern on `'Brickyard'` instead.
+
+  `resource_fields_03`'s bonus-building placement steps have a fallback (`shouldFallbackToBonusPrereqStage`) for when the target isn't offered or is listed but locked: reset `stage_index`/`step_index` to 0 and retry from Stage 1's prerequisite fields. That fallback fires *after* the Main Building prerequisite check already returned nothing to do (either not applicable or Main Building's level is already sufficient), so it was never about Main Building at all — something else was still keeping the slot locked (a different unmet in-game requirement, most likely). Since Stage 1's fields are already satisfied once the chain has been running a while, resetting to Stage 1 was a no-op: the very next read walks straight back through the already-satisfied field steps and lands on the exact same blocked bonus-building step, which resets again — forever, with the follow-up loop's whole 200-attempt/240-second retry budget spent on this single no-op every tick, and nothing ever escalating to the blocked-streak/RR-hop/auto-exclude handling that would otherwise flag a genuinely stuck village.
+
+  The realign now only fires **once** per bonus building: `runBuilderStep()` records which building triggered it (`stalled_bonus_building` in `templates/progress.json`), and if the *same* building is still locked the next time this step is evaluated, it falls through to the `blocked_target_locked`/`blocked_target_unavailable` statuses every other template already gets in this exact situation — both pre-existing, already-handled statuses (blocked-streak warnings, cooldown, eventual RR auto-exclusion with a clear reason logged) rather than a status new to this fix. The guard is scoped per building name, so if a later step in the same template hits a *different* bonus building, that one still gets its own one-shot realign — this isn't a blanket lockout on the whole mechanism, only on repeating the exact same no-op.
+
+### Added
+
+- **`scripts/test-bonus-prereq-realign-stall-guard.js`** (wired into `npm test`): verifies the first block on a bonus building still realigns to Stage 1 and records which building stalled, a second block on the *same* building falls through to a real blocked status instead of realigning again, a *different* bonus building still gets its own one-shot realign, and village mode / other templates / Stage 1 itself are all untouched by this guard. 4/4 passed.
+
+### Verification
+
+4/4 new test cases passed. `node --check` passes on `villageBuilder.js`. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 16 test scripts).
+
 ## [1.8.122] — 2026-09-20
 
 ### Fixed
