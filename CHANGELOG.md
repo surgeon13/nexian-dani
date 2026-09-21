@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.8.125] — 2026-09-21
+
+### Fixed
+
+- **`resource_fields_03`'s "one of each resource to 10" prerequisite steps used generic field-type matching, so a wrong-type field could silently satisfy them — permanently blocking Sawmill/Brickyard/Iron Foundry regardless of Main Building's actual level.** Reported live, right after v1.8.124 shipped: `blocked_target_locked`/`blocked_prerequisite_building` still repeating on `Iron Foundry` across the whole account, followed by *"viillage stages and village resource fields templates arent moving to more advanced stages and therefore villages arent completed"* and *"nothing is built, stuck like that."* Investigated with two targeted questions rather than another guess: the user confirmed Main Building was genuinely at **level 20** in the affected village (ruling out the Main Building-level check entirely — v1.8.122's discovery fallback was reading it correctly all along), and that slot 9 — the slot every resource template assumes is an Iron Mine (the standard 1-4=Woodcutter/5-8=Clay Pit/9-12=Iron Mine/13-18=Cropland layout) — is actually a **Cropland**.
+
+  `resource_fields_03`'s Stage 1 steps ("one of each resource to 10") exist for one purpose: guarantee a genuine field of each type reaches level 10, because that's what the game itself checks before allowing Sawmill/Brickyard/Iron Foundry/Grain Mill to be built. But those steps didn't set `strict_match`, so they got the same "any resource field type satisfies this step" generic matching every other resource-field step uses (by design, for templates whose end goal is "upgrade all 18 fields eventually," where exact type-to-slot mapping doesn't matter). Here it was actively wrong: a high-level Cropland at slot 9 silently satisfied "Iron Mine → 10," so the tracker believed the prerequisite was met while no genuine Iron Mine anywhere in the village ever reached level 10 — a structurally unfixable block that no amount of Main Building upgrading could ever resolve, since Main Building was never the real blocker.
+
+  `templates/resource_fields_03.json`'s 4 Stage 1 steps now set `"strict_match": true`, disabling the generic substitution for them specifically (every other resource-field step, in this and every other template, is unaffected). A new `discoverGenuineResourceFieldSlot()` in `villageBuilder.js` backs this: when the guessed slot doesn't hold the real field type, it searches the rest of the village's 18 field slots for a genuine match (picking the highest-level one, to minimize further work) and retargets the step there — the same "don't trust a guessed slot, verify/discover the real one" pattern already applied to Town Hall (v1.8.119) and Main Building (v1.8.122), just for resource fields (1-18) instead of inner buildings (19-40). If no genuine field of that type exists anywhere in the village at all, the step now reports an honest `blocked_mismatch` instead of silently faking success — visible and escalatable, rather than a permanent, invisible dead end.
+
+### Added
+
+- **`scripts/test-resource-field-type-discovery.js`** (wired into `npm test`): verifies the discovery function finds the genuine field slot when the guessed one is wrong, picks the highest-level match among several genuine candidates, caches both a confirmed hit and a genuine "not found anywhere" miss without re-scanning, that the remap gate fires only for `strict_match` resource-field steps with an actual non-empty mismatch (never for generic steps, empty slots, already-matching slots, or the village plan), and that the real `resource_fields_03.json` template's 4 Stage 1 steps are all correctly `strict_match: true`. 6/6 passed.
+
+### Verification
+
+6/6 new test cases passed. `node --check` passes on `villageBuilder.js`. `templates/resource_fields_03.json` validated as well-formed JSON. Re-ran the whole-repo dead-code sweep — still 0 candidates. `npm test` passes end-to-end (all 18 test scripts).
+
 ## [1.8.124] — 2026-09-21
 
 ### Fixed

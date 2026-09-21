@@ -1988,6 +1988,61 @@ async function discoverInnerBuildingSlotFromMap(page, baseUrl, villageId, buildi
   return probed;
 }
 
+/**
+ * Find the real resource-field slot (1-18) genuinely holding a given field
+ * type, for when the template's guessed slot doesn't hold one. Templates
+ * assume the common 1-4=Woodcutter/5-8=Clay Pit/9-12=Iron Mine/13-18=Cropland
+ * layout, but that's not guaranteed -- most reliably wrong on a conquered/
+ * inherited village. Reported live: a bonus-building prerequisite step
+ * (resource_fields_03's "Iron Mine -> 10" at slot 9) was marked satisfied
+ * because slot 9 held a high-level Cropland instead -- Iron Mine's own
+ * generic-field-type substitution let a different field type count, so the
+ * tracker believed the prerequisite was met while no genuine Iron Mine
+ * anywhere in the village ever reached level 10, permanently blocking Iron
+ * Foundry regardless of Main Building's level.
+ *
+ * Field types never change for the life of a village (only their level
+ * does), so a confirmed hit is cached without expiry; a miss still uses the
+ * standard TTL in case of a bad read.
+ */
+async function discoverGenuineResourceFieldSlot(page, baseUrl, villageId, buildingName) {
+  if (!buildingName || !villageId) {
+    return null;
+  }
+
+  const cacheKey = flexibleSlotCacheKey(villageId, `field:${buildingName}`);
+  const cached = flexibleBuildingSlotCache.get(cacheKey);
+  if (cached && Number.isFinite(cached.slot)) {
+    return cached.slot;
+  } else if (cached && Number.isFinite(cached.missAt)) {
+    if (Date.now() - cached.missAt < FLEXIBLE_SLOT_MISS_TTL_MS) {
+      return null;
+    }
+    flexibleBuildingSlotCache.delete(cacheKey);
+  }
+
+  let best = null;
+  for (let slot = 1; slot <= 18; slot += 1) {
+    try {
+      const info = await readSlotPage(page, baseUrl, slot, villageId);
+      if (info && !info.isEmptySlot && isSameBuildingName(info.buildingName, buildingName)) {
+        const level = Number(info.currentLevel) || 0;
+        if (!best || level > best.level) {
+          best = { slot, level };
+        }
+      }
+    } catch (_error) {
+      /* keep scanning -- a single unreadable slot shouldn't abort the search */
+    }
+  }
+
+  flexibleBuildingSlotCache.set(
+    cacheKey,
+    best ? { slot: best.slot } : { missAt: Date.now() }
+  );
+  return best ? best.slot : null;
+}
+
 function findTemplateSlotForBuilding(template, buildingName) {
   if (!template || !Array.isArray(template.stages)) {
     return null;
@@ -2845,6 +2900,36 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
     }
   }
 
+  // strict_match resource-field steps (e.g. resource_fields_03's "one of
+  // each resource to 10" bonus-building prerequisites) exist specifically
+  // to guarantee a GENUINE field of that type reaches the target level --
+  // generic field-type substitution is deliberately disabled for them
+  // (allowGenericResourceFieldStep is false whenever step.strict_match is
+  // set). If the template's guessed slot doesn't hold the real type, search
+  // the rest of this village's field slots for one that does, the same way
+  // discoverBonusBuildingSlotFromMap() already does for inner buildings.
+  // Without this, a wrong guess (a village whose field-type layout doesn't
+  // match the assumed 1-4=Woodcutter/5-8=Clay Pit/9-12=Iron Mine/13-18=
+  // Cropland split) reports blocked_mismatch forever even when a genuine
+  // field of that type -- already well past level 10 -- sits on a
+  // different slot the whole time.
+  let resourceFieldRemappedFromTemplateSlot = null;
+  if (
+    step.strict_match &&
+    mode === PLAN_MODE_RESOURCE &&
+    isResourceFieldSlot(step.slot) &&
+    isResourceFieldBuildingName(step.building) &&
+    !slotInfo.isEmptySlot &&
+    !isSameBuildingName(slotInfo.buildingName, step.building)
+  ) {
+    const genuineSlot = await discoverGenuineResourceFieldSlot(page, baseUrl, village.id, step.building);
+    if (genuineSlot != null && Number(genuineSlot) !== Number(resolvedSlot)) {
+      resourceFieldRemappedFromTemplateSlot = resolvedSlot;
+      resolvedSlot = Number(genuineSlot);
+      slotInfo = await readSlotPage(page, baseUrl, resolvedSlot, village.id);
+    }
+  }
+
   // Build the report
   const report = {
     planMode: mode,
@@ -2855,6 +2940,9 @@ async function runBuilderStep(getPage, settings, village, options = {}) {
     slot: resolvedSlot,
     ...(bonusBuildingRemappedFromTemplateSlot !== null
       ? { bonusBuildingRemappedFromTemplateSlot }
+      : {}),
+    ...(resourceFieldRemappedFromTemplateSlot !== null
+      ? { resourceFieldRemappedFromTemplateSlot }
       : {}),
     targetBuilding: step.building,
     targetLevel: step.target_level,
